@@ -1,0 +1,53 @@
+export interface TeamStrengthInput {
+  matchesPlayed: number;
+  goalsScoredAvg: number;
+  goalsConcededAvg: number;
+}
+
+export interface PoissonPredictionRequest {
+  homeTeam: TeamStrengthInput;
+  awayTeam: TeamStrengthInput;
+  leagueAvgHomeGoals: number;
+  leagueAvgAwayGoals: number;
+}
+
+export interface MarketProbability {
+  market: string;
+  selection: string;
+  probability: number;
+  factors: { direction: "positive" | "negative"; label: string }[];
+}
+
+export interface PoissonPredictionResponse {
+  modelName: string;
+  modelVersion: string;
+  dataQuality: "insufficient" | "limited" | "strong";
+  predictions: MarketProbability[];
+}
+
+// Thin HTTP client for the Python ML service. Kept separate from route
+// handlers so the timeout/error-mapping policy lives in exactly one place.
+export class PredictionClient {
+  constructor(private readonly baseUrl: string, private readonly timeoutMs = 5000) {}
+
+  async predictPoisson(payload: PoissonPredictionRequest): Promise<PoissonPredictionResponse | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}/predict/poisson`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as PoissonPredictionResponse;
+    } catch {
+      // Network error, timeout, or malformed response — caller treats a
+      // null result as "prediction unavailable", never fabricates one.
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
