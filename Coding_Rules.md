@@ -39,6 +39,15 @@ data goes through the interfaces in `backend/src/providers/types.ts`. Adding
 a real provider means writing one class and registering it in
 `providers/registry.ts` — no other file changes.
 
+## Admin routes
+
+Every route mounted on the admin router goes through `requireAdmin`
+(applied once via `router.use(...)` in `admin.ts`, not per-route) — a new
+admin endpoint must never be added in a way that bypasses it. Auth failures
+map to `401` (missing/invalid token) or `403` (valid user, not an admin),
+never to a silent no-op or a 500 that could be mistaken for a transient
+error.
+
 ## TypeScript
 
 - `strict: true` and `noUncheckedIndexedAccess: true` everywhere. Handle the

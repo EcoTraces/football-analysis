@@ -6,14 +6,14 @@ import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredicti
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
+import { createRequireAdmin } from "../middleware/requireAdmin.js";
 
-const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync — this route has no auth yet.
+const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync.
 
-// NOTE: This route has no authentication/authorization middleware attached
-// yet. It MUST be wrapped with an admin-role check (Supabase JWT verification
-// against user_profiles.role = 'admin') before this ever ships publicly —
-// tracked in Task.md. Do not expose this port beyond an internal network
-// until that is wired in.
+// Every route on this router requires a valid Supabase JWT for a user whose
+// user_profiles.role is 'admin' — see requireAdmin.ts and README.md →
+// "Creating the first admin user". Applied once via router.use() so a
+// future route added here can't accidentally ship unauthenticated.
 export function createAdminRouter(
   supabase: SupabaseClient,
   provider: FootballDataProvider,
@@ -21,6 +21,7 @@ export function createAdminRouter(
   logger: Logger
 ): Router {
   const router = Router();
+  router.use(createRequireAdmin(supabase));
 
   router.post("/admin/sync", async (req, res, next) => {
     try {

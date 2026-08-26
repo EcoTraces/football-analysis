@@ -14,6 +14,20 @@ export class FakeSupabase {
   private tables = new Map<string, FakeRow[]>();
   private nextId = 1;
   private insertFailures = new Map<string, number>();
+  private authTokens = new Map<string, { id: string }>();
+
+  /** Registers `token` as a valid session for the given user id, for auth.getUser(token). */
+  setAuthUser(token: string, userId: string): void {
+    this.authTokens.set(token, { id: userId });
+  }
+
+  auth = {
+    getUser: async (token: string) => {
+      const user = this.authTokens.get(token);
+      if (!user) return { data: { user: null }, error: { message: "invalid token" } };
+      return { data: { user }, error: null };
+    }
+  };
 
   seed(table: string, rows: FakeRow[]): void {
     this.tables.set(table, [...rows]);

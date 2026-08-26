@@ -42,7 +42,15 @@ unless `?includeSynthetic=true`).
 Standings for a season (`leagueId` is actually a `season_id` — see
 `Task.md` for renaming this once the standings model is fleshed out).
 
-## Admin (⚠️ not yet authenticated — see Task.md)
+## Admin
+
+Every route below requires `Authorization: Bearer <supabase-jwt>` for a
+user whose `user_profiles.role` is `admin`
+(`backend/src/middleware/requireAdmin.ts`). Missing/malformed header or an
+unrecognized token → `401 unauthenticated`; a valid but non-admin user →
+`403 forbidden`. See README.md → "Creating the first admin user" for how to
+get a token. **Not yet verified against a real Supabase project's JWTs** —
+see `Task.md`.
 
 ### `POST /admin/sync?days=N`
 Syncs fixtures from today (UTC) through `days` days ahead (default 1,

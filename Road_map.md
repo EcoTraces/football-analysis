@@ -20,17 +20,18 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 13. Daily analysis | ⬜ Not started | |
 | 14. Accumulator research | ⬜ Not started | |
 | 15. Notifications | ⬜ Not started | Schema exists (`notifications` table); no delivery |
-| 16. Admin dashboard (UI) | ⬜ Not started | API endpoints exist (`/api/admin/*`), no UI, no auth guard |
-| 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far; no integration/E2E yet |
-| 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; **no auth on admin routes — must fix before any public deploy** |
+| 16. Admin dashboard (UI) | ⬜ Not started | API endpoints exist and are now authenticated (`/api/admin/*`); no UI |
+| 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
+| 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; admin routes now require a Supabase JWT + admin role (unverified against a real project — see Task.md); still no audit log, no signup/role-assignment UI |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
 | 20. Production deployment | ⬜ Not started | Dockerfiles + compose only; no hosting configured |
 
 ## Immediate next steps (see Task.md for details)
 
-1. Add authentication/authorization to `/api/admin/*` before deploying
-   anywhere reachable — `/admin/sync` can now pull real data, which makes
-   this more urgent, not less.
+1. Test `requireAdmin` against a real Supabase project (create an admin
+   user per README.md, get a real JWT, confirm `/api/admin/*` accepts it
+   and rejects a non-admin user's JWT) — so far only verified against a
+   fake auth client and against a running server's rejection paths.
 2. Get a real API-Football key and run `POST /api/admin/sync?days=1`
    against a real Supabase project to verify `ApiFootballProvider`'s
    mapping against a live response — it has only been tested against

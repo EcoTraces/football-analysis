@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-08-26 — Admin route authentication
+
+- Added `requireAdmin` middleware (`backend/src/middleware/requireAdmin.ts`):
+  verifies a Supabase-issued JWT via `auth.getUser()` and requires
+  `user_profiles.role = 'admin'` for the underlying user. Applied once to
+  the whole admin router (`router.use(...)`) rather than per-route, so a
+  future admin endpoint can't accidentally ship unauthenticated.
+- Auth failures are explicit: `401 unauthenticated` for a missing/malformed
+  header or a token the auth server doesn't recognize, `403 forbidden` for
+  a valid but non-admin user — never a silent pass-through or a generic 500.
+- 6 new unit tests against a fake Supabase client (auth + `user_profiles`
+  lookup), plus manual verification against a running server: confirmed a
+  request with no `Authorization` header, a non-Bearer scheme, and an
+  unrecognized token all get rejected with `401` and the server stays up
+  through all of them (35 backend tests passing in total).
+- Documented the one remaining manual step this doesn't automate: there's
+  no signup/role-assignment UI, so README.md now has "Creating the first
+  admin user" (create a Supabase Auth user, set their `user_profiles.role`
+  to `admin` via SQL, sign in to get a JWT).
+- Flagged clearly in `Task.md`/`Road_map.md`: this has only been tested
+  against a fake Supabase client, not a real project's actual JWTs/token
+  lifecycle — that verification is still outstanding.
+
 ## 2026-08-26 — Real fixture data provider (API-Football)
 
 - Implemented `ApiFootballProvider` against api-football v3, satisfying the

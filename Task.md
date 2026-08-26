@@ -1,11 +1,26 @@
 # Outstanding Tasks
 
-## Security (blocking any public deployment)
+## Security
 
-- [ ] `/api/admin/*` has no authentication/authorization. Add Supabase JWT
-  verification + `user_profiles.role = 'admin'` check before this is
-  reachable outside a trusted network.
-- [ ] Add request logging/audit trail for admin actions once auth exists.
+- [x] `/api/admin/*` authentication — `requireAdmin` middleware
+  (`backend/src/middleware/requireAdmin.ts`) verifies a Supabase JWT via
+  `auth.getUser()` and requires `user_profiles.role = 'admin'`, applied to
+  the whole admin router. Verified manually against a running server
+  (missing header → 401, malformed header → 401, unrecognized token → 401)
+  and unit-tested against a fake Supabase client (6 tests) — **not yet
+  exercised against a real Supabase project's actual JWTs**, only against
+  the fake's `auth.getUser`/`user_profiles` behavior. Test against a live
+  project before relying on it in production.
+- [ ] No signup or role-assignment UI exists — the only way to create an
+  admin today is the manual SQL step in README.md → "Creating the first
+  admin user." Fine for one operator, not for a real admin team.
+- [ ] Add request logging/audit trail for admin actions (who ran
+  `/admin/sync`, when, with what result) — `requireAdmin` knows the
+  authenticated user id at that point but nothing persists it yet.
+- [ ] Consider token revocation/expiry edge cases explicitly: `auth.getUser()`
+  should reject an expired or revoked token, but this hasn't been verified
+  against Supabase's actual token lifecycle (only against the test fake,
+  which has no concept of expiry).
 
 ## Data
 

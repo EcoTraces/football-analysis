@@ -39,8 +39,8 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
   default; opt in via env vars), a fixture-sync job, a
-  prediction-generation job, and admin endpoints to trigger both. See
-  `API.md`.
+  prediction-generation job, and admin endpoints to trigger both —
+  authenticated by a Supabase JWT plus an admin role check. See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -73,9 +73,11 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
 - No results-sync or team-statistics job yet, so predictions still can't
   run on real (non-synthetic) fixtures even though real fixtures can now be
   synced.
-- No authentication/authorization — the admin endpoints (including the new
-  `/admin/sync`) have no auth middleware and must not be exposed publicly
-  as-is.
+- Admin endpoints now require a Supabase-authenticated admin user (see
+  "Creating the first admin user" below) — but there's still no
+  signup/role-assignment UI, no audit log of admin actions, and no
+  automated test running the middleware against a real Supabase project
+  (only against a fake auth/database — see `Task.md`).
 - No model backtesting/validation pipeline, no league-specific calibration,
   no model ensemble — one baseline Poisson model only.
 - No accumulator research, value/EV analysis, notifications, or admin
@@ -121,12 +123,38 @@ npm install && npm run dev
 
 # 6. (Optional) pull real fixtures — set FOOTBALL_DATA_PROVIDER=api-football
 # and FOOTBALL_DATA_API_KEY in backend/.env first (see Data_Sources.md),
-# then trigger a sync:
-curl -X POST "http://localhost:8080/api/admin/sync?days=3"
+# then trigger a sync (see "Creating the first admin user" for $ADMIN_JWT):
+curl -X POST "http://localhost:8080/api/admin/sync?days=3" \
+  -H "Authorization: Bearer $ADMIN_JWT"
 ```
 
 Or `docker compose up` from the repo root once `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are set in your environment.
+
+## Creating the first admin user
+
+Every `/api/admin/*` route requires a valid Supabase-issued JWT for a user
+whose `user_profiles.role` is `admin` (`backend/src/middleware/requireAdmin.ts`).
+There's no signup or role-assignment UI yet, so the first admin is created
+by hand:
+
+1. Create a user via Supabase Auth (dashboard → Authentication → Add user,
+   or `supabase.auth.signUp(...)` from any client using your project's
+   anon key).
+2. Give that user's `user_profiles` row the admin role — it's created
+   automatically once they have a session (or insert it directly):
+   ```sql
+   insert into user_profiles (id, role)
+   values ('<the user''s auth.users id>', 'admin')
+   on conflict (id) do update set role = 'admin';
+   ```
+3. Get a JWT for that user (sign in via `supabase.auth.signInWithPassword(...)`
+   with the anon key from any script — the access token in the response is
+   what you pass as `Authorization: Bearer <token>`).
+
+The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is never used as this
+bearer token — it's a backend-only secret with no associated user, and
+`auth.getUser()` would reject it anyway.
 
 ## Documentation
 
