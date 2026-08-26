@@ -103,3 +103,12 @@ export async function upsertTeam(
 ): Promise<string> {
   return findOrCreateByExternalRef(supabase, "teams", externalId, { name, country_id: countryId });
 }
+
+export async function upsertPlayer(
+  supabase: SupabaseClient,
+  externalId: string,
+  name: string,
+  teamId: string | null
+): Promise<string> {
+  return findOrCreateByExternalRef(supabase, "players", externalId, { name, team_id: teamId });
+}

@@ -69,6 +69,16 @@ from raw fixture scores. Returns `{ runId, combinationsConsidered,
 processed, skipped, failed }`. Same `409 no_provider_configured` behavior
 as `/admin/sync`. See `Data_Sources.md`.
 
+### `POST /admin/injuries/sync`
+Calls the configured provider's injuries endpoint for every distinct
+(team, season) pair implied by real fixtures (deduplicated on the external
+id pair — the endpoint isn't competition-scoped), keeps only the most
+recently dated report per player, and upserts a `players` row plus one
+`injuries` row per player. Returns `{ runId, combinationsConsidered,
+combinationsSkipped, combinationsFailed, playersProcessed,
+playersRejected }`. Same `409 no_provider_configured` behavior as the other
+sync endpoints. See `Data_Sources.md` for the status-classification caveat.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.
@@ -78,7 +88,9 @@ Counts of production fixtures, synthetic fixtures, and current predictions.
 
 ## Not yet implemented
 
-`GET /api/players/:id`, `GET /api/injuries`, `GET /api/lineups/:matchId`,
-`GET /api/odds/:matchId`, `GET /api/analysis/daily`,
-`GET /api/analysis/monthly` — all blocked on a real data provider (players/
-injuries/lineups/odds) or a feature not yet built (daily/monthly analysis).
+`GET /api/players/:id` and `GET /api/injuries` — no read routes yet, even
+though `syncInjuries.ts` can now populate real `players`/`injuries` rows;
+this is a missing route, not a missing data source. `GET
+/api/lineups/:matchId`, `GET /api/odds/:matchId` are blocked on a data
+provider (no lineup/odds sync job exists yet). `GET /api/analysis/daily`,
+`GET /api/analysis/monthly` are blocked on a feature not yet built.

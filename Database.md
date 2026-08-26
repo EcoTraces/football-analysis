@@ -1,9 +1,12 @@
 # Database
 
 Postgres via Supabase. Schema: `supabase/migrations/0001_init.sql` (initial
-schema) and `0002_provider_external_refs.sql` (external-id columns/indexes
-added once real ingestion needed them — see below). Dev-only synthetic
-seed: `supabase/seed/dev_seed_synthetic.sql`.
+schema), `0002_provider_external_refs.sql` (external-id columns/indexes for
+countries/seasons/fixtures/teams/competitions), and
+`0003_injuries_and_players_refs.sql` (external-id uniqueness for `players`,
+plus a uniqueness constraint on `injuries` that 0001 didn't anticipate
+needing) — each added once a real ingestion job needed it. Dev-only
+synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
 
 ## Design conventions
 
@@ -27,10 +30,13 @@ seed: `supabase/seed/dev_seed_synthetic.sql`.
   `competition_id` — a season's provider id like "2026" repeats across
   every competition, so global uniqueness there would be wrong.
   `team_statistics`'s uniqueness (`team_id, season_id, scope`), by contrast,
-  is a genuine plain-column constraint from 0001 — `syncTeamStatistics.ts`
-  uses a real `upsert(..., { onConflict: ... })` against it rather than the
-  find-then-insert pattern the expression-index tables need (see
-  `Data_Sources.md`).
+  is a genuine plain-column constraint from 0001, and `injuries`' new
+  uniqueness on `player_id` (0003) is too — both `syncTeamStatistics.ts` and
+  `syncInjuries.ts` use a real `upsert(..., { onConflict: ... })` against
+  them rather than the find-then-insert pattern the expression-index tables
+  need (see `Data_Sources.md`). `injuries` models "current status per
+  player," not a history of every report — see 0003's comment for the
+  known edge case that simplification accepts.
 - **Prediction history, not overwrite.** `predictions` rows are never
   mutated after creation; recalculating sets `superseded_at` on the old row
   and inserts a new one. `idx_predictions_current` (partial index on
@@ -76,3 +82,6 @@ seed: `supabase/seed/dev_seed_synthetic.sql`.
 - `teams.country_id` and `competitions.competition_type` are not correctly
   populated by fixture ingestion — see `Data_Sources.md`'s "Known
   limitation" notes.
+- `injuries` never transitions a row to `returned` — a recovered player's
+  row simply goes stale (see freshness classification) rather than being
+  actively updated, since nothing in the current sync detects recovery.

@@ -1,6 +1,7 @@
 import type {
   FootballDataProvider,
   ProviderFixture,
+  ProviderInjury,
   ProviderResponse,
   ProviderTeamStatistics
 } from "./types.js";
@@ -40,7 +41,7 @@ export class NullProvider implements FootballDataProvider {
     return this.unavailable();
   }
 
-  async getInjuries(_teamExternalId: string, _seasonExternalId: string): Promise<ProviderResponse<unknown[]>> {
+  async getInjuries(_teamExternalId: string, _seasonExternalId: string): Promise<ProviderResponse<ProviderInjury[]>> {
     return this.unavailable();
   }
 

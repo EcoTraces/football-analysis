@@ -38,8 +38,8 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   teams/competitions/standings reads, a `FootballDataProvider` abstraction
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
-  default; opt in via env vars), a fixture-sync job, a team-statistics sync
-  job, a prediction-generation job, and admin endpoints to trigger each —
+  default; opt in via env vars), fixture/team-statistics/injuries sync
+  jobs, a prediction-generation job, and admin endpoints to trigger each —
   authenticated by a Supabase JWT plus an admin role check. See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
@@ -68,8 +68,8 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   follows the vendor's documentation, tested only against injected fake
   HTTP responses. Get a real key and run a sync before trusting it in
   production. See `Data_Sources.md`.
-- Injuries/lineups/standings/odds have provider methods implemented but no
-  sync job calling them yet — fixtures and team statistics are the only
+- Lineups/standings/odds have provider methods implemented but no sync job
+  calling them yet — fixtures, team statistics, and injuries are the only
   data actually ingested today.
 - The team-statistics sync (`syncTeamStatistics.ts`) calls the vendor's own
   aggregated stats endpoint per team/competition/season rather than
@@ -78,6 +78,12 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   aggregate endpoint doesn't break stats down match-by-match); that needs a
   separate results-sync job. Predictions can now run on real fixtures once
   both syncs have been run for them, in that order.
+- The injuries sync (`syncInjuries.ts`) classifies status (injured/
+  suspended/international duty/doubtful) with a keyword heuristic over the
+  vendor's free-text fields, not a documented enum — treat it as
+  approximate until checked against real responses. It also never marks a
+  recovered player `returned`; they just go stale (surfaced by the
+  freshness classifier) rather than being actively corrected.
 - Admin endpoints now require a Supabase-authenticated admin user (see
   "Creating the first admin user" below) — but there's still no
   signup/role-assignment UI, no audit log of admin actions, and no
@@ -132,6 +138,8 @@ npm install && npm run dev
 curl -X POST "http://localhost:8080/api/admin/sync?days=3" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/injuries/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/predictions/run" \
   -H "Authorization: Bearer $ADMIN_JWT"

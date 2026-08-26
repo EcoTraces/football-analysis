@@ -1,6 +1,7 @@
 import type {
   FootballDataProvider,
   ProviderFixture,
+  ProviderInjury,
   ProviderResponse,
   ProviderTeamStatistics,
   ProviderUnavailable
@@ -175,8 +176,18 @@ export class ApiFootballProvider implements FootballDataProvider {
     return { ...result, data: mapped };
   }
 
-  async getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>> {
-    return this.request<unknown[]>("/injuries", { team: teamExternalId, season: seasonExternalId });
+  async getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderInjury[]>> {
+    const result = await this.request<RawInjury[]>("/injuries", { team: teamExternalId, season: seasonExternalId });
+    if (!result.ok) return result;
+
+    const mapped: ProviderInjury[] = [];
+    for (const raw of result.data) {
+      const entry = mapInjury(raw);
+      if (entry) mapped.push(entry);
+      // Entries missing a player id/name or fixture date are skipped rather
+      // than stored with guessed values — see mapInjury.
+    }
+    return { ...result, data: mapped };
   }
 
   async getLineup(fixtureExternalId: string): Promise<ProviderResponse<unknown>> {
@@ -289,5 +300,42 @@ function mapTeamStatistics(raw: RawTeamStatistics): ProviderTeamStatistics | nul
     goalsAgainstAway: goalsAgainstAway as number,
     cleanSheets: typeof raw.clean_sheet?.total === "number" ? raw.clean_sheet.total : null,
     failedToScore: typeof raw.failed_to_score?.total === "number" ? raw.failed_to_score.total : null
+  };
+}
+
+// Shape per api-football v3's documented /injuries response — unverified
+// against a live response, same caveat as the other Raw* interfaces above.
+// One entry per (player, fixture) the player was reported missing for, not
+// a single current-status flag — see getInjuries's mapping.
+interface RawInjury {
+  player?: { id?: number | null; name?: string | null; type?: string | null; reason?: string | null };
+  fixture?: { date?: string | null };
+}
+
+// The vendor's `type`/`reason` fields are free text (e.g. type "Missing
+// Fixture", reason "Knee Injury" or "Suspended"). There is no enum in the
+// documented contract that maps cleanly onto this schema's status column,
+// so this is a keyword heuristic, not a guaranteed-accurate classification
+// — flagged in Task.md as needing validation against real responses.
+function mapInjuryStatus(type: string | null | undefined, reason: string | null | undefined): ProviderInjury["status"] {
+  const text = `${type ?? ""} ${reason ?? ""}`.toLowerCase();
+  if (text.includes("suspen") || text.includes("red card") || text.includes("card accumulation")) return "suspended";
+  if (text.includes("international")) return "international_duty";
+  if (text.includes("doubt") || text.includes("question")) return "doubtful";
+  return "injured";
+}
+
+function mapInjury(raw: RawInjury): ProviderInjury | null {
+  const playerExternalId = raw.player?.id;
+  const playerName = raw.player?.name;
+  const fixtureDate = raw.fixture?.date;
+  if (typeof playerExternalId !== "number" || !playerName || !fixtureDate) return null;
+
+  return {
+    playerExternalId: String(playerExternalId),
+    playerName,
+    status: mapInjuryStatus(raw.player?.type, raw.player?.reason),
+    description: raw.player?.reason ?? raw.player?.type ?? null,
+    reportedForFixtureUtc: new Date(fixtureDate).toISOString()
   };
 }

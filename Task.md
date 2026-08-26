@@ -55,14 +55,32 @@
   scopes — `last_5`/`last_10` (spec section 9's rolling windows) need
   actual match-by-match results, which the vendor's aggregated endpoint
   doesn't provide; that's the results-sync job above, not this one.
-- [ ] Build injuries/lineups/standings/odds sync jobs — `ApiFootballProvider`
-  already implements the underlying calls (`getInjuries`, `getLineup`,
-  `getStandings`); no job calls them yet.
-- [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, and
-  `generatePredictionsForUpcomingFixtures` to a scheduler (cron / Cloud
+- [x] Build the injuries sync job — `syncInjuries.ts`, keyed on (team,
+  season) pairs implied by real fixtures (deduplicated on the external id
+  pair, since the endpoint isn't competition-scoped), keeping only the most
+  recently dated report per player and upserting a `players` row plus one
+  `injuries` row per player. **Not yet verified against a live API key** —
+  same caveat as fixtures/team-statistics.
+- [ ] `syncInjuries.ts`'s status classification (`injured` / `suspended` /
+  `international_duty` / `doubtful`) is a keyword heuristic over the
+  vendor's free-text `type`/`reason` fields
+  (`ApiFootballProvider.ts::mapInjuryStatus`) — validate it against real
+  responses; the enum values it guesses at may not match the vendor's
+  actual terminology.
+- [ ] `syncInjuries.ts` never marks a player `returned` — a recovered
+  player just stops appearing in fresh reports, leaving their last known
+  row to go stale rather than being updated to reflect recovery (the
+  freshness classifier surfaces the staleness, but nothing flips the
+  status). Revisit once there's a signal to detect recovery from (e.g. the
+  player appearing in a subsequent confirmed lineup).
+- [ ] Build lineups/standings/odds sync jobs — `ApiFootballProvider` already
+  implements the underlying calls (`getLineup`, `getStandings`); no job
+  calls them yet.
+- [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
+  and `generatePredictionsForUpcomingFixtures` to a scheduler (cron / Cloud
   Scheduler / Supabase Edge Function cron) instead of manual admin-endpoint
-  calls. Order matters: fixtures before team-statistics before predictions,
-  since each depends on the previous one's output.
+  calls. Fixtures before team-statistics/injuries before predictions, since
+  the latter two depend on fixtures existing.
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

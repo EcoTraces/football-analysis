@@ -5,11 +5,22 @@ import { PredictionClient } from "../services/predictionClient.js";
 import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredictions.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
+import { syncInjuries } from "../jobs/syncInjuries.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
 
 const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync.
+
+function requireProvider(provider: FootballDataProvider): void {
+  if (provider.name === "null") {
+    throw new ApiError(
+      409,
+      "No football data provider is configured (FOOTBALL_DATA_PROVIDER=null). See Data_Sources.md.",
+      "no_provider_configured"
+    );
+  }
+}
 
 // Every route on this router requires a valid Supabase JWT for a user whose
 // user_profiles.role is 'admin' — see requireAdmin.ts and README.md →
@@ -26,13 +37,7 @@ export function createAdminRouter(
 
   router.post("/admin/sync", async (req, res, next) => {
     try {
-      if (provider.name === "null") {
-        throw new ApiError(
-          409,
-          "No football data provider is configured (FOOTBALL_DATA_PROVIDER=null). See Data_Sources.md.",
-          "no_provider_configured"
-        );
-      }
+      requireProvider(provider);
 
       const daysParam = Number(req.query.days ?? 1);
       const days = Number.isFinite(daysParam) ? Math.min(Math.max(Math.trunc(daysParam), 1), MAX_SYNC_DAYS) : 1;
@@ -51,15 +56,18 @@ export function createAdminRouter(
 
   router.post("/admin/team-statistics/sync", async (_req, res, next) => {
     try {
-      if (provider.name === "null") {
-        throw new ApiError(
-          409,
-          "No football data provider is configured (FOOTBALL_DATA_PROVIDER=null). See Data_Sources.md.",
-          "no_provider_configured"
-        );
-      }
-
+      requireProvider(provider);
       const result = await syncTeamStatistics(supabase, provider, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/injuries/sync", async (_req, res, next) => {
+    try {
+      requireProvider(provider);
+      const result = await syncInjuries(supabase, provider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);

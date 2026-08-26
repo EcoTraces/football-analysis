@@ -168,4 +168,73 @@ describe("ApiFootballProvider", () => {
     if (result.ok) return;
     expect(result.reason).toBe("upstream_error");
   });
+
+  it("maps a well-formed injuries response, classifying status from free-text fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            player: { id: 501, name: "Sample Striker", type: "Missing Fixture", reason: "Knee Injury" },
+            fixture: { date: "2026-08-20T15:00:00+00:00" }
+          },
+          {
+            player: { id: 502, name: "Sample Midfielder", type: "Suspended", reason: "Red Card" },
+            fixture: { date: "2026-08-21T15:00:00+00:00" }
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getInjuries("33", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      {
+        playerExternalId: "501",
+        playerName: "Sample Striker",
+        status: "injured",
+        description: "Knee Injury",
+        reportedForFixtureUtc: "2026-08-20T15:00:00.000Z"
+      },
+      {
+        playerExternalId: "502",
+        playerName: "Sample Midfielder",
+        status: "suspended",
+        description: "Red Card",
+        reportedForFixtureUtc: "2026-08-21T15:00:00.000Z"
+      }
+    ]);
+  });
+
+  it("skips an injury entry missing a player id, name, or fixture date rather than guessing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          { player: { id: 501, name: "Sample Striker" }, fixture: {} }, // no fixture date
+          { player: { name: "No Id Player" }, fixture: { date: "2026-08-20T15:00:00+00:00" } } // no player id
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getInjuries("33", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("passes team/season params through for injuries", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getInjuries("33", "2026");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/injuries");
+    expect(requestedUrl.searchParams.get("team")).toBe("33");
+    expect(requestedUrl.searchParams.get("season")).toBe("2026");
+  });
 });

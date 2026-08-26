@@ -37,6 +37,21 @@ export interface ProviderTeamStatistics {
   failedToScore: number | null;
 }
 
+export interface ProviderInjury {
+  playerExternalId: string;
+  playerName: string;
+  // A best-effort classification from the vendor's free-text type/reason
+  // fields (e.g. "Suspended", "Knee Injury") — see mapInjuryStatus in
+  // ApiFootballProvider.ts. Not a guaranteed-accurate mapping; unverified
+  // against live data like the rest of this provider.
+  status: "injured" | "suspended" | "international_duty" | "doubtful" | "returned";
+  description: string | null;
+  // The fixture this report is attached to — the provider reports one
+  // entry per (player, fixture) they were missing for, not a single
+  // current-status flag. The caller picks the most recent one per player.
+  reportedForFixtureUtc: string;
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -75,7 +90,7 @@ export interface TeamStatsProvider {
 }
 
 export interface InjuryProvider {
-  getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>>;
+  getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderInjury[]>>;
 }
 
 export interface LineupProvider {

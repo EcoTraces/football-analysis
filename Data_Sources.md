@@ -70,6 +70,16 @@ actually has a blank record.
 ingestion needs them to create reference rows (countries/competitions/
 teams/seasons) the first time it sees an entity; see below.
 
+`getInjuries` similarly returns a typed `ProviderInjury[]` rather than
+`unknown[]` — each entry is one (player, fixture) report, not a
+current-status snapshot (the vendor's endpoint reports "this player missed
+this fixture," not "this player is currently out"); see the injuries
+ingestion section below for how the sync job turns that into one row per
+player. `status` is a best-effort classification from the vendor's
+free-text `type`/`reason` fields (`ApiFootballProvider.ts::mapInjuryStatus`)
+— there's no documented enum to map onto this schema's status column, so
+treat it as a heuristic, not a guarantee, until checked against live data.
+
 ### Single-day constraint
 
 `ApiFootballProvider.getFixturesForDateRange` only accepts a single UTC day
@@ -159,6 +169,51 @@ to read) and **before** `/api/admin/predictions/run` (which reads from
 results, which the vendor's aggregated `/teams/statistics` endpoint doesn't
 provide — that needs a separate results-sync job pulling and storing
 individual match results, not an extension of this one (see `Task.md`).
+
+## Injuries ingestion: `syncInjuries.ts`
+
+`backend/src/jobs/syncInjuries.ts::syncInjuries` populates `players` and
+`injuries` from the vendor's own injuries endpoint:
+
+1. Reads every distinct (team, season) pair implied by real
+   (non-synthetic) fixtures — both home and away sides. Unlike
+   `syncTeamStatistics.ts`, this is **not** scoped by competition: the
+   provider's `/injuries` endpoint only takes team+season (a player's
+   injury doesn't depend on which competition a fixture belongs to), so
+   the dedup key is the (teamExternalId, seasonExternalId) pair actually
+   sent to the provider — two internal `season_id` rows for the same team
+   (one per competition) sharing the same external season id (e.g. both
+   "2026") collapse into a single call rather than two redundant ones.
+2. Calls `provider.getInjuries(team, season)`. The response is one entry
+   per (player, fixture) the player was reported missing for — not a
+   single current-status flag — so for each team's results, only the most
+   recently dated report per player is kept
+   (`syncInjuries.ts::mostRecentPerPlayer`) as the closest available proxy
+   for "their status right now."
+3. For each kept report, upserts a `players` row (find-or-create by
+   external id, same pattern as teams/competitions) and then an `injuries`
+   row via a real `upsert(..., { onConflict: "player_id" })` — a genuine
+   plain-column constraint added in migration 0003, same category as
+   `team_statistics`'s.
+4. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Each (team, season) combination is processed independently — one team's
+provider call failing doesn't lose the others. Trigger it via `POST
+/api/admin/injuries/sync`.
+
+**Known limitation — no "returned" transition.** This schema models
+"current status per player," and a player who recovers simply stops
+appearing in fresh reports; nothing in this job detects that and flips
+their row to `returned`. Their last-known row just goes stale, which the
+freshness classifier (`backend/src/lib/freshness.ts`) surfaces to callers
+as `STALE` rather than this job guessing at recovery — an honest "we don't
+know anymore," not a wrong "still injured" being actively reasserted. A
+future improvement (e.g. detecting the player in a subsequent confirmed
+lineup) is tracked in `Task.md`, not implemented here.
+
+**Also unverified:** the `status` classification is a keyword heuristic
+over free text with no documented enum behind it — see the abstraction
+section above and `Task.md`.
 
 ## Adding another provider
 

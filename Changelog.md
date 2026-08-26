@@ -1,5 +1,45 @@
 # Changelog
 
+## 2026-08-26 — Injuries sync job
+
+- Added `syncInjuries.ts`: populates `players` and `injuries` from the
+  provider's own injuries endpoint for every distinct (team, season) pair
+  implied by real fixtures, deduplicated on the external id pair actually
+  sent to the provider (the endpoint isn't competition-scoped, unlike team
+  statistics). Since the vendor reports one entry per (player, fixture) a
+  player was missing for rather than a single current-status flag, the job
+  keeps only the most recently dated report per player.
+- Gave `InjuryProvider.getInjuries` a real typed return (`ProviderInjury[]`)
+  instead of `unknown[]` — `ApiFootballProvider` maps the vendor's raw
+  response and skips entries missing a player id/name/fixture date rather
+  than guessing. Status (`injured`/`suspended`/`international_duty`/
+  `doubtful`) is classified with a keyword heuristic over the vendor's
+  free-text `type`/`reason` fields — flagged explicitly as unverified,
+  since there's no documented enum behind it.
+- Added migration `0003_injuries_and_players_refs.sql`: external-id
+  uniqueness for `players` (mirroring teams/competitions), and a new
+  uniqueness constraint on `injuries.player_id` the initial schema didn't
+  anticipate needing — this models "current status per player," not a
+  history of every report, and `syncInjuries.ts` upserts against it
+  directly (a real plain-column constraint, like `team_statistics`'s).
+- Explicitly does *not* mark a recovered player `returned` — a player who
+  stops appearing in fresh reports just goes stale (surfaced by the
+  existing freshness classifier) rather than this job guessing at recovery.
+  Documented as a known gap, not silently glossed over.
+- Added `POST /api/admin/injuries/sync` (inherits the existing admin auth
+  automatically). Factored the repeated "no provider configured" check
+  out of the three sync routes into one `requireProvider()` helper while
+  adding this, rather than copy-pasting it a third time.
+- 12 new tests (3 in `apiFootballProvider.test.ts` for the injuries
+  mapping, 9 in `syncInjuries.test.ts` covering deduplication, most-recent-
+  report selection, idempotency, missing-external-ref skipping, per-item
+  failure isolation, empty-result handling, and synthetic-fixture
+  exclusion) — 56 backend tests passing in total, clean lint/typecheck/
+  build. Caught and fixed a bug in my own test fixture during this pass:
+  the fake provider's default response returned the same player for every
+  team, which isn't realistic and would have made the "one player per
+  team" assertions pass or fail for the wrong reason.
+
 ## 2026-08-26 — Team-statistics sync job
 
 - Added `syncTeamStatistics.ts`: populates `team_statistics` from the
