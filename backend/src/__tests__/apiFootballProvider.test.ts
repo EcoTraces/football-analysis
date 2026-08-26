@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiFootballProvider } from "../providers/ApiFootballProvider.js";
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
 const RAW_FIXTURE = {
@@ -77,7 +77,9 @@ describe("ApiFootballProvider", () => {
 
   it("maps HTTP 429 to reason=rate_limited", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 429));
-    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+    // maxRetries: 0 — this test is about status mapping, not retry behavior
+    // (429 is retryable by default; see the dedicated retry tests below).
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 0);
 
     const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
 
@@ -102,13 +104,101 @@ describe("ApiFootballProvider", () => {
     const abortError = new Error("The operation was aborted");
     abortError.name = "AbortError";
     const fetchMock = vi.fn().mockRejectedValue(abortError);
-    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 5);
+    // maxRetries: 0 — this test is about status mapping, not retry behavior
+    // (timeouts are retryable by default; see the dedicated retry tests below).
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 5, undefined, 0);
 
     const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("timeout");
+  });
+
+  it("retries a transient HTTP 500 up to maxRetries times, then returns upstream_error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 500));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 3, sleepMock);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("upstream_error");
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+    expect(sleepMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("recovers if a transient failure is followed by a successful attempt", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}, 503))
+      .mockResolvedValueOnce(jsonResponse({ response: [RAW_FIXTURE], results: 1 }));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 3, sleepMock);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry an HTTP 401 — a bad key will never succeed on a retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 401));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const provider = new ApiFootballProvider("bad-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 3, sleepMock);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sleepMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT retry a body-level vendor error (e.g. an invalid league id)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [], errors: { league: "Invalid league id" } }));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 3, sleepMock);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors a 429 response's Retry-After header instead of the default backoff", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}, 429, { "retry-after": "7" }))
+      .mockResolvedValueOnce(jsonResponse({ response: [], results: 0 }));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 3, sleepMock);
+
+    await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(sleepMock).toHaveBeenCalledWith(7000);
+  });
+
+  it("tracks the last-seen rate-limit headers via getRateLimitStatus()", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ response: [], results: 0 }, 200, { "x-ratelimit-requests-limit": "100", "x-ratelimit-requests-remaining": "42" }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    expect(provider.getRateLimitStatus()).toBeNull();
+    await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(provider.getRateLimitStatus()).toMatchObject({ limit: 100, remaining: 42 });
+  });
+
+  it("tracks the outcome of the most recent completed request via getLastRequestStatus()", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 401));
+    const provider = new ApiFootballProvider("bad-key", "https://example.test", fetchMock as unknown as typeof fetch, 10_000, undefined, 0);
+
+    expect(provider.getLastRequestStatus()).toBeNull();
+    await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(provider.getLastRequestStatus()).toMatchObject({ ok: false, reason: "unauthorized" });
   });
 
   it("maps a non-JSON body to reason=upstream_error instead of throwing", async () => {

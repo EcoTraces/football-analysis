@@ -10,8 +10,28 @@ JSON, wrapped as `{ "data": ..., "meta"?: {...} }` on success or
 Liveness check. `{ status: "ok", timestamp }`.
 
 ### `GET /health/data`
-Database reachability and provider configuration (no secrets).
-`{ database, databaseError, productionFixtureCount, provider, providerConfigured }`.
+Database reachability, provider configuration, and per-dataset freshness
+(no secrets). `{ database, databaseError, productionFixtureCount, provider,
+providerConfigured, freshness }`, where `freshness` is an array of `{
+domain, lastUpdated, status, color }` — one entry per dataset (`fixtures`,
+`standings`, `teamStatistics`, `injuries`, `lineups`, `odds`,
+`predictions`), `status` one of `LIVE`/`RECENT`/`STALE`/`UNAVAILABLE`
+(`backend/src/lib/freshness.ts`) and `color` the same thing as
+`GREEN`/`YELLOW`/`RED`/`GRAY` for a dashboard to render directly.
+
+### `GET /health/api-football`
+Provider connectivity status derived from real request history — does
+**not** make a live call on every hit (that would burn API quota on every
+health-check poll). `{ status, message, lastRequest, rateLimit }`, where
+`status` is `NOT_CONFIGURED` (provider isn't `api-football`), `UNKNOWN`
+(configured, but no request has been made yet), `CONNECTED`, or `ERROR`.
+`lastRequest`/`rateLimit` are `null` until at least one real request has
+happened (via a sync job or an admin trigger).
+
+### `GET /health/scheduler`
+Whether the in-process cron scheduler (`backend/src/scheduler/scheduler.ts`)
+is running. `{ status: "DISABLED" | "RUNNING", message, jobs }`, where each
+entry in `jobs` is `{ name, cronExpression, nextRun }`.
 
 ### `GET /health/model`
 Placeholder — model monitoring is not implemented yet.
@@ -126,6 +146,21 @@ Runs `generatePredictionsForUpcomingFixtures` against the latest
 
 ### `GET /admin/data-health`
 Counts of production fixtures, synthetic fixtures, and current predictions.
+
+### `GET /admin/jobs?limit=N&job_name=X`
+Recent `ingestion_runs` rows, newest first (`limit` default 50, capped at
+200; `job_name` optionally filters to one job — e.g. `sync_odds`,
+`predictions`). Returns `{ id, job_name, provider, status,
+records_processed, records_rejected, error_summary, started_at,
+finished_at }[]`. This is the same table every sync job (and now
+`predictions`) has always written to — this endpoint just reads it back,
+and is what makes the scheduler's multi-day observation period
+(`Task.md`) actually observable.
+
+### `GET /admin/jobs/summary`
+Per-`job_name` summary reduced from the most recent 500 `ingestion_runs`
+rows: `{ [job_name]: { lastRun, lastSuccess } }`, where `lastSuccess` is
+`null` if that job has never succeeded in the sampled window.
 
 ## Scheduler (no HTTP surface)
 

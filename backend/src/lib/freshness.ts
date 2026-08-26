@@ -1,6 +1,6 @@
 export type Freshness = "LIVE" | "RECENT" | "STALE" | "UNAVAILABLE";
 
-export type FreshnessDomain = "fixtures" | "injuries" | "lineups" | "results" | "standings" | "predictions" | "odds";
+export type FreshnessDomain = "fixtures" | "injuries" | "lineups" | "results" | "standings" | "predictions" | "odds" | "teamStatistics";
 
 export interface FreshnessPolicy {
   /** Age (ms) below which data counts as LIVE. */
@@ -19,7 +19,11 @@ export const FRESHNESS_POLICIES: Record<FreshnessDomain, FreshnessPolicy> = {
   results: { liveMs: 10 * 60_000, recentMs: 24 * 60 * 60_000 },
   standings: { liveMs: 60 * 60_000, recentMs: 24 * 60 * 60_000 },
   predictions: { liveMs: 60 * 60_000, recentMs: 12 * 60 * 60_000 },
-  odds: { liveMs: 5 * 60_000, recentMs: 60 * 60_000 }
+  odds: { liveMs: 5 * 60_000, recentMs: 60 * 60_000 },
+  // Synced once daily (scheduler.ts) — "live" allows for a normal delay
+  // after that run, "recent" covers roughly two missed daily runs before
+  // flagging staleness.
+  teamStatistics: { liveMs: 6 * 60 * 60_000, recentMs: 48 * 60 * 60_000 }
 };
 
 export function classifyFreshness(

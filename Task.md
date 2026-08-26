@@ -29,6 +29,23 @@
   `providers/registry.ts`. **Not yet verified against a live API key** —
   see `Data_Sources.md`'s caveat. Get a real key and run `POST
   /api/admin/sync?days=1` against a real Supabase project before trusting it.
+- [x] Add retry-with-backoff and rate-limit tracking to `ApiFootballProvider`
+  — transient failures (timeout, network error, HTTP 5xx, HTTP 429) retry
+  with exponential backoff (honoring a 429's `Retry-After` header),
+  permanent failures (401/403, a malformed request, a body-level vendor
+  error) don't retry. Tracks the last-seen rate-limit response headers and
+  the outcome of the most recent completed request via
+  `getRateLimitStatus()`/`getLastRequestStatus()`, surfaced by `GET
+  /health/api-football`. 8 new tests. Still unverified against live
+  rate-limit headers — the header names followed are documented, not
+  confirmed against a real response (same caveat as the rest of this file).
+- [ ] **BLOCKED ON THE USER**: nothing above can be exercised against a real
+  API-Football account from this environment — there is no real
+  `FOOTBALL_DATA_API_KEY` configured anywhere in it, and obtaining one
+  requires signing up for a third-party service (api-football.com or
+  RapidAPI) with a real account, which only the project owner can do. See
+  README.md → "Configuring a live API-Football key" for the exact steps
+  and the commands to run once a key exists.
 - [x] Build the fixture ingestion job — `syncFixtures.ts`, idempotent via
   the fixture's own external id (not the natural key — a postponed fixture
   keeps its id but changes kickoff time).
@@ -147,11 +164,35 @@
   `scheduler.ts`, not configurable via env vars — fine for now since
   nothing has asked for per-job tuning yet; revisit if a real operational
   need for different schedules per environment shows up.
-- [ ] None of the scheduler's cron timing has been observed running for
-  real over multiple days (only unit-tested against fake timers/providers
-  and smoke-tested for a few seconds at boot) — same "not yet verified
-  against live infrastructure" caveat as the rest of the ingestion
-  pipeline.
+- [ ] **OBSERVATION PENDING** — none of the scheduler's cron timing has been
+  observed running for real over multiple days (only unit-tested against
+  fake timers/providers and smoke-tested for a few seconds at boot). The
+  infrastructure to observe it now exists (`ingestion_runs` already
+  persisted every run; `GET /admin/jobs`/`GET /admin/jobs/summary` read it
+  back; `GET /health/scheduler` reports whether the scheduler is alive and
+  each job's next run time) — what's missing is the observation period
+  itself, which requires `SCHEDULER_ENABLED=true` plus a real
+  `FOOTBALL_DATA_API_KEY` running continuously for at least 72 hours (7
+  days preferred) in a persistent environment. This has NOT happened.
+  Observation start time: not yet started. Do not mark this complete after
+  a single successful run, however clean — a bad interaction only shows up
+  after real repeated cycles (rate limits, token/lease expiry, accumulating
+  duplicate rows, a job silently degrading to "partial" every time).
+- [x] Add job-history/observability endpoints — `GET /admin/jobs` (recent
+  `ingestion_runs` rows, optional `?job_name=`/`?limit=` filters) and `GET
+  /admin/jobs/summary` (last run + last succeeded run per job_name,
+  admin-authenticated); `GET /health/scheduler` (whether the scheduler is
+  running, each job's cron expression and next run time) and `GET
+  /health/api-football` (provider configured y/n, last request outcome,
+  last-seen rate-limit headers — derived from real request history, not a
+  live probe on every hit, to avoid burning API quota on health-check
+  polls); `GET /health/data` extended with per-dataset freshness
+  (fixtures/standings/team-statistics/injuries/lineups/odds/predictions),
+  each classified LIVE/RECENT/STALE/UNAVAILABLE (surfaced alongside a
+  GREEN/YELLOW/RED/GRAY color) via the existing `freshness.ts` thresholds.
+  The `predictions` job now also writes an `ingestion_runs` row (it didn't
+  before), so it shows up in this history like the six sync jobs. 15 new
+  tests.
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

@@ -43,7 +43,12 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   trigger each — authenticated by a Supabase JWT plus an admin role check
   — and an optional in-process cron scheduler (`SCHEDULER_ENABLED=true`)
   that runs the same jobs automatically instead of relying on manual
-  endpoint calls. See `API.md`.
+  endpoint calls. `ApiFootballProvider` retries transient failures with
+  exponential backoff and tracks rate-limit headers; `GET
+  /health/api-football`, `GET /health/scheduler`, and `GET /health/data`
+  (now with per-dataset freshness) plus admin-only `GET /admin/jobs`/`GET
+  /admin/jobs/summary` expose real job/request history for monitoring. See
+  `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -216,6 +221,51 @@ by hand:
 The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is never used as this
 bearer token — it's a backend-only secret with no associated user, and
 `auth.getUser()` would reject it anyway.
+
+## Configuring a live API-Football key
+
+No real football data has ever flowed through this application — every
+sync job has only been tested against fake HTTP responses injected in unit
+tests. To actually verify it against live data:
+
+1. Get a key from [api-football.com](https://www.api-football.com/) (direct
+   api-sports.io signup) or via [RapidAPI](https://rapidapi.com/api-sports/api/api-football).
+   The free tier is enough to verify the integration; check its request cap
+   before running a wide sync.
+2. Set in `backend/.env`:
+   ```
+   FOOTBALL_DATA_PROVIDER=api-football
+   FOOTBALL_DATA_API_KEY=<your real key>
+   ```
+   Never commit this file or paste the real key into an issue, a commit
+   message, or a log line — `backend/.env` is gitignored, and
+   `ApiFootballProvider` never logs the key itself (see `Coding_Rules.md`).
+3. Start the backend (`npm run dev`) — it fails fast at boot if
+   `FOOTBALL_DATA_API_KEY` is empty while `FOOTBALL_DATA_PROVIDER=api-football`,
+   rather than silently falling back to fabricated data.
+4. Run the verification chain below against a real Supabase project (get
+   `$ADMIN_JWT` per "Creating the first admin user"):
+   ```bash
+   curl -s http://localhost:8080/api/health/api-football   # expect status: "UNKNOWN" before the first request
+   curl -X POST "http://localhost:8080/api/admin/sync?days=1" -H "Authorization: Bearer $ADMIN_JWT"
+   curl -s http://localhost:8080/api/health/api-football   # expect status: "CONNECTED" and a populated rateLimit
+   curl -s "http://localhost:8080/api/fixtures/today"       # confirm real fixtures came back, not synthetic ones
+   curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" -H "Authorization: Bearer $ADMIN_JWT"
+   curl -X POST "http://localhost:8080/api/admin/standings/sync" -H "Authorization: Bearer $ADMIN_JWT"
+   curl -s http://localhost:8080/api/admin/jobs -H "Authorization: Bearer $ADMIN_JWT"   # real ingestion_runs history
+   ```
+5. Check `ingestion_runs.error_summary` (via `GET /admin/jobs`) for anything
+   indicating a field-mapping mismatch — every mapping in
+   `ApiFootballProvider.ts` was written from the vendor's documentation, not
+   a confirmed live response, and is expected to need adjustment the first
+   time it sees real data (see `Data_Sources.md`).
+
+None of this can be done from this development environment — there is no
+real API-Football account or key available here, and creating one requires
+a human to sign up with a real account. Everything above is otherwise
+finished and ready to run the moment a key is configured, including retry/
+backoff and rate-limit tracking (`Data_Sources.md`) and the job-history/
+health endpoints to verify the result.
 
 ## Documentation
 

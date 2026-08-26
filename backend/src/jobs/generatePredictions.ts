@@ -126,6 +126,7 @@ export async function generatePredictionsForUpcomingFixtures(
 }
 
 export interface RunLatestPoissonPredictionsResult {
+  runId: string | null;
   modelVersionId: string | null;
   processed: number;
   skipped: number;
@@ -137,7 +138,9 @@ export interface RunLatestPoissonPredictionsResult {
 // in one place. `modelVersionId: null` means no poisson-baseline
 // model_version row exists yet — the caller decides how to surface that
 // (a 409 for the HTTP route, a log warning for the scheduler), not this
-// function throwing or guessing at a model version.
+// function throwing or guessing at a model version. `runId: null` in that
+// case too — mirroring the other admin sync routes, no ingestion_runs row
+// is written for a run that never actually started.
 export async function runLatestPoissonPredictionsJob(
   supabase: SupabaseClient,
   mlServiceUrl: string,
@@ -154,8 +157,22 @@ export async function runLatestPoissonPredictionsJob(
 
   if (error) throw new Error(`Failed to load poisson-baseline model_version: ${error.message}`);
   if (!modelVersion) {
-    return { modelVersionId: null, processed: 0, skipped: 0, failed: 0 };
+    return { runId: null, modelVersionId: null, processed: 0, skipped: 0, failed: 0 };
   }
+
+  // Recorded in ingestion_runs like the six sync jobs, so the admin job-
+  // history endpoint (GET /admin/jobs) and the multi-day observation
+  // infrastructure see predictions runs too, not just data ingestion.
+  // provider: "ml-service", not the football data provider's name — this
+  // job doesn't call it; it reads team_statistics already in the database
+  // and calls the local prediction microservice instead.
+  const { data: run, error: runError } = await supabase
+    .from("ingestion_runs")
+    .insert({ job_name: "predictions", provider: "ml-service", status: "running" })
+    .select("id")
+    .single();
+  if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
+  const runId = run.id as string;
 
   const client = new PredictionClient(mlServiceUrl);
   const result = await generatePredictionsForUpcomingFixtures(
@@ -165,7 +182,21 @@ export async function runLatestPoissonPredictionsJob(
     logger,
     windowHours
   );
-  return { modelVersionId: modelVersion.id as string, ...result };
+
+  const status = result.processed === 0 && result.failed > 0 ? "failed" : result.failed > 0 || result.skipped > 0 ? "partial" : "succeeded";
+
+  const { error: finishError } = await supabase
+    .from("ingestion_runs")
+    .update({
+      status,
+      records_processed: result.processed,
+      records_rejected: result.failed,
+      finished_at: new Date().toISOString()
+    })
+    .eq("id", runId);
+  if (finishError) logger.error({ err: finishError, runId }, "Failed to finalize ingestion_runs row");
+
+  return { runId, modelVersionId: modelVersion.id as string, ...result };
 }
 
 // Confidence is deliberately NOT a function of probability alone (spec

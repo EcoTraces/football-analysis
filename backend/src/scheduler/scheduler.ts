@@ -107,9 +107,18 @@ export function guarded(name: string, logger: Logger, fn: () => Promise<void>): 
   };
 }
 
+export interface ScheduledJobStatus {
+  name: string;
+  cronExpression: string;
+  /** ISO timestamp of the next scheduled run, or null if node-cron can't compute one (e.g. just stopped). */
+  nextRun: string | null;
+}
+
 export interface Scheduler {
   /** Names of the jobs actually scheduled, for logging/introspection and tests. */
   jobs: string[];
+  /** Per-job cron expression and next-run time, for GET /health/scheduler. */
+  status(): ScheduledJobStatus[];
   stop(): void;
 }
 
@@ -118,13 +127,12 @@ export interface Scheduler {
 // running this in more than one replica would sync everything N times over
 // with no lock between them (see Deployment.md's "Known gaps").
 export function startScheduler(deps: SchedulerDeps): Scheduler {
-  const tasks: ScheduledTask[] = [];
-  const jobs: string[] = [];
+  const entries: Array<{ name: string; expression: string; task: ScheduledTask }> = [];
   const options = { timezone: "UTC", noOverlap: true };
 
   function add(name: string, expression: string, fn: () => Promise<void>): void {
-    tasks.push(cron.schedule(expression, guarded(name, deps.logger, fn), options));
-    jobs.push(name);
+    const task = cron.schedule(expression, guarded(name, deps.logger, fn), options);
+    entries.push({ name, expression, task });
   }
 
   if (isProviderConfigured(deps.provider)) {
@@ -150,12 +158,19 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   // (matches /admin/predictions/run, which has never required a provider).
   add("predictions", PREDICTIONS_CRON, () => runPredictions(deps));
 
+  const jobs = entries.map((e) => e.name);
   deps.logger.info({ jobs }, "Scheduler started");
 
   return {
     jobs,
+    status() {
+      return entries.map((e) => {
+        const nextRun = e.task.getNextRun();
+        return { name: e.name, cronExpression: e.expression, nextRun: nextRun ? nextRun.toISOString() : null };
+      });
+    },
     stop() {
-      for (const task of tasks) task.stop();
+      for (const e of entries) e.task.stop();
     }
   };
 }

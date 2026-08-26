@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-08-26 — Retry/rate-limit hardening + job observability infrastructure
+
+Closes the two remaining cross-cutting gaps as far as they can be closed
+without a live API key or real wall-clock days: hardens the API client and
+builds the monitoring infrastructure needed to actually observe the
+scheduler once both are available. **Neither gap is closed outright** — see
+Task.md/Road_map.md for exactly what's still blocked and on what.
+
+- `ApiFootballProvider`'s `request()` now retries transient failures
+  (timeout, network error, HTTP 5xx, HTTP 429 — honoring `Retry-After`)
+  with exponential backoff plus jitter, and does NOT retry permanent ones
+  (401/403, other 4xx, a non-JSON body, a body-level vendor error like an
+  invalid league id). Tracks the last-seen rate-limit response headers
+  (`getRateLimitStatus()`) and the outcome of the most recently completed
+  request (`getLastRequestStatus()`), warning when quota drops below 5%.
+  Threaded a `Logger` into the provider (optional, backward-compatible
+  with all 26 existing positional-arg test constructions).
+- `runLatestPoissonPredictionsJob` now writes an `ingestion_runs` row like
+  the six sync jobs always have — predictions previously had no persistent
+  execution history at all.
+- Added `GET /admin/jobs` and `GET /admin/jobs/summary` (admin-only):
+  read real job history back from `ingestion_runs` — recent runs, and a
+  last-run/last-succeeded-run summary per job. Added `GET
+  /health/scheduler` (whether the in-process scheduler is running, each
+  job's cron expression and next run time — `scheduler.ts` gained a
+  `status()` method) and `GET /health/api-football` (provider connectivity
+  derived from real request history, not a live probe on every poll).
+  Extended `GET /health/data` with per-dataset freshness
+  (fixtures/standings/team-statistics/injuries/lineups/odds/predictions),
+  LIVE/RECENT/STALE/UNAVAILABLE plus a GREEN/YELLOW/RED/GRAY color, using
+  the existing `freshness.ts` classifier — added a `teamStatistics` domain
+  to it, the one dataset it didn't already cover.
+- 32 new tests (8 for retry/rate-limit behavior in
+  `apiFootballProvider.test.ts`, 1 more scheduler `status()` test, 10 in a
+  new `health.test.ts`, 5 in a new `adminJobsSummary.test.ts`, plus the
+  wiring changes) — 127 backend tests passing in total, clean lint/
+  typecheck/build. Manually smoke-tested `GET /health/scheduler`, `GET
+  /health/api-football`, and `GET /health/data` against a running server
+  (dummy Supabase credentials, no live project available in this
+  environment): confirmed correct behavior with `SCHEDULER_ENABLED=true`
+  and no provider configured (scheduler running with only `predictions`
+  scheduled, provider reporting `NOT_CONFIGURED`, every freshness domain
+  reporting `UNAVAILABLE`/`GRAY` against an unreachable dummy database)
+  rather than crashing or fabricating a healthy-looking response.
+- **Not done, and cannot be done from here**: no real API-Football key
+  exists anywhere in this environment — obtaining one requires a human to
+  sign up for a real account (api-football.com or RapidAPI). Nothing above
+  has been exercised against live data; only against injected fakes. See
+  README.md → "Configuring a live API-Football key" for the exact steps
+  and commands to run the moment a key is configured.
+- **Not done, and cannot be done from here**: the scheduler has not run
+  for real over any meaningful period — that requires `SCHEDULER_ENABLED=true`
+  plus a real API key running continuously for at least 72 hours (7 days
+  preferred) in a persistent environment, which has not started. The
+  infrastructure to observe it (this changelog entry) is now in place;
+  the observation period itself is not. Do not treat this as done until
+  it actually has run that long — see Task.md's "OBSERVATION PENDING" item.
+
 ## 2026-08-26 — Scheduler for sync/prediction jobs
 
 - Added `backend/src/scheduler/scheduler.ts`: an in-process cron scheduler

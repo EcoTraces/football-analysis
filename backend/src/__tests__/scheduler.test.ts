@@ -98,6 +98,26 @@ describe("scheduler", () => {
     scheduler.stop();
   });
 
+  it("status() reports a cron expression and a next-run time for every scheduled job", () => {
+    const scheduler = startScheduler({
+      supabase: fakeClient(new FakeSupabase()),
+      provider: new StubProvider("fake-provider"),
+      mlServiceUrl: "http://localhost:8000",
+      logger: fakeLogger()
+    });
+
+    const status = scheduler.status();
+    expect(status).toHaveLength(scheduler.jobs.length);
+    for (const entry of status) {
+      expect(scheduler.jobs).toContain(entry.name);
+      expect(typeof entry.cronExpression).toBe("string");
+      expect(entry.nextRun).not.toBeNull();
+      expect(() => new Date(entry.nextRun as string).toISOString()).not.toThrow();
+    }
+
+    scheduler.stop();
+  });
+
   it("stop() actually stops every scheduled task (none remain running)", () => {
     const scheduler = startScheduler({
       supabase: fakeClient(new FakeSupabase()),

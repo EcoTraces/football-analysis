@@ -14,6 +14,37 @@ import { createRequireAdmin } from "../middleware/requireAdmin.js";
 
 const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync.
 const MAX_KICKOFF_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS; shared by lineups and odds sync.
+const MAX_JOB_HISTORY_LIMIT = 200;
+const JOB_HISTORY_SUMMARY_SAMPLE = 500; // Rows scanned client-side to compute "last run per job" — see /admin/jobs/summary.
+
+export interface IngestionRunRow {
+  id: string;
+  job_name: string;
+  provider: string;
+  status: string;
+  records_processed: number;
+  records_rejected: number;
+  started_at: string;
+  finished_at: string | null;
+}
+
+// Pure and exported for direct unit testing — reduces a batch of
+// ingestion_runs rows (already ordered newest-first by the caller) into
+// "most recent run" and "most recent succeeded run" per distinct job_name.
+export function summarizeIngestionRuns(
+  runsNewestFirst: IngestionRunRow[]
+): Record<string, { lastRun: IngestionRunRow; lastSuccess: IngestionRunRow | null }> {
+  const summary: Record<string, { lastRun: IngestionRunRow; lastSuccess: IngestionRunRow | null }> = {};
+  for (const run of runsNewestFirst) {
+    const existing = summary[run.job_name];
+    if (!existing) {
+      summary[run.job_name] = { lastRun: run, lastSuccess: run.status === "succeeded" ? run : null };
+    } else if (!existing.lastSuccess && run.status === "succeeded") {
+      existing.lastSuccess = run;
+    }
+  }
+  return summary;
+}
 
 function requireProvider(provider: FootballDataProvider): void {
   if (provider.name === "null") {
@@ -124,7 +155,53 @@ export function createAdminRouter(
         });
         return;
       }
-      res.json({ data: { processed: result.processed, skipped: result.skipped, failed: result.failed } });
+      res.json({ data: { runId: result.runId, processed: result.processed, skipped: result.skipped, failed: result.failed } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Job execution history from ingestion_runs — every sync job (and now
+  // predictions) writes one row per invocation here already; this just
+  // reads it back. Backs the admin monitoring page's "recent jobs / failed
+  // jobs" view and the multi-day scheduler observation this table exists
+  // to make possible (see Task.md).
+  router.get("/admin/jobs", async (req, res, next) => {
+    try {
+      const limitParam = Number(req.query.limit ?? 50);
+      const limit = Number.isFinite(limitParam) ? Math.min(Math.max(Math.trunc(limitParam), 1), MAX_JOB_HISTORY_LIMIT) : 50;
+      const jobName = typeof req.query.job_name === "string" ? req.query.job_name : null;
+
+      let query = supabase
+        .from("ingestion_runs")
+        .select("id, job_name, provider, status, records_processed, records_rejected, error_summary, started_at, finished_at")
+        .order("started_at", { ascending: false })
+        .limit(limit);
+      if (jobName) query = query.eq("job_name", jobName);
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      res.json({ data: data ?? [] });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Per-job "last run" / "last successful run" summary, derived from the
+  // same table — reduced client-side (a handful of distinct job_name
+  // values) rather than one query per job, since PostgREST has no "distinct
+  // on" the JS client can express directly.
+  router.get("/admin/jobs/summary", async (_req, res, next) => {
+    try {
+      const { data, error } = await supabase
+        .from("ingestion_runs")
+        .select("id, job_name, provider, status, records_processed, records_rejected, started_at, finished_at")
+        .order("started_at", { ascending: false })
+        .limit(JOB_HISTORY_SUMMARY_SAMPLE);
+      if (error) throw new Error(error.message);
+
+      res.json({ data: summarizeIngestionRuns((data ?? []) as IngestionRunRow[]) });
     } catch (err) {
       next(err);
     }

@@ -20,7 +20,14 @@ import { startScheduler } from "./scheduler/scheduler.js";
 const env = loadEnv();
 const logger = pino({ level: env.NODE_ENV === "production" ? "info" : "debug" });
 const supabase = createSupabaseClient(env);
-const provider = createProvider(env);
+const provider = createProvider(env, logger);
+
+const scheduler = env.SCHEDULER_ENABLED
+  ? startScheduler({ supabase, provider, mlServiceUrl: env.ML_SERVICE_URL, logger })
+  : null;
+if (!scheduler) {
+  logger.info("Scheduler disabled (SCHEDULER_ENABLED=false) — sync/prediction jobs run only via POST /api/admin/*.");
+}
 
 const app = express();
 app.use(helmet());
@@ -41,7 +48,7 @@ app.use(
   })
 );
 
-app.use("/api", createHealthRouter(supabase, provider));
+app.use("/api", createHealthRouter(supabase, provider, scheduler));
 app.use("/api", createFixturesRouter(supabase));
 app.use("/api", createMatchesRouter(supabase));
 app.use("/api", createTeamsRouter(supabase));
@@ -54,13 +61,6 @@ app.use(createErrorHandler(logger));
 const server = app.listen(env.PORT, () => {
   logger.info(`Backend listening on port ${env.PORT} (provider=${provider.name})`);
 });
-
-const scheduler = env.SCHEDULER_ENABLED
-  ? startScheduler({ supabase, provider, mlServiceUrl: env.ML_SERVICE_URL, logger })
-  : null;
-if (!scheduler) {
-  logger.info("Scheduler disabled (SCHEDULER_ENABLED=false) — sync/prediction jobs run only via POST /api/admin/*.");
-}
 
 function shutdown(signal: string): void {
   logger.info(`${signal} received, shutting down`);

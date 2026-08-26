@@ -9,7 +9,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 2. PRD | ✅ Done | `PRD.md` |
 | 3. Architecture | ✅ Done | `Architecture.md` |
 | 4. Database design | ✅ Done | `Database.md`, `supabase/migrations/0001_init.sql` |
-| 5. Data providers | 🟡 Implemented, unverified | `ApiFootballProvider` against api-football v3; not yet exercised against a live key (see `Data_Sources.md`) |
+| 5. Data providers | 🟡 Implemented, unverified — BLOCKED on a real key | `ApiFootballProvider` against api-football v3, with retry/backoff and rate-limit tracking; not yet exercised against a live key — no `FOOTBALL_DATA_API_KEY` exists anywhere in this development environment (see `Data_Sources.md` and README.md → "Configuring a live API-Football key") |
 | 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds, schedulable | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert); all six plus predictions can now run on a cron via `SCHEDULER_ENABLED=true` (`scheduler.ts`) instead of manual admin calls, assuming a single backend instance |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
@@ -25,8 +25,18 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; admin routes now require a Supabase JWT + admin role (unverified against a real project — see Task.md); still no audit log, no signup/role-assignment UI |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
 | 20. Production deployment | ⬜ Not started | Dockerfiles + compose only; no hosting configured |
+| 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
 
 ## Immediate next steps (see Task.md for details)
+
+**Steps 1–5 below are BLOCKED on a real `FOOTBALL_DATA_API_KEY`.** No such
+key exists anywhere in this development environment, and creating one
+requires a human to sign up with a real API-Football/RapidAPI account —
+see README.md → "Configuring a live API-Football key" for the exact steps
+and the commands to run the moment a key is configured. Everything these
+steps need (the client, retry/rate-limit handling, the sync jobs, the
+scheduler, the observability endpoints) is already built and tested
+against fakes; only the live verification itself is outstanding.
 
 1. Test `requireAdmin` against a real Supabase project (create an admin
    user per README.md, get a real JWT, confirm `/api/admin/*` accepts it
@@ -35,24 +45,31 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 2. Get a real API-Football key and run `POST /api/admin/sync?days=1`
    against a real Supabase project to verify `ApiFootballProvider`'s
    mapping against a live response — it has only been tested against
-   documentation-derived fakes so far.
+   documentation-derived fakes so far. Check `GET /health/api-football`
+   before and after to confirm it flips from `UNKNOWN` to `CONNECTED`.
 3. Run `/admin/sync`, `/admin/team-statistics/sync`, `/admin/injuries/sync`,
    `/admin/standings/sync`, `/admin/lineups/sync`, `/admin/odds/sync`, then
    `/admin/predictions/run` against a real Supabase project + API key to
    confirm the whole chain actually works end-to-end on real fixtures —
-   none of it has been exercised against live data yet.
+   none of it has been exercised against live data yet. Use `GET
+   /admin/jobs` to confirm each run recorded correctly.
 4. Check `syncInjuries.ts`'s status heuristic (`mapInjuryStatus`) against
    real `/injuries` responses — it's a keyword guess over free text, not a
    documented mapping. Also confirm `syncLineups.ts`'s assumption that
    api-football's lineups endpoint never returns a "predicted" (as opposed
    to officially confirmed) lineup, and `syncOdds.ts`'s bet-name
    classification (`mapBet`) against real `/odds` responses.
-5. Run the scheduler (`SCHEDULER_ENABLED=true`) for real, over multiple
-   days, against a real provider and Supabase project — so far it's only
-   been unit-tested against fakes and smoke-tested for a few seconds at
-   boot. Confirm the daily ingestion chain's ordering actually holds up
-   (fixtures → team-stats/injuries/standings → predictions) and that
-   lineups/odds' 15-minute cadence behaves as expected close to kickoff.
+5. **OBSERVATION PENDING**: run the scheduler (`SCHEDULER_ENABLED=true`) for
+   real, over at least 72 hours (7 days preferred), against a real provider
+   and Supabase project, in a persistent environment that stays up that
+   long — this has NOT started. Use `GET /admin/jobs`/`GET
+   /admin/jobs/summary` and `GET /health/scheduler` to monitor job success
+   rate, rate-limit events (`GET /health/api-football`'s `rateLimit`
+   field), duplicate/stale data, and whether the daily ingestion chain's
+   ordering holds up (fixtures → team-stats/injuries/standings →
+   predictions) and lineups/odds' 15-minute cadence behaves as expected
+   close to kickoff. Do not mark this complete before the observation
+   period has actually elapsed — see `Task.md`.
 6. Start the backtesting pipeline once enough real historical results exist.
 7. Before running more than one backend replica in production, address the
    scheduler's single-instance assumption (`scheduler.ts` has no

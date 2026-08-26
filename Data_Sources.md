@@ -31,6 +31,38 @@ European competitions, simpler API, no league/season params required for
 most endpoints) may be an easier first integration — it would need its own
 provider class following the same pattern.
 
+## Retry, backoff, and rate-limit handling
+
+`ApiFootballProvider`'s private `request()` method retries a bounded number
+of times (default 3, plus the initial attempt — configurable via the
+constructor's `maxRetries` param) with exponential backoff plus jitter,
+but only for failures that might succeed on a later attempt:
+
+- **Retried**: request timeout, a thrown network error (DNS, connection
+  reset, etc.), HTTP 5xx, and HTTP 429 — a 429's `Retry-After` header is
+  honored instead of the default backoff when present.
+- **Not retried**: HTTP 401/403 (a bad key will never succeed on retry),
+  any other 4xx, a non-JSON body, or a body-level vendor error (API-Football
+  returns HTTP 200 with an `errors` object for things like an invalid
+  league id — retrying an unchanged malformed request wastes quota for an
+  outcome that will never change).
+
+Every attempt records the response's rate-limit headers (api-sports.io's
+`x-ratelimit-requests-limit`/`x-ratelimit-requests-remaining`, or RapidAPI's
+capitalized equivalents — read defensively, since neither has been
+confirmed against a live response) via `getRateLimitStatus()`, and the
+outcome of the most recently *completed* request (after retries) via
+`getLastRequestStatus()`. Both back `GET /health/api-football` without that
+endpoint making a live call on every poll. A warning is logged if remaining
+quota drops below 5% of the limit.
+
+None of this — the retry logic, the backoff timing, the specific
+rate-limit header names — has been exercised against a live response
+either; it's implemented from api-football's documented headers and HTTP
+semantics, tested against an injected fake `fetch`
+(`backend/src/__tests__/apiFootballProvider.test.ts`), same caveat as
+everything else in this file.
+
 ## The abstraction
 
 `backend/src/providers/types.ts` defines the contracts application code
@@ -396,6 +428,44 @@ multiple days; it's unit-tested against fakes (`backend/src/__tests__/scheduler.
 and was smoke-tested by booting the server for a few seconds and confirming
 the startup logs and a clean `SIGTERM` shutdown — not the same as watching
 it actually drive a real ingestion pipeline over days of wall-clock time.
+
+## Observability: job history and health endpoints
+
+The infrastructure needed to actually *observe* the scheduler (rather than
+just run it) already existed in part — every sync job has always written
+an `ingestion_runs` row per invocation — but nothing read it back until
+now, and the `predictions` job didn't write one at all.
+
+- `runLatestPoissonPredictionsJob` (`generatePredictions.ts`) now also
+  writes an `ingestion_runs` row (`job_name: "predictions"`,
+  `provider: "ml-service"` — it doesn't call the football data provider, it
+  reads `team_statistics` and calls the local ML microservice), so
+  predictions show up in job history the same way the six sync jobs do.
+- `GET /admin/jobs` and `GET /admin/jobs/summary` (`admin.ts`) read that
+  table back — recent runs, and a last-run/last-succeeded-run summary per
+  `job_name`. This is the concrete thing to watch during the scheduler's
+  multi-day observation period once one starts (see `Task.md`): job
+  success rate, whether any job is stuck on `"partial"`/`"failed"`, and
+  whether `records_processed` keeps growing sanely instead of flatlining
+  or exploding (the latter would flag `syncOdds.ts`'s known lack of
+  de-duplication becoming a real problem, not just a theoretical one).
+- `GET /health/scheduler` reports whether the in-process scheduler is
+  running and each job's next scheduled run (`scheduler.ts`'s new
+  `status()` method, backed by node-cron's `getNextRun()`).
+- `GET /health/api-football` reports connectivity derived from the
+  provider's own request history (`getLastRequestStatus()`/
+  `getRateLimitStatus()`, above) — deliberately not a live ping on every
+  poll, to avoid spending API quota on health checks.
+- `GET /health/data` now includes per-dataset freshness
+  (LIVE/RECENT/STALE/UNAVAILABLE, plus a GREEN/YELLOW/RED/GRAY color) for
+  fixtures, standings, team-statistics, injuries, lineups, odds, and
+  predictions, using the existing `freshness.ts` thresholds against each
+  table's most recent non-synthetic `source_timestamp`
+  (`captured_at`/`generated_at` for odds/predictions respectively).
+
+None of this required new tables or new libraries — it's all built on the
+`ingestion_runs` table and `freshness.ts` classifier that already existed;
+what was missing was simply reading them back through an endpoint.
 
 ## Adding another provider
 

@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type {
   FootballDataProvider,
   ProviderFixture,
@@ -32,6 +33,8 @@ import type {
 // options.
 
 const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 
 interface ApiFootballEnvelope<T> {
   response: T;
@@ -40,18 +43,85 @@ interface ApiFootballEnvelope<T> {
 }
 
 type FetchFn = typeof fetch;
+type SleepFn = (ms: number) => Promise<void>;
+
+// Last-observed rate-limit status from API-Football's response headers, so a
+// health/monitoring endpoint can report it without this class needing to
+// know anything about HTTP routes. api-sports.io's direct API documents
+// `x-ratelimit-requests-limit`/`x-ratelimit-requests-remaining` (a daily
+// quota); routing through RapidAPI instead uses `X-RateLimit-Requests-Limit`/
+// `X-RateLimit-Requests-Remaining` for the same quota, plus a separate
+// per-minute `X-RateLimit-Limit`/`X-RateLimit-Remaining` pair. Header names
+// are read defensively (case-insensitive via the Headers API, first match
+// wins) since — like every other mapping in this file — none of this has
+// been confirmed against a live response yet.
+export interface RateLimitStatus {
+  limit: number | null;
+  remaining: number | null;
+  observedAt: string;
+}
+
+// Outcome of the most recent completed request (after retries), for a
+// health/monitoring endpoint to report "last successful request" / "last
+// failed request" without this class needing to know about HTTP routes.
+export interface LastRequestStatus {
+  ok: boolean;
+  reason?: ProviderUnavailable["reason"];
+  at: string;
+}
+
+interface AttemptOutcome<T> {
+  response: ProviderResponse<T>;
+  retryable: boolean;
+  retryAfterMs: number | null;
+}
 
 export class ApiFootballProvider implements FootballDataProvider {
   readonly name = "api-football";
+  private lastRateLimitStatus: RateLimitStatus | null = null;
+  private lastRequestStatus: LastRequestStatus | null = null;
 
   constructor(
     private readonly apiKey: string,
     private readonly baseUrl: string = DEFAULT_BASE_URL,
     private readonly fetchImpl: FetchFn = fetch,
-    private readonly timeoutMs: number = 10_000
+    private readonly timeoutMs: number = 10_000,
+    private readonly logger?: Logger,
+    private readonly maxRetries: number = DEFAULT_MAX_RETRIES,
+    private readonly sleepImpl: SleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   ) {}
 
-  private async request<T>(path: string, params: Record<string, string>): Promise<ProviderResponse<T>> {
+  /** Rate-limit headers from the most recent response, if any were present. Null until a request has been made. */
+  getRateLimitStatus(): RateLimitStatus | null {
+    return this.lastRateLimitStatus;
+  }
+
+  /** Outcome of the most recent completed request (after retries). Null until a request has been made. */
+  getLastRequestStatus(): LastRequestStatus | null {
+    return this.lastRequestStatus;
+  }
+
+  private recordRateLimitHeaders(headers: Headers): void {
+    const limitHeader = headers.get("x-ratelimit-requests-limit") ?? headers.get("x-ratelimit-limit");
+    const remainingHeader = headers.get("x-ratelimit-requests-remaining") ?? headers.get("x-ratelimit-remaining");
+    if (limitHeader === null && remainingHeader === null) return;
+
+    const limit = limitHeader !== null ? Number(limitHeader) : null;
+    const remaining = remainingHeader !== null ? Number(remainingHeader) : null;
+    this.lastRateLimitStatus = { limit, remaining, observedAt: new Date().toISOString() };
+
+    if (remaining !== null && limit !== null && limit > 0 && remaining / limit < 0.05) {
+      this.logger?.warn({ provider: this.name, limit, remaining }, "API-Football rate limit nearly exhausted");
+    }
+  }
+
+  // One HTTP attempt. Distinguishes retryable failures (timeout, network
+  // error, HTTP 5xx, HTTP 429) from permanent ones (401/403 unauthorized, a
+  // malformed/non-JSON body, or a body-level vendor error like an invalid
+  // league/param) — retrying a permanent failure would just burn quota for
+  // an outcome that will never change (spec's "do not endlessly retry an
+  // invalid API key" requirement).
+  private async attemptRequest<T>(path: string, params: Record<string, string>): Promise<AttemptOutcome<T>> {
     const url = new URL(`${this.baseUrl}${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
@@ -64,22 +134,30 @@ export class ApiFootballProvider implements FootballDataProvider {
         headers: { "x-apisports-key": this.apiKey },
         signal: controller.signal
       });
+      this.recordRateLimitHeaders(res.headers);
 
       if (res.status === 401 || res.status === 403) {
-        return this.unavailable("unauthorized", `API-Football rejected the request (HTTP ${res.status})`);
+        return this.outcome(this.unavailable("unauthorized", `API-Football rejected the request (HTTP ${res.status})`), false, null);
       }
       if (res.status === 429) {
-        return this.unavailable("rate_limited", "API-Football rate limit exceeded");
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryAfterMs = retryAfterHeader !== null && Number.isFinite(Number(retryAfterHeader)) ? Number(retryAfterHeader) * 1000 : null;
+        return this.outcome(this.unavailable("rate_limited", "API-Football rate limit exceeded"), true, retryAfterMs);
+      }
+      if (res.status >= 500) {
+        return this.outcome(this.unavailable("upstream_error", `API-Football returned HTTP ${res.status}`), true, null);
       }
       if (!res.ok) {
-        return this.unavailable("upstream_error", `API-Football returned HTTP ${res.status}`);
+        // Other 4xx (bad request, not found, etc.) — the request itself is
+        // malformed for this resource; retrying it unchanged won't help.
+        return this.outcome(this.unavailable("upstream_error", `API-Football returned HTTP ${res.status}`), false, null);
       }
 
       let body: ApiFootballEnvelope<T>;
       try {
         body = (await res.json()) as ApiFootballEnvelope<T>;
       } catch {
-        return this.unavailable("upstream_error", "API-Football returned a non-JSON response");
+        return this.outcome(this.unavailable("upstream_error", "API-Football returned a non-JSON response"), false, null);
       }
 
       // API-Football returns HTTP 200 even for an invalid key or bad
@@ -87,21 +165,67 @@ export class ApiFootballProvider implements FootballDataProvider {
       if (body.errors && !Array.isArray(body.errors) && Object.keys(body.errors).length > 0) {
         const message = Object.values(body.errors).join("; ");
         const reason = /token|key|plan/i.test(message) ? "unauthorized" : "upstream_error";
-        return this.unavailable(reason, `API-Football error: ${message}`);
+        return this.outcome(this.unavailable(reason, `API-Football error: ${message}`), false, null);
       }
       if (Array.isArray(body.errors) && body.errors.length > 0) {
-        return this.unavailable("upstream_error", `API-Football error: ${JSON.stringify(body.errors)}`);
+        return this.outcome(this.unavailable("upstream_error", `API-Football error: ${JSON.stringify(body.errors)}`), false, null);
       }
 
-      return { ok: true, data: body.response, sourceTimestamp, provider: this.name };
+      return this.outcome({ ok: true, data: body.response, sourceTimestamp, provider: this.name }, false, null);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        return this.unavailable("timeout", `API-Football request timed out after ${this.timeoutMs}ms`);
+        return this.outcome(this.unavailable("timeout", `API-Football request timed out after ${this.timeoutMs}ms`), true, null);
       }
-      return this.unavailable("upstream_error", err instanceof Error ? err.message : "Unknown network error");
+      // A thrown (not merely rejected-with-status) error here is a network-
+      // level failure (DNS, connection reset, etc.) — transient by nature.
+      return this.outcome(this.unavailable("upstream_error", err instanceof Error ? err.message : "Unknown network error"), true, null);
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private outcome<T>(response: ProviderResponse<T>, retryable: boolean, retryAfterMs: number | null): AttemptOutcome<T> {
+    return { response, retryable, retryAfterMs };
+  }
+
+  // Retries retryable failures with exponential backoff (plus jitter),
+  // honoring a 429 response's Retry-After header when present. Permanent
+  // failures (unauthorized, malformed request) return on the first attempt.
+  private async request<T>(path: string, params: Record<string, string>): Promise<ProviderResponse<T>> {
+    const totalAttempts = this.maxRetries + 1;
+    let lastOutcome: AttemptOutcome<T> | null = null;
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+      lastOutcome = await this.attemptRequest<T>(path, params);
+      const isLastAttempt = attempt === totalAttempts;
+      if (!lastOutcome.retryable || isLastAttempt) break;
+
+      const delayMs = lastOutcome.retryAfterMs ?? this.backoffDelayMs(attempt);
+      this.logger?.warn(
+        {
+          provider: this.name,
+          path,
+          attempt,
+          totalAttempts,
+          delayMs,
+          reason: lastOutcome.response.ok ? undefined : lastOutcome.response.reason
+        },
+        "Retrying API-Football request after a transient failure"
+      );
+      await this.sleepImpl(delayMs);
+    }
+
+    const finalResponse = lastOutcome!.response;
+    this.lastRequestStatus = finalResponse.ok
+      ? { ok: true, at: new Date().toISOString() }
+      : { ok: false, reason: finalResponse.reason, at: new Date().toISOString() };
+    return finalResponse;
+  }
+
+  private backoffDelayMs(attempt: number): number {
+    const exponential = DEFAULT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+    const jitter = Math.random() * DEFAULT_RETRY_BASE_DELAY_MS;
+    return exponential + jitter;
   }
 
   private unavailable(reason: ProviderUnavailable["reason"], message: string): ProviderUnavailable {

@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { Env } from "../config/env.js";
 import type { FootballDataProvider } from "./types.js";
 import { NullProvider } from "./NullProvider.js";
@@ -7,7 +8,7 @@ import { ApiFootballProvider } from "./ApiFootballProvider.js";
 // Adding a real vendor means writing one class that implements
 // FootballDataProvider and registering it here — no other file in the app
 // changes.
-export function createProvider(env: Env): FootballDataProvider {
+export function createProvider(env: Env, logger: Logger): FootballDataProvider {
   switch (env.FOOTBALL_DATA_PROVIDER) {
     case "null":
       return new NullProvider();
@@ -21,7 +22,7 @@ export function createProvider(env: Env): FootballDataProvider {
             "See backend/.env.example and Data_Sources.md."
         );
       }
-      return new ApiFootballProvider(env.FOOTBALL_DATA_API_KEY);
+      return new ApiFootballProvider(env.FOOTBALL_DATA_API_KEY, undefined, undefined, undefined, logger);
     default:
       return new NullProvider();
   }
