@@ -31,11 +31,15 @@ export class NullProvider implements FootballDataProvider {
     return this.unavailable();
   }
 
-  async getTeamStatistics(_teamExternalId: string, _seasonExternalId: string): Promise<ProviderResponse<unknown>> {
+  async getTeamStatistics(
+    _teamExternalId: string,
+    _competitionExternalId: string,
+    _seasonExternalId: string
+  ): Promise<ProviderResponse<unknown>> {
     return this.unavailable();
   }
 
-  async getInjuries(_teamExternalId: string): Promise<ProviderResponse<unknown[]>> {
+  async getInjuries(_teamExternalId: string, _seasonExternalId: string): Promise<ProviderResponse<unknown[]>> {
     return this.unavailable();
   }
 

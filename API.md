@@ -44,6 +44,13 @@ Standings for a season (`leagueId` is actually a `season_id` — see
 
 ## Admin (⚠️ not yet authenticated — see Task.md)
 
+### `POST /admin/sync?days=N`
+Syncs fixtures from today (UTC) through `days` days ahead (default 1,
+capped at 14) using the configured `FootballDataProvider`. Returns
+`{ runId, daysAttempted, daysFailed, fixturesProcessed, fixturesRejected }`.
+Responds `409 no_provider_configured` if `FOOTBALL_DATA_PROVIDER=null`
+(the default) rather than silently doing nothing. See `Data_Sources.md`.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.

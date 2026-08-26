@@ -3,14 +3,49 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
 import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredictions.js";
+import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
+import type { FootballDataProvider } from "../providers/types.js";
+import { ApiError } from "../middleware/errorHandler.js";
+
+const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync — this route has no auth yet.
 
 // NOTE: This route has no authentication/authorization middleware attached
 // yet. It MUST be wrapped with an admin-role check (Supabase JWT verification
 // against user_profiles.role = 'admin') before this ever ships publicly —
 // tracked in Task.md. Do not expose this port beyond an internal network
 // until that is wired in.
-export function createAdminRouter(supabase: SupabaseClient, mlServiceUrl: string, logger: Logger): Router {
+export function createAdminRouter(
+  supabase: SupabaseClient,
+  provider: FootballDataProvider,
+  mlServiceUrl: string,
+  logger: Logger
+): Router {
   const router = Router();
+
+  router.post("/admin/sync", async (req, res, next) => {
+    try {
+      if (provider.name === "null") {
+        throw new ApiError(
+          409,
+          "No football data provider is configured (FOOTBALL_DATA_PROVIDER=null). See Data_Sources.md.",
+          "no_provider_configured"
+        );
+      }
+
+      const daysParam = Number(req.query.days ?? 1);
+      const days = Number.isFinite(daysParam) ? Math.min(Math.max(Math.trunc(daysParam), 1), MAX_SYNC_DAYS) : 1;
+
+      const from = new Date();
+      from.setUTCHours(0, 0, 0, 0);
+      const to = new Date(from);
+      to.setUTCDate(to.getUTCDate() + (days - 1));
+
+      const result = await syncFixturesForDateRange(supabase, provider, from.toISOString(), to.toISOString(), logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   router.post("/admin/predictions/run", async (req, res, next) => {
     try {

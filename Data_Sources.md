@@ -1,58 +1,149 @@
 # Data Sources
 
-## Current state: no provider configured
+## Current state: `ApiFootballProvider` implemented, disabled by default
 
 `FOOTBALL_DATA_PROVIDER=null` (the default) uses `NullProvider`
 (`backend/src/providers/NullProvider.ts`), which returns
-`{ ok: false, reason: "not_configured" }` from every method. This is
-deliberate — see `Coding_Rules.md` → "No Fake Data Rule." No demo/plausible
-data is substituted.
+`{ ok: false, reason: "not_configured" }` from every method — see
+`Coding_Rules.md` → "No Fake Data Rule."
+
+Setting `FOOTBALL_DATA_PROVIDER=api-football` and a real
+`FOOTBALL_DATA_API_KEY` switches to `ApiFootballProvider`
+(`backend/src/providers/ApiFootballProvider.ts`), a real implementation
+against [api-football](https://www.api-football.com) (api-sports.io) v3.
+Chosen over narrower alternatives (e.g. football-data.org) for its coverage
+outside Europe's top leagues, which the platform's stated scope (Asia,
+South America, etc.) needs.
+
+**Important caveat:** this class has not been exercised against a live API
+key in development — none was available in the environment it was written
+in. Every request shape and response mapping follows the vendor's published
+v3 documentation, not a verified live response, and is covered by unit
+tests using injected fake HTTP responses (`backend/src/__tests__/apiFootballProvider.test.ts`),
+not live calls. Before relying on it: get a real key, run `POST
+/api/admin/sync?days=1` against a real Supabase project, and check
+`ingestion_runs.error_summary` for anything indicating the mapping needs
+adjusting (the vendor's actual field names/shapes can differ from what's
+documented, or change over time).
+
+If you don't need worldwide coverage, football-data.org's free tier (top
+European competitions, simpler API, no league/season params required for
+most endpoints) may be an easier first integration — it would need its own
+provider class following the same pattern.
 
 ## The abstraction
 
 `backend/src/providers/types.ts` defines the contracts application code
 depends on:
 
-- `FixtureProvider` — `getFixturesForDateRange`
+- `FixtureProvider` — `getFixturesForDateRange` (single UTC day per call —
+  see below)
 - `ResultsProvider` — `getResultsSince`
-- `TeamStatsProvider` — `getTeamStatistics`
-- `InjuryProvider` — `getInjuries`
-- `LineupProvider` — `getLineup`
-- `StandingsProvider` — `getStandings`
+- `TeamStatsProvider` — `getTeamStatistics(team, competition, season)`
+- `InjuryProvider` — `getInjuries(team, season)`
+- `LineupProvider` — `getLineup(fixture)`
+- `StandingsProvider` — `getStandings(competition, season)`
 - `OddsProvider` — `getOdds` (not yet consumed by any route/job)
 
 `FootballDataProvider` composes the first six. Every method returns a
 `ProviderResponse<T>` — either `{ ok: true, data, sourceTimestamp,
 provider }` or `{ ok: false, reason, message, provider }` with `reason` one
 of `not_configured | rate_limited | upstream_error | timeout |
-unauthorized`. Callers must handle both branches explicitly; there is no
-"just return empty array on error" shortcut that could be mistaken for "no
-data exists."
+unauthorized`. Callers must handle both branches explicitly.
 
-## Adding a real provider
+`getTeamStatistics` and `getInjuries` take a competition/season alongside
+the team id — added after implementing the real provider revealed that
+vendors scope team stats per competition (a team in two competitions the
+same season has different stats in each), not just per season as the
+interface originally assumed. This is the abstraction adapting to a real
+integration's actual requirements, not a workaround.
 
-1. Pick a reputable source (spec section 5): an official league/competition
-   feed, an established football-stats API (with a license permitting this
-   use), or similar. Confirm rate limits, attribution requirements, and
-   terms of service before writing code against it.
-2. Implement a class satisfying `FootballDataProvider` — e.g.
-   `backend/src/providers/ApiFootballProvider.ts` — that calls the vendor's
-   API, maps its response shape into `ProviderFixture` (etc.), and returns
+`ProviderFixture` carries denormalized names (`competitionName`,
+`countryName`, `homeTeamName`, etc.) alongside external ids — real
+ingestion needs them to create reference rows (countries/competitions/
+teams/seasons) the first time it sees an entity; see below.
+
+### Single-day constraint
+
+`ApiFootballProvider.getFixturesForDateRange` only accepts a single UTC day
+per call — the vendor's `/fixtures` endpoint takes one `date`, not a range.
+A multi-day request returns `{ ok: false, reason: "upstream_error" }`
+without making a network call. Callers wanting a range iterate day-by-day
+themselves (`backend/src/jobs/syncFixtures.ts::utcDaysInRange`).
+
+## Fixture ingestion: `syncFixtures.ts`
+
+`backend/src/jobs/syncFixtures.ts::syncFixturesForDateRange` is the first
+real ingestion job:
+
+1. For each UTC day in the range, calls the provider for that day's
+   fixtures. A failed day is logged and skipped — it doesn't abort the rest
+   of the run.
+2. For each fixture, resolves (creating if needed) its country, competition,
+   season, and both teams via `backend/src/services/referenceDataService.ts`,
+   matched by the provider's own external id (`external_ref->>'api_football'`)
+   — except countries, which the fixtures endpoint only gives a *name* for
+   (no stable id), so those are matched/created by name instead.
+3. Upserts the fixture itself, matched by its own external id (not by
+   team+kickoff — a postponed-and-rescheduled fixture keeps the same
+   provider id but a different kickoff time, so matching on the id is what
+   makes re-syncing safe).
+4. Writes one `ingestion_runs` row per invocation (`succeeded` / `partial` /
+   `failed`) recording how many fixtures were processed vs. rejected, for
+   the admin data-health view.
+
+Each fixture is processed independently — one fixture's reference-data
+resolution failing doesn't lose the others in the same batch (spec section
+38: per-item isolation). Trigger it via `POST /api/admin/sync?days=N`
+(`N` capped at 14 — see `admin.ts`; that endpoint has no auth yet, so this
+cap is a stopgap against an expensive accidental call, not a real
+authorization control).
+
+**Known limitation:** reference-data lookups are find-then-insert (two
+round trips), not an atomic `INSERT ... ON CONFLICT`, because the unique
+constraints involved are partial indexes over a jsonb expression
+(`external_ref->>'api_football'`) and this repo has no live database to
+verify that PostgREST's `on_conflict` parameter matches such an index
+correctly. This means two concurrent sync runs could theoretically both
+insert the same external id. Not a problem for the current single periodic
+job; revisit before parallelizing ingestion (see `Task.md`).
+
+**Also not yet done:** team nationality/country is intentionally left
+`null` by this job — the fixtures payload only gives the *competition's*
+country, and assigning that to each team would be wrong for continental
+competitions and only coincidentally right for domestic ones. A dedicated
+team-info sync (using the vendor's `/teams` endpoint, which does give each
+team's own country) is needed before that field is populated — see
+`Task.md`.
+
+## Adding another provider
+
+1. Pick a reputable source (spec section 5) and confirm rate limits,
+   attribution requirements, and terms of service before writing code
+   against it.
+2. Implement a class satisfying `FootballDataProvider`, following
+   `ApiFootballProvider.ts`'s pattern: injectable `fetch` and timeout for
+   testability, explicit mapping to `ProviderFixture` (etc.), and
    `{ ok: false, reason: "upstream_error", ... }` on any failure rather than
    throwing or returning partial/guessed data.
 3. Add its required env vars to `backend/.env.example` and
    `backend/src/config/env.ts` (extend the `FOOTBALL_DATA_PROVIDER` enum).
-4. Register it in `backend/src/providers/registry.ts`.
-5. Write an ingestion job (parallel to `generatePredictions.ts`) that calls
-   the provider and upserts into the relevant table, using the
-   provider-agnostic natural-key unique indexes already in the schema
-   (`Database.md`) so repeated runs don't duplicate rows.
+4. Register it in `backend/src/providers/registry.ts` — fail fast at boot
+   if required config is missing rather than silently falling back to
+   `NullProvider` (see the `api-football` case for the pattern).
+5. Write an ingestion job (`syncFixtures.ts` is the template) using the
+   external-id-based upsert approach in `referenceDataService.ts` so
+   repeated runs don't duplicate rows.
 6. Set `source`/`source_timestamp` on every row you write — the freshness
    classifier (`backend/src/lib/freshness.ts`) depends on it.
+7. Write unit tests against an injected fake `fetch`, the way
+   `apiFootballProvider.test.ts` does — this repo has no live credentials
+   to test against in CI, so the mapping logic has to be verifiable without
+   one.
 
-No other file — no route, no service, no frontend component — should need
-to change. If it does, the abstraction has a gap; fix the interface, not the
-caller.
+No route, no service, no frontend component should need to change to add a
+provider. If one does, the abstraction has a gap; fix the interface, not
+the caller.
 
 ## Odds, weather, news
 

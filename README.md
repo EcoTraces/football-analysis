@@ -37,8 +37,10 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
 - **Backend** (Node/Express/TypeScript): health endpoints, fixtures/matches/
   teams/competitions/standings reads, a `FootballDataProvider` abstraction
   with a `NullProvider` default (never fabricates data — returns explicit
-  "not configured" responses), a prediction-generation job, and an admin
-  endpoint to trigger it. See `API.md`.
+  "not configured" responses) and a real `ApiFootballProvider` (disabled by
+  default; opt in via env vars), a fixture-sync job, a
+  prediction-generation job, and admin endpoints to trigger both. See
+  `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -61,11 +63,19 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
 
 See `Road_map.md` and `Task.md` for the full list. The highlights:
 
-- No real football data provider is wired in (fixtures/injuries/lineups/odds
-  all report "unavailable" until one is implemented against
-  `FootballDataProvider`).
-- No authentication/authorization — the admin endpoints have no auth
-  middleware and must not be exposed publicly as-is.
+- `ApiFootballProvider` and the fixture sync job exist but have **not been
+  verified against a live API key** in this environment — the mapping
+  follows the vendor's documentation, tested only against injected fake
+  HTTP responses. Get a real key and run a sync before trusting it in
+  production. See `Data_Sources.md`.
+- Injuries/lineups/standings/odds have provider methods implemented but no
+  sync job calling them yet — only fixtures actually get ingested today.
+- No results-sync or team-statistics job yet, so predictions still can't
+  run on real (non-synthetic) fixtures even though real fixtures can now be
+  synced.
+- No authentication/authorization — the admin endpoints (including the new
+  `/admin/sync`) have no auth middleware and must not be exposed publicly
+  as-is.
 - No model backtesting/validation pipeline, no league-specific calibration,
   no model ensemble — one baseline Poisson model only.
 - No accumulator research, value/EV analysis, notifications, or admin
@@ -90,8 +100,8 @@ Requires Node 20+, Python 3.12+, and a Supabase project (or local Supabase
 via the Supabase CLI).
 
 ```bash
-# 1. Apply the schema to your Supabase project
-supabase db push   # or run supabase/migrations/0001_init.sql manually
+# 1. Apply the schema to your Supabase project, in order
+supabase db push   # or run both supabase/migrations/*.sql files manually, in filename order
 
 # 2. (Optional, dev only) load synthetic seed data
 psql "$SUPABASE_DB_URL" -f supabase/seed/dev_seed_synthetic.sql
@@ -108,6 +118,11 @@ npm install && npm run dev
 # 5. Frontend
 cd frontend && cp .env.example .env
 npm install && npm run dev
+
+# 6. (Optional) pull real fixtures — set FOOTBALL_DATA_PROVIDER=api-football
+# and FOOTBALL_DATA_API_KEY in backend/.env first (see Data_Sources.md),
+# then trigger a sync:
+curl -X POST "http://localhost:8080/api/admin/sync?days=3"
 ```
 
 Or `docker compose up` from the repo root once `SUPABASE_URL` and

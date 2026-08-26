@@ -7,8 +7,16 @@
 export interface ProviderFixture {
   externalId: string;
   competitionExternalId: string;
+  competitionName: string;
+  countryName: string | null;
+  seasonExternalId: string;
+  seasonLabel: string;
   homeTeamExternalId: string;
+  homeTeamName: string;
   awayTeamExternalId: string;
+  awayTeamName: string;
+  venueName: string | null;
+  round: string | null;
   kickoffUtc: string;
   status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "abandoned";
   homeScore: number | null;
@@ -42,11 +50,18 @@ export interface ResultsProvider {
 }
 
 export interface TeamStatsProvider {
-  getTeamStatistics(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown>>;
+  // Most vendors (including API-Football) scope team statistics to a
+  // specific competition, not just a season — a team playing in two
+  // competitions in the same season has different stats in each.
+  getTeamStatistics(
+    teamExternalId: string,
+    competitionExternalId: string,
+    seasonExternalId: string
+  ): Promise<ProviderResponse<unknown>>;
 }
 
 export interface InjuryProvider {
-  getInjuries(teamExternalId: string): Promise<ProviderResponse<unknown[]>>;
+  getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>>;
 }
 
 export interface LineupProvider {

@@ -8,8 +8,8 @@ describe("NullProvider", () => {
     const results = await Promise.all([
       provider.getFixturesForDateRange("2026-01-01", "2026-01-02"),
       provider.getResultsSince("2026-01-01"),
-      provider.getTeamStatistics("1", "2026"),
-      provider.getInjuries("1"),
+      provider.getTeamStatistics("1", "39", "2026"),
+      provider.getInjuries("1", "2026"),
       provider.getLineup("1"),
       provider.getStandings("1", "2026")
     ]);

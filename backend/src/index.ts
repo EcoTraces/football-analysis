@@ -45,7 +45,7 @@ app.use("/api", createFixturesRouter(supabase));
 app.use("/api", createMatchesRouter(supabase));
 app.use("/api", createTeamsRouter(supabase));
 app.use("/api", createCompetitionsRouter(supabase));
-app.use("/api", createAdminRouter(supabase, env.ML_SERVICE_URL, logger));
+app.use("/api", createAdminRouter(supabase, provider, env.ML_SERVICE_URL, logger));
 
 app.use(notFoundHandler);
 app.use(createErrorHandler(logger));

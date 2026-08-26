@@ -1,7 +1,9 @@
 # Database
 
-Postgres via Supabase. Full schema: `supabase/migrations/0001_init.sql`.
-Dev-only synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
+Postgres via Supabase. Schema: `supabase/migrations/0001_init.sql` (initial
+schema) and `0002_provider_external_refs.sql` (external-id columns/indexes
+added once real ingestion needed them — see below). Dev-only synthetic
+seed: `supabase/seed/dev_seed_synthetic.sql`.
 
 ## Design conventions
 
@@ -15,8 +17,15 @@ Dev-only synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   default (`listFixtures`, `/api/leagues`, standings, etc.) so a
   misconfigured deployment cannot surface fabricated rows to real users.
 - **Idempotent ingestion.** `fixtures` has a unique index on
-  `(competition_id, season_id, home_team_id, away_team_id, kickoff_utc)` so
-  re-running a sync job upserts instead of duplicating.
+  `(competition_id, season_id, home_team_id, away_team_id, kickoff_utc)`
+  from 0001, plus a partial unique index on `external_ref->>'api_football'`
+  from 0002 — the one real ingestion job (`syncFixtures.ts`) actually
+  upserts against the latter, since a postponed-and-rescheduled fixture
+  keeps its provider id but changes kickoff time (the natural key would
+  treat that as a new row). `teams` and `competitions` got the same
+  external-id uniqueness in 0002. `seasons`' external id is scoped by
+  `competition_id` — a season's provider id like "2026" repeats across
+  every competition, so global uniqueness there would be wrong.
 - **Prediction history, not overwrite.** `predictions` rows are never
   mutated after creation; recalculating sets `superseded_at` on the old row
   and inserts a new one. `idx_predictions_current` (partial index on
@@ -49,8 +58,11 @@ Dev-only synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
 
 - No migration tooling wired up yet (no `supabase/config.toml`/CLI
   integration in CI) — migrations are applied manually today.
-- No historical results have been backfilled; `team_statistics` must be
-  populated by a future stats-sync job before predictions can be generated
-  for real fixtures.
+- Real fixtures can now be synced (`syncFixtures.ts`), but no job populates
+  `team_statistics` from real results yet — predictions still can't run on
+  non-synthetic fixtures until that exists.
 - `model_evaluations` has no writer yet — no backtesting job exists (see
   `ML_Model.md`, `Task.md`).
+- `teams.country_id` and `competitions.competition_type` are not correctly
+  populated by fixture ingestion — see `Data_Sources.md`'s "Known
+  limitation" notes.
