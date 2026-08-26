@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-08-26 — Odds/markets sync job
+
+- Added `syncOdds.ts`: populates `odds_snapshots` from the provider's own
+  odds endpoint for real (non-synthetic) fixtures with status
+  `scheduled`/`live` whose kickoff falls within `±windowHours` of now
+  (default 24) — windowed around kickoff like lineups, since odds aren't
+  meaningful for a match already decided or far in the future.
+- Gave `OddsProvider.getOdds` a real typed return (`ProviderOdds[]`) and,
+  for the first time, added `OddsProvider` to the `FootballDataProvider`
+  interface itself — every provider (and every test double implementing
+  it) now has to implement `getOdds`. `ApiFootballProvider.mapOdds`
+  restricts mapping to the three markets the prediction engine actually
+  produces (`1x2`/`btts`/`over_under_2_5`), classifying each vendor "bet"
+  by name (`mapBet`) and dropping bookmakers left with no covered-market
+  selections after filtering.
+- **Deliberately not idempotent-by-upsert**, unlike every other sync job so
+  far: `odds_snapshots` is a genuine price-history time series (spec
+  section 25 wants price movement, not a current price), so every
+  successful run does a plain `.insert()` per bookmaker/selection rather
+  than upserting — running the job twice with unchanged prices produces
+  two full sets of rows, by design. No de-duplication against the prior
+  snapshot is implemented yet (tracked as a known gap, not solved here, to
+  keep this first version simple and unambiguously correct).
+- Added `POST /api/admin/odds/sync?hours=N` (default 24, capped at 168) —
+  shares the same `MAX_KICKOFF_WINDOW_HOURS` constant as lineups now
+  (renamed from `MAX_LINEUP_WINDOW_HOURS`).
+- 13 new tests (4 in `apiFootballProvider.test.ts` for the odds mapping —
+  covering multi-market bookmakers, an uncovered market/line being dropped,
+  a bookmaker left with zero covered selections being dropped entirely, and
+  invalid odds values being rejected while valid ones in the same bet
+  survive; 9 in `syncOdds.test.ts` covering per-selection insert counts,
+  external-id call correctness, empty-response handling, the
+  not-idempotent-by-design behavior explicitly asserted as row growth
+  across two runs, price-change history preservation, time-window
+  filtering that excludes a `finished` fixture, missing-external-ref
+  skipping, per-fixture failure isolation, and synthetic-fixture
+  exclusion) — 94 backend tests passing in total, clean lint/typecheck/
+  build. Widening `FootballDataProvider` to include `OddsProvider` required
+  updating five existing test files' `FakeProvider` doubles to add a
+  `getOdds` stub — expected fallout from strengthening a shared interface,
+  not a sign of a design problem.
+- Not yet verified against a live API key, same caveat as every other
+  sync job in this repository — `mapBet`'s classification of the vendor's
+  bet-name strings is a best-effort guess, not a documented enum.
+
 ## 2026-08-26 — Lineups sync job
 
 - Added `syncLineups.ts`: populates `lineups` (and `players` along the way)

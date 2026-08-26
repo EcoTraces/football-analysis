@@ -38,7 +38,12 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   against them rather than the find-then-insert pattern the expression-index
   tables need (see `Data_Sources.md`). `injuries` models "current status per
   player," not a history of every report — see 0003's comment for the
-  known edge case that simplification accepts.
+  known edge case that simplification accepts. `odds_snapshots` is the one
+  exception to "idempotent ingestion": it has no unique constraint at all,
+  by design — it's a genuine price-history time series, so `syncOdds.ts`
+  does a plain `insert()` on every run rather than upserting, and running it
+  twice with the same prices deliberately produces two rows, not one (see
+  `Data_Sources.md`).
 - **Prediction history, not overwrite.** `predictions` rows are never
   mutated after creation; recalculating sets `superseded_at` on the old row
   and inserts a new one. `idx_predictions_current` (partial index on
@@ -95,3 +100,8 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   `syncLineups.ts` — the `'expected'` value this column supports is never
   used by any current job, since api-football's lineups endpoint is
   reasoned (not yet verified) to only return officially released lineups.
+- `odds_snapshots` has no de-duplication: `syncOdds.ts` inserts a full new
+  set of rows every run regardless of whether prices changed, so running it
+  on a tight schedule grows the table with duplicate-valued history. A
+  future version could skip inserting a selection whose price matches its
+  immediately preceding snapshot — not implemented yet (see `Task.md`).

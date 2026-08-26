@@ -4,6 +4,8 @@ import type {
   ProviderInjury,
   ProviderLineup,
   ProviderLineupPlayer,
+  ProviderOdds,
+  ProviderOddsSelection,
   ProviderResponse,
   ProviderStanding,
   ProviderTeamStatistics,
@@ -206,6 +208,12 @@ export class ApiFootballProvider implements FootballDataProvider {
     });
     if (!result.ok) return result;
     return { ...result, data: mapStandings(result.data) };
+  }
+
+  async getOdds(fixtureExternalId: string): Promise<ProviderResponse<ProviderOdds[]>> {
+    const result = await this.request<RawOddsEnvelope[]>("/odds", { fixture: fixtureExternalId });
+    if (!result.ok) return result;
+    return { ...result, data: mapOdds(result.data) };
   }
 }
 
@@ -460,4 +468,90 @@ function mapLineup(raw: RawLineupEntry): ProviderLineup | null {
     startingPlayers: mapLineupPlayers(raw.startXI),
     substitutePlayers: mapLineupPlayers(raw.substitutes)
   };
+}
+
+// Shape per api-football v3's documented /odds response — unverified
+// against a live response, same caveat as the other Raw* interfaces above.
+// One call returns every bookmaker offering odds for the fixture, each
+// with a list of "bets" (markets) and, per bet, a list of "values"
+// (selections + price).
+interface RawOddsValue {
+  value?: string | null;
+  odd?: string | null;
+}
+
+interface RawOddsBet {
+  name?: string | null;
+  values?: RawOddsValue[] | null;
+}
+
+interface RawOddsBookmaker {
+  name?: string | null;
+  bets?: RawOddsBet[] | null;
+}
+
+interface RawOddsEnvelope {
+  bookmakers?: RawOddsBookmaker[] | null;
+}
+
+function parseDecimalOdds(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const value = Number.parseFloat(raw);
+  // The schema requires decimal_odds > 1 (anything else can't be a real
+  // decimal price) — an out-of-range or unparseable value is dropped, not
+  // clamped or guessed into range.
+  return Number.isFinite(value) && value > 1 ? value : null;
+}
+
+// Only the three markets this platform's prediction engine actually
+// produces are extracted (see ProviderOddsSelection) — a bookmaker's other
+// markets/lines are read but intentionally not stored. Bet names and
+// value labels are matched case-insensitively since this vendor's casing
+// for them isn't nailed down by the (unverified) documentation.
+function mapBet(bet: RawOddsBet): ProviderOddsSelection[] {
+  const name = bet.name?.trim().toLowerCase() ?? "";
+  const values = bet.values ?? [];
+  const selections: ProviderOddsSelection[] = [];
+
+  const push = (market: ProviderOddsSelection["market"], selection: string, oddRaw: string | null | undefined) => {
+    const decimalOdds = parseDecimalOdds(oddRaw);
+    if (decimalOdds !== null) selections.push({ market, selection, decimalOdds });
+  };
+
+  if (name === "match winner" || name === "1x2") {
+    for (const v of values) {
+      const label = v.value?.trim().toLowerCase();
+      if (label === "home") push("1x2", "home", v.odd);
+      else if (label === "draw") push("1x2", "draw", v.odd);
+      else if (label === "away") push("1x2", "away", v.odd);
+    }
+  } else if (name === "both teams score" || name === "both teams to score") {
+    for (const v of values) {
+      const label = v.value?.trim().toLowerCase();
+      if (label === "yes") push("btts", "yes", v.odd);
+      else if (label === "no") push("btts", "no", v.odd);
+    }
+  } else if (name.includes("over/under") || name.includes("goals over")) {
+    for (const v of values) {
+      const label = v.value?.trim().toLowerCase();
+      if (label === "over 2.5") push("over_under_2_5", "over", v.odd);
+      else if (label === "under 2.5") push("over_under_2_5", "under", v.odd);
+      // Other lines (1.5, 3.5, ...) are read but not stored — see the
+      // module comment on ProviderOddsSelection.
+    }
+  }
+
+  return selections;
+}
+
+function mapOdds(envelopes: RawOddsEnvelope[]): ProviderOdds[] {
+  const odds: ProviderOdds[] = [];
+  for (const envelope of envelopes) {
+    for (const bookmaker of envelope.bookmakers ?? []) {
+      if (!bookmaker.name) continue; // Can't attribute odds to an unnamed bookmaker.
+      const selections = (bookmaker.bets ?? []).flatMap(mapBet);
+      if (selections.length > 0) odds.push({ bookmaker: bookmaker.name, selections });
+    }
+  }
+  return odds;
 }

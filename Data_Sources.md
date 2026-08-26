@@ -43,9 +43,9 @@ depends on:
 - `InjuryProvider` — `getInjuries(team, season)`
 - `LineupProvider` — `getLineup(fixture)`
 - `StandingsProvider` — `getStandings(competition, season)`
-- `OddsProvider` — `getOdds` (not yet consumed by any route/job)
+- `OddsProvider` — `getOdds(fixture)`
 
-`FootballDataProvider` composes the first six. Every method returns a
+`FootballDataProvider` composes all seven. Every method returns a
 `ProviderResponse<T>` — either `{ ok: true, data, sourceTimestamp,
 provider }` or `{ ok: false, reason, message, provider }` with `reason` one
 of `not_configured | rate_limited | upstream_error | timeout |
@@ -95,6 +95,14 @@ call. `ApiFootballProvider` reasons (from the vendor's documentation,
 unverified against a live response) that this endpoint only ever returns
 officially released lineups, never a "predicted" one, and always maps
 accordingly — see the lineups ingestion section below.
+
+`getOdds` returns a typed `ProviderOdds[]` — one entry per bookmaker, each
+carrying a list of `{ market, selection, decimalOdds }` selections.
+`ApiFootballProvider.mapOdds` restricts this to the three markets the
+prediction engine actually produces (`1x2`/`btts`/`over_under_2_5`),
+classifying each vendor "bet" by its name (`mapBet`) and dropping any
+bookmaker left with zero covered-market selections after filtering —
+unverified against a live response, like every other mapping in this file.
 
 **Shared helper extraction:** once a third sync job needed the same
 "batch-lookup a table's rows by internal id, then read each one's provider
@@ -305,6 +313,42 @@ behaves) surfaces predicted lineups too, `ProviderLineup` needs a field to
 carry that distinction through; don't just keep assuming every response is
 confirmed (see `Task.md`).
 
+## Odds ingestion: `syncOdds.ts`
+
+`backend/src/jobs/syncOdds.ts::syncOdds` populates `odds_snapshots` from
+the vendor's own odds endpoint:
+
+1. Reads real (non-synthetic) fixtures whose `kickoff_utc` falls within
+   `±windowHours` of now (default 24) and whose status is `scheduled` or
+   `live` — windowed around kickoff like lineups, since odds are only
+   meaningful for a match that hasn't been decided yet. Unlike
+   `syncLineups.ts`, `finished` fixtures are excluded: there's no
+   "closing odds" use case built on this schema yet.
+2. For each fixture with a known external id, calls `provider.getOdds(fixture)`.
+3. An **empty** response is a normal, valid state (no bookmaker has posted
+   a covered-market price yet), tracked separately as
+   `fixturesNotYetAvailable` — not a failure.
+4. For each bookmaker/selection returned, inserts one `odds_snapshots` row
+   via a plain `.insert()` — **deliberately not an upsert**. Every other
+   sync job in this repo treats its target table as "current state" and
+   upserts against a real or find-then-insert key; `odds_snapshots` is a
+   genuine price-history time series (spec section 25 wants price
+   movement, not just a current price), so overwriting would destroy the
+   history the table exists to keep. This means running the job twice with
+   unchanged prices produces two rows, not one — see `Database.md`'s
+   "Known gaps" for the de-duplication optimization this doesn't attempt.
+5. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Each fixture (and each bookmaker/selection within it) is processed
+independently. Trigger it via `POST /api/admin/odds/sync?hours=N` (default
+24, capped at 168 — see `admin.ts`).
+
+**Known limitation:** no de-duplication against the immediately preceding
+snapshot, so a tight sync schedule grows the table even when nothing
+changed (see `Task.md`). Also unverified against a live response, like
+every mapping in this file — `mapBet`'s market classification is a
+best-effort guess at the vendor's bet-name strings, not a documented enum.
+
 ## Adding another provider
 
 1. Pick a reputable source (spec section 5) and confirm rate limits,
@@ -334,10 +378,10 @@ No route, no service, no frontend component should need to change to add a
 provider. If one does, the abstraction has a gap; fix the interface, not
 the caller.
 
-## Odds, weather, news
+## Weather, news
 
-`OddsProvider` exists in `types.ts` but has no consumer yet (value analysis
-per spec section 25 isn't built). Weather and news have no provider
-interface yet — add one following the same pattern when a real source is
-chosen. `backend/.env.example` reserves `ODDS_API_KEY` and `WEATHER_API_KEY`
-for when that happens.
+Weather and news have no provider interface yet — add one following the
+same pattern when a real source is chosen. `backend/.env.example` reserves
+`WEATHER_API_KEY` for when that happens. (`ODDS_API_KEY` is no longer
+reserved for a separate provider — odds now come from `ApiFootballProvider`
+itself, via `getOdds`; see the odds ingestion section above.)

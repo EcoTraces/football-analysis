@@ -461,4 +461,138 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.pathname).toBe("/fixtures/lineups");
     expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
   });
+
+  it("maps a well-formed odds response, extracting only the covered markets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            bookmakers: [
+              {
+                name: "Bet365",
+                bets: [
+                  {
+                    name: "Match Winner",
+                    values: [
+                      { value: "Home", odd: "1.85" },
+                      { value: "Draw", odd: "3.60" },
+                      { value: "Away", odd: "4.20" }
+                    ]
+                  },
+                  {
+                    name: "Both Teams Score",
+                    values: [
+                      { value: "Yes", odd: "1.75" },
+                      { value: "No", odd: "2.05" }
+                    ]
+                  },
+                  {
+                    name: "Goals Over/Under",
+                    values: [
+                      { value: "Over 1.5", odd: "1.20" },
+                      { value: "Over 2.5", odd: "1.90" },
+                      { value: "Under 2.5", odd: "1.90" }
+                    ]
+                  },
+                  {
+                    name: "Asian Handicap",
+                    values: [{ value: "Home -1", odd: "2.10" }]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getOdds("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      {
+        bookmaker: "Bet365",
+        selections: [
+          { market: "1x2", selection: "home", decimalOdds: 1.85 },
+          { market: "1x2", selection: "draw", decimalOdds: 3.6 },
+          { market: "1x2", selection: "away", decimalOdds: 4.2 },
+          { market: "btts", selection: "yes", decimalOdds: 1.75 },
+          { market: "btts", selection: "no", decimalOdds: 2.05 },
+          { market: "over_under_2_5", selection: "over", decimalOdds: 1.9 },
+          { market: "over_under_2_5", selection: "under", decimalOdds: 1.9 }
+        ]
+      }
+    ]);
+    // The 1.5 line and the Asian Handicap market are read but not stored —
+    // only 1x2/btts/over_under_2.5 (the markets the prediction engine covers).
+  });
+
+  it("drops a bookmaker with no odds in a covered market rather than storing an empty entry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            bookmakers: [
+              { name: "Only Exotic Markets", bets: [{ name: "Asian Handicap", values: [{ value: "Home -1", odd: "2.10" }] }] }
+            ]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getOdds("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("drops an odds value that isn't a valid decimal price (>1)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            bookmakers: [
+              {
+                name: "Bet365",
+                bets: [
+                  {
+                    name: "Match Winner",
+                    values: [
+                      { value: "Home", odd: "not-a-number" },
+                      { value: "Draw", odd: "0.5" }, // invalid: must be > 1
+                      { value: "Away", odd: "4.20" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getOdds("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      { bookmaker: "Bet365", selections: [{ market: "1x2", selection: "away", decimalOdds: 4.2 }] }
+    ]);
+  });
+
+  it("passes the fixture param through for odds", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getOdds("12345");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/odds");
+    expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
+  });
 });

@@ -39,9 +39,9 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
   default; opt in via env vars), fixture/team-statistics/injuries/standings/
-  lineups sync jobs, a prediction-generation job, and admin endpoints to
-  trigger each — authenticated by a Supabase JWT plus an admin role check.
-  See `API.md`.
+  lineups/odds sync jobs, a prediction-generation job, and admin endpoints
+  to trigger each — authenticated by a Supabase JWT plus an admin role
+  check. See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -69,9 +69,16 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   follows the vendor's documentation, tested only against injected fake
   HTTP responses. Get a real key and run a sync before trusting it in
   production. See `Data_Sources.md`.
-- No odds sync job or `OddsProvider` implementation exists at all yet —
-  fixtures, team statistics, injuries, standings, and lineups are the data
-  actually ingested today.
+- The odds sync (`syncOdds.ts`) only looks at scheduled/live fixtures within
+  a window around kickoff (±24h by default), like lineups, and only stores
+  the three markets the prediction engine actually produces (`1x2`/`btts`/
+  `over_under_2_5`) — other markets and lines a bookmaker offers are read
+  but not stored. It's deliberately **not idempotent**: `odds_snapshots` is
+  a genuine time series (spec section 25 wants price movement, not just a
+  current price), so every run appends new rows rather than overwriting,
+  and there's no de-duplication yet — running it on a tight schedule with
+  unchanged prices still grows the table. **Not yet verified against a live
+  API key** — same caveat as the other sync jobs.
 - The lineups sync (`syncLineups.ts`) only looks at fixtures within a
   window around kickoff (±24h by default) rather than every fixture ever
   recorded, since lineups aren't meaningful further out. It always records
@@ -159,6 +166,8 @@ curl -X POST "http://localhost:8080/api/admin/injuries/sync" \
 curl -X POST "http://localhost:8080/api/admin/standings/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/lineups/sync" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/odds/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/predictions/run" \
   -H "Authorization: Bearer $ADMIN_JWT"

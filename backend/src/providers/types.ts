@@ -80,6 +80,23 @@ export interface ProviderLineup {
   substitutePlayers: ProviderLineupPlayer[];
 }
 
+export interface ProviderOddsSelection {
+  // Restricted to the markets this platform's prediction engine actually
+  // produces (see ml-service/app/main.py) — 1x2, btts, over_under_2_5 —
+  // so odds can be compared against a model probability for the same
+  // market (spec section 25, Value Analysis). Other markets/lines a
+  // bookmaker offers (Asian handicap, other O/U lines, ...) are not
+  // captured; extend this once the prediction engine covers them too.
+  market: "1x2" | "btts" | "over_under_2_5";
+  selection: string; // 'home' | 'draw' | 'away' | 'yes' | 'no' | 'over' | 'under'
+  decimalOdds: number;
+}
+
+export interface ProviderOdds {
+  bookmaker: string;
+  selections: ProviderOddsSelection[];
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -132,7 +149,9 @@ export interface StandingsProvider {
 }
 
 export interface OddsProvider {
-  getOdds(fixtureExternalId: string): Promise<ProviderResponse<unknown[]>>;
+  // One fixture call returns every bookmaker's odds, like getLineup
+  // returns both teams — not scoped to one bookmaker at a time.
+  getOdds(fixtureExternalId: string): Promise<ProviderResponse<ProviderOdds[]>>;
 }
 
 export interface FootballDataProvider
@@ -141,6 +160,7 @@ export interface FootballDataProvider
     TeamStatsProvider,
     InjuryProvider,
     LineupProvider,
-    StandingsProvider {
+    StandingsProvider,
+    OddsProvider {
   readonly name: string;
 }

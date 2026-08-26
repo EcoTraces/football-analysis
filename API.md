@@ -102,6 +102,24 @@ Returns `{ runId, fixturesConsidered, fixturesSkipped, fixturesFailed,
 fixturesNotYetAvailable, lineupsProcessed, lineupsRejected }`. Same `409
 no_provider_configured` behavior as the other sync endpoints.
 
+### `POST /admin/odds/sync?hours=N`
+Calls the configured provider's odds endpoint for every real (non-synthetic)
+fixture with status `scheduled`/`live` whose kickoff falls within `±N` hours
+of now (default 24, capped at 168) — like lineups, odds aren't meaningful
+further from kickoff, and there's no "closing odds" use case for finished
+fixtures yet. Only the three markets the prediction engine produces
+(`1x2`/`btts`/`over_under_2_5`) are stored; other markets/lines a bookmaker
+offers are read but dropped. An empty response for a fixture (no bookmaker
+has posted a covered-market price yet) is counted separately from failures.
+**Deliberately not idempotent**: every successful run inserts new
+`odds_snapshots` rows rather than upserting, since this table is a genuine
+price-history time series, not a "current odds" cache — running this
+endpoint repeatedly is expected to keep growing the table (see `Task.md`
+for the unimplemented de-duplication optimization). Returns `{ runId,
+fixturesConsidered, fixturesSkipped, fixturesFailed,
+fixturesNotYetAvailable, snapshotsProcessed, snapshotsRejected }`. Same
+`409 no_provider_configured` behavior as the other sync endpoints.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.
@@ -111,11 +129,9 @@ Counts of production fixtures, synthetic fixtures, and current predictions.
 
 ## Not yet implemented
 
-`GET /api/players/:id`, `GET /api/injuries`, and `GET
-/api/lineups/:matchId` — no read routes yet, even though
-`syncInjuries.ts`/`syncLineups.ts` can now populate real `players`/
-`injuries`/`lineups` rows; these are missing routes, not missing data
-sources. `GET /api/odds/:matchId` is blocked on a data provider (no odds
-sync job or `OddsProvider` implementation exists at all yet). `GET
-/api/analysis/daily`, `GET /api/analysis/monthly` are blocked on a feature
-not yet built.
+`GET /api/players/:id`, `GET /api/injuries`, `GET /api/lineups/:matchId`,
+and `GET /api/odds/:matchId` — no read routes yet, even though
+`syncInjuries.ts`/`syncLineups.ts`/`syncOdds.ts` can now populate real
+`players`/`injuries`/`lineups`/`odds_snapshots` rows; these are missing
+routes, not missing data sources. `GET /api/analysis/daily`, `GET
+/api/analysis/monthly` are blocked on a feature not yet built.
