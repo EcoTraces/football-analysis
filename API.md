@@ -90,6 +90,18 @@ rowsProcessed, rowsRejected }`. Same `409 no_provider_configured` behavior
 as the other sync endpoints. See `Data_Sources.md` for the group-flattening
 caveat.
 
+### `POST /admin/lineups/sync?hours=N`
+Calls the configured provider's lineups endpoint for every real
+(non-synthetic), non-postponed/cancelled/abandoned fixture whose kickoff
+falls within `±N` hours of now (default 24, capped at 168). One call per
+fixture returns both teams; upserts a `players` row per named starter/
+substitute and one `lineups` row per team (`confirmation_status:
+"confirmed"` — see `Data_Sources.md`). An empty response for a fixture
+(lineups not yet officially released) is counted separately from failures.
+Returns `{ runId, fixturesConsidered, fixturesSkipped, fixturesFailed,
+fixturesNotYetAvailable, lineupsProcessed, lineupsRejected }`. Same `409
+no_provider_configured` behavior as the other sync endpoints.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.
@@ -99,9 +111,11 @@ Counts of production fixtures, synthetic fixtures, and current predictions.
 
 ## Not yet implemented
 
-`GET /api/players/:id` and `GET /api/injuries` — no read routes yet, even
-though `syncInjuries.ts` can now populate real `players`/`injuries` rows;
-this is a missing route, not a missing data source. `GET
-/api/lineups/:matchId`, `GET /api/odds/:matchId` are blocked on a data
-provider (no lineup/odds sync job exists yet). `GET /api/analysis/daily`,
-`GET /api/analysis/monthly` are blocked on a feature not yet built.
+`GET /api/players/:id`, `GET /api/injuries`, and `GET
+/api/lineups/:matchId` — no read routes yet, even though
+`syncInjuries.ts`/`syncLineups.ts` can now populate real `players`/
+`injuries`/`lineups` rows; these are missing routes, not missing data
+sources. `GET /api/odds/:matchId` is blocked on a data provider (no odds
+sync job or `OddsProvider` implementation exists at all yet). `GET
+/api/analysis/daily`, `GET /api/analysis/monthly` are blocked on a feature
+not yet built.

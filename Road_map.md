@@ -10,7 +10,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 3. Architecture | ✅ Done | `Architecture.md` |
 | 4. Database design | ✅ Done | `Database.md`, `supabase/migrations/0001_init.sql` |
 | 5. Data providers | 🟡 Implemented, unverified | `ApiFootballProvider` against api-football v3; not yet exercised against a live key (see `Data_Sources.md`) |
-| 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts` are idempotent and tested; lineups have a provider method but no sync job, odds has no provider method at all |
+| 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; odds has no provider method or sync job at all |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
 | 9. Prediction engine | 🟡 Baseline only | Poisson/Dixon-Coles; no ensemble, no other algorithms yet |
@@ -37,14 +37,17 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
    mapping against a live response — it has only been tested against
    documentation-derived fakes so far.
 3. Run `/admin/sync`, `/admin/team-statistics/sync`, `/admin/injuries/sync`,
-   `/admin/standings/sync`, then `/admin/predictions/run` against a real
-   Supabase project + API key to confirm the whole chain actually works
-   end-to-end on real fixtures — none of it has been exercised against
-   live data yet.
+   `/admin/standings/sync`, `/admin/lineups/sync`, then
+   `/admin/predictions/run` against a real Supabase project + API key to
+   confirm the whole chain actually works end-to-end on real fixtures —
+   none of it has been exercised against live data yet.
 4. Check `syncInjuries.ts`'s status heuristic (`mapInjuryStatus`) against
    real `/injuries` responses — it's a keyword guess over free text, not a
-   documented mapping.
+   documented mapping. Also confirm `syncLineups.ts`'s assumption that
+   api-football's lineups endpoint never returns a "predicted" (as opposed
+   to officially confirmed) lineup.
 5. Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
-   `syncStandings`, and the prediction job to a scheduler instead of manual
-   admin triggers.
+   `syncStandings`, `syncLineups`, and the prediction job to a scheduler
+   instead of manual admin triggers — lineups in particular needs to run
+   much more frequently than the others as kickoff approaches.
 6. Start the backtesting pipeline once enough real historical results exist.

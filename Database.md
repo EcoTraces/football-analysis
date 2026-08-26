@@ -29,11 +29,12 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   external-id uniqueness in 0002. `seasons`' external id is scoped by
   `competition_id` — a season's provider id like "2026" repeats across
   every competition, so global uniqueness there would be wrong.
-  `team_statistics`'s uniqueness (`team_id, season_id, scope`) and
-  `standings`'s (`season_id, team_id`), by contrast, are genuine
-  plain-column constraints from 0001, and `injuries`' new uniqueness on
-  `player_id` (0003) is too — `syncTeamStatistics.ts`, `syncStandings.ts`,
-  and `syncInjuries.ts` all use a real `upsert(..., { onConflict: ... })`
+  `team_statistics`'s uniqueness (`team_id, season_id, scope`),
+  `standings`'s (`season_id, team_id`), and `lineups`'s (`fixture_id,
+  team_id`), by contrast, are genuine plain-column constraints from 0001,
+  and `injuries`' new uniqueness on `player_id` (0003) is too —
+  `syncTeamStatistics.ts`, `syncStandings.ts`, `syncLineups.ts`, and
+  `syncInjuries.ts` all use a real `upsert(..., { onConflict: ... })`
   against them rather than the find-then-insert pattern the expression-index
   tables need (see `Data_Sources.md`). `injuries` models "current status per
   player," not a history of every report — see 0003's comment for the
@@ -90,3 +91,7 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   competition with a split table (group stages, championship/relegation
   rounds) has its groups flattened by `syncStandings.ts` — a team in two
   groups the same season just has the later one win on upsert.
+- `lineups.confirmation_status` is always written as `'confirmed'` by
+  `syncLineups.ts` — the `'expected'` value this column supports is never
+  used by any current job, since api-football's lineups endpoint is
+  reasoned (not yet verified) to only return officially released lineups.

@@ -7,11 +7,13 @@ import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
 import { syncStandings } from "../jobs/syncStandings.js";
+import { syncLineups } from "../jobs/syncLineups.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
 
 const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync.
+const MAX_LINEUP_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS.
 
 function requireProvider(provider: FootballDataProvider): void {
   if (provider.name === "null") {
@@ -79,6 +81,20 @@ export function createAdminRouter(
     try {
       requireProvider(provider);
       const result = await syncStandings(supabase, provider, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/lineups/sync", async (req, res, next) => {
+    try {
+      requireProvider(provider);
+
+      const hoursParam = Number(req.query.hours ?? 24);
+      const hours = Number.isFinite(hoursParam) ? Math.min(Math.max(Math.trunc(hoursParam), 1), MAX_LINEUP_WINDOW_HOURS) : 24;
+
+      const result = await syncLineups(supabase, provider, logger, hours);
       res.json({ data: result });
     } catch (err) {
       next(err);

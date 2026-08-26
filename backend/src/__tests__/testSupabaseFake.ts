@@ -1,9 +1,10 @@
 // A minimal hand-rolled fake of the subset of the Supabase JS query-builder
-// chain this codebase actually uses (from/select/eq/insert/update/single/
-// maybeSingle). Not a general-purpose Supabase mock — just enough to test
-// referenceDataService/syncFixtures without a live database, which isn't
-// available in this environment. Each table is an in-memory array of plain
-// objects with an auto-generated `id`.
+// chain this codebase actually uses (from/select/eq/in/gte/lte/insert/
+// upsert/update/single/maybeSingle, plus awaiting a query directly for its
+// full row set). Not a general-purpose Supabase mock — just enough to test
+// the sync jobs and referenceDataService without a live database, which
+// isn't available in this environment. Each table is an in-memory array of
+// plain objects with an auto-generated `id`.
 
 export interface FakeRow {
   id: string;
@@ -79,6 +80,14 @@ export class FakeSupabase {
           },
           in(column: string, values: unknown[]) {
             filters.push((row) => values.includes(resolvePath(row, column)));
+            return builder;
+          },
+          gte(column: string, value: unknown) {
+            filters.push((row) => (resolvePath(row, column) as string | number) >= (value as string | number));
+            return builder;
+          },
+          lte(column: string, value: unknown) {
+            filters.push((row) => (resolvePath(row, column) as string | number) <= (value as string | number));
             return builder;
           },
           async maybeSingle() {

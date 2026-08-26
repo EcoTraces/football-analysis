@@ -362,4 +362,103 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.searchParams.get("league")).toBe("39");
     expect(requestedUrl.searchParams.get("season")).toBe("2026");
   });
+
+  it("maps a well-formed lineups response with both teams", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            team: { id: 33, name: "Sample United" },
+            formation: "4-3-3",
+            startXI: [{ player: { id: 1, name: "Keeper One" } }, { player: { id: 2, name: "Defender One" } }],
+            substitutes: [{ player: { id: 12, name: "Sub One" } }]
+          },
+          {
+            team: { id: 34, name: "Sample City" },
+            formation: "4-4-2",
+            startXI: [{ player: { id: 501, name: "Keeper Two" } }],
+            substitutes: []
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getLineup("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      {
+        teamExternalId: "33",
+        teamName: "Sample United",
+        formation: "4-3-3",
+        startingPlayers: [
+          { externalId: "1", name: "Keeper One" },
+          { externalId: "2", name: "Defender One" }
+        ],
+        substitutePlayers: [{ externalId: "12", name: "Sub One" }]
+      },
+      {
+        teamExternalId: "34",
+        teamName: "Sample City",
+        formation: "4-4-2",
+        startingPlayers: [{ externalId: "501", name: "Keeper Two" }],
+        substitutePlayers: []
+      }
+    ]);
+  });
+
+  it("treats an empty lineups response as valid (not yet released), not an error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getLineup("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("skips a lineup entry missing team id/name, and skips individual malformed player entries", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          { formation: "4-3-3", startXI: [], substitutes: [] }, // no team
+          {
+            team: { id: 34, name: "Sample City" },
+            formation: "4-4-2",
+            startXI: [{ player: { id: 501, name: "Keeper Two" } }, { player: { name: "No Id Player" } }],
+            substitutes: null
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getLineup("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      {
+        teamExternalId: "34",
+        teamName: "Sample City",
+        formation: "4-4-2",
+        startingPlayers: [{ externalId: "501", name: "Keeper Two" }],
+        substitutePlayers: []
+      }
+    ]);
+  });
+
+  it("passes the fixture param through for lineups", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getLineup("12345");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/fixtures/lineups");
+    expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
+  });
 });

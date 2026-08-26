@@ -88,6 +88,14 @@ flattens all of them, since neither `ProviderStanding` nor the `standings`
 table tracks which group a row came from (see `Database.md`'s note on that
 simplification).
 
+`getLineup` returns a typed `ProviderLineup[]` — one entry per team, since
+a single fixture call returns both sides at once, unlike every other
+provider method here which is scoped to one team (or one competition) per
+call. `ApiFootballProvider` reasons (from the vendor's documentation,
+unverified against a live response) that this endpoint only ever returns
+officially released lineups, never a "predicted" one, and always maps
+accordingly — see the lineups ingestion section below.
+
 **Shared helper extraction:** once a third sync job needed the same
 "batch-lookup a table's rows by internal id, then read each one's provider
 external id" logic, that logic moved out of each job file and into
@@ -258,6 +266,44 @@ existed since the initial scaffold with nothing real to read until now.
 
 **Known limitation:** flattens every group in the vendor's response into
 one list — see the abstraction section above and `Database.md`.
+
+## Lineups ingestion: `syncLineups.ts`
+
+`backend/src/jobs/syncLineups.ts::syncLineups` populates `lineups` (and,
+along the way, `players`) from the vendor's own lineups endpoint:
+
+1. Reads real (non-synthetic) fixtures whose `kickoff_utc` falls within
+   `±windowHours` of now (default 24) and whose status is `scheduled`,
+   `live`, or `finished` — unlike the other sync jobs, this one is windowed
+   around kickoff rather than scanning every fixture ever recorded, since
+   lineups are only meaningful close to a match (spec section 6: "refresh
+   closer to kickoff"). A symmetric window also picks up recently finished
+   matches' confirmed lineups, which stay useful as team-news history.
+2. For each fixture with a known external id (`fixtures.external_ref`,
+   from `syncFixtures.ts`), calls `provider.getLineup(fixture)` — one call
+   returns both teams, not one at a time.
+3. An **empty** response is a normal, valid state (the vendor hasn't
+   officially released the lineup yet), tracked separately as
+   `fixturesNotYetAvailable` — not a failure, and nothing is written for
+   that fixture.
+4. For each team's lineup, upserts a `teams` row, a `players` row per named
+   starter/substitute (find-or-create by external id, same pattern as
+   injuries), and one `lineups` row via a real `upsert(..., { onConflict:
+   "fixture_id,team_id" })` — a genuine plain-column constraint from the
+   initial schema. Always writes `confirmation_status: 'confirmed'` — see
+   the abstraction section above for the reasoning and its caveat.
+5. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Each fixture (and each team's lineup within it) is processed
+independently. Trigger it via `POST /api/admin/lineups/sync?hours=N`
+(default 24, capped at 168 — see `admin.ts`).
+
+**Known limitation:** `confirmation_status` is never written as
+`'expected'` — this job either gets a confirmed lineup or nothing. If a
+future provider (or a change in how api-football's endpoint actually
+behaves) surfaces predicted lineups too, `ProviderLineup` needs a field to
+carry that distinction through; don't just keep assuming every response is
+confirmed (see `Task.md`).
 
 ## Adding another provider
 

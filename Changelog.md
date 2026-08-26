@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-08-26 — Lineups sync job
+
+- Added `syncLineups.ts`: populates `lineups` (and `players` along the way)
+  from the provider's own lineups endpoint. Unlike every other sync job so
+  far, this one is windowed around kickoff (`kickoff_utc` within
+  ±`windowHours`, default 24) rather than scanning every fixture ever
+  recorded — lineups are only meaningful close to a match. One provider
+  call per fixture returns both teams. An empty response is treated as a
+  normal "not yet officially released" state, tracked separately from
+  failures, not as an error.
+- Gave `LineupProvider.getLineup` a real typed return (`ProviderLineup[]`)
+  instead of `unknown` — `ApiFootballProvider` maps both teams per call and
+  skips individual malformed player entries without dropping the whole
+  team. Always writes `confirmation_status: 'confirmed'`, reasoned from the
+  vendor's documentation (this endpoint only updates once lineups are
+  officially released, not a "predicted lineup" feature) — flagged
+  explicitly as unverified against a live response, and as a gap if a
+  provider ever mixes confirmed and predicted lineups in one response.
+- Upserts a `lineups` row via a real `upsert(..., { onConflict:
+  "fixture_id,team_id" })`, another genuine plain-column constraint from
+  the initial schema.
+- Added `POST /api/admin/lineups/sync?hours=N` (default 24, capped at 168).
+- 13 new tests (4 in `apiFootballProvider.test.ts` for the lineups mapping
+  — including the empty-response and malformed-entry cases, 9 in
+  `syncLineups.test.ts` covering the kickoff-time window, status
+  filtering, idempotency, missing-external-ref skipping, per-fixture
+  failure isolation, and synthetic-fixture exclusion) — 81 backend tests
+  passing in total, clean lint/typecheck/build. Manually verified the new
+  route requires auth on a running server.
+- Caught the same test-fixture bug a third time (after injuries and before
+  writing standings' tests correctly the first time): the fake provider's
+  default response initially gave both teams' lineups the same player
+  external ids, which isn't realistic and would have made "N distinct
+  players" assertions pass or fail for the wrong reason. Fixed before
+  running the suite for real.
+- Added `.gte()`/`.lte()` support to the test double
+  (`testSupabaseFake.ts`) to support the kickoff-time window query — the
+  first sync job needing a range filter rather than exact/set matches.
+
 ## 2026-08-26 — Standings sync job
 
 - Added `syncStandings.ts`: populates `standings` from the provider's own

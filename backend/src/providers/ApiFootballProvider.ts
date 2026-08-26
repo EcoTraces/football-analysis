@@ -2,6 +2,8 @@ import type {
   FootballDataProvider,
   ProviderFixture,
   ProviderInjury,
+  ProviderLineup,
+  ProviderLineupPlayer,
   ProviderResponse,
   ProviderStanding,
   ProviderTeamStatistics,
@@ -191,8 +193,10 @@ export class ApiFootballProvider implements FootballDataProvider {
     return { ...result, data: mapped };
   }
 
-  async getLineup(fixtureExternalId: string): Promise<ProviderResponse<unknown>> {
-    return this.request("/fixtures/lineups", { fixture: fixtureExternalId });
+  async getLineup(fixtureExternalId: string): Promise<ProviderResponse<ProviderLineup[]>> {
+    const result = await this.request<RawLineupEntry[]>("/fixtures/lineups", { fixture: fixtureExternalId });
+    if (!result.ok) return result;
+    return { ...result, data: result.data.map(mapLineup).filter((l): l is ProviderLineup => l !== null) };
   }
 
   async getStandings(competitionExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderStanding[]>> {
@@ -415,4 +419,45 @@ function mapStandings(envelopes: RawStandingsEnvelope[]): ProviderStanding[] {
     }
   }
   return rows;
+}
+
+// Shape per api-football v3's documented /fixtures/lineups response —
+// unverified against a live response, same caveat as the other Raw*
+// interfaces above. One call returns an array with (up to) one entry per
+// team, not one team at a time like team-statistics/injuries.
+interface RawLineupPlayerEntry {
+  player?: { id?: number | null; name?: string | null };
+}
+
+interface RawLineupEntry {
+  team?: { id?: number | null; name?: string | null };
+  formation?: string | null;
+  startXI?: RawLineupPlayerEntry[] | null;
+  substitutes?: RawLineupPlayerEntry[] | null;
+}
+
+function mapLineupPlayers(entries: RawLineupPlayerEntry[] | null | undefined): ProviderLineupPlayer[] {
+  const players: ProviderLineupPlayer[] = [];
+  for (const entry of entries ?? []) {
+    const id = entry.player?.id;
+    const name = entry.player?.name;
+    if (typeof id === "number" && name) players.push({ externalId: String(id), name });
+    // A malformed individual player entry is skipped, not the whole team —
+    // same per-item policy as everywhere else in this file.
+  }
+  return players;
+}
+
+function mapLineup(raw: RawLineupEntry): ProviderLineup | null {
+  const teamExternalId = raw.team?.id;
+  const teamName = raw.team?.name;
+  if (typeof teamExternalId !== "number" || !teamName) return null;
+
+  return {
+    teamExternalId: String(teamExternalId),
+    teamName,
+    formation: raw.formation ?? null,
+    startingPlayers: mapLineupPlayers(raw.startXI),
+    substitutePlayers: mapLineupPlayers(raw.substitutes)
+  };
 }

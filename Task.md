@@ -87,14 +87,32 @@
   groups in the same season just has the later one win via upsert order,
   since this schema has no column for which group a row came from. Revisit
   if that turns out to matter for a real competition's data.
-- [ ] Build lineups/odds sync jobs — `ApiFootballProvider` already
-  implements the underlying call (`getLineup`); no job calls it yet, and no
-  `OddsProvider` method exists on `ApiFootballProvider` at all yet.
+- [x] Build the lineups sync job — `syncLineups.ts`, windowed around
+  kickoff (`kickoff_utc` within ±`windowHours`, default 24) rather than
+  scanning every fixture, since lineups only exist close to kickoff. One
+  provider call per fixture returns both teams; upserts a `teams` row, a
+  `players` row per named starter/substitute, and one `lineups` row per
+  team via a real `upsert(..., { onConflict: "fixture_id,team_id" })`.
+  **Not yet verified against a live API key** — same caveat as the other
+  sync jobs.
+- [ ] `syncLineups.ts` always writes `confirmation_status: 'confirmed'` —
+  reasoned from api-football's documentation stating this endpoint only
+  updates once lineups are officially released (not a "predicted lineup"
+  feature), but that reasoning itself is unverified against a live
+  response. If a future provider (or this one, if the docs turn out wrong)
+  mixes confirmed and predicted lineups in one response, `ProviderLineup`
+  needs a field for that — don't just keep assuming "confirmed."
+- [ ] Build an odds sync job — no `OddsProvider` method exists on
+  `ApiFootballProvider` at all yet (unlike lineups, which had a method
+  with no job).
 - [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
-  `syncStandings`, and `generatePredictionsForUpcomingFixtures` to a
-  scheduler (cron / Cloud Scheduler / Supabase Edge Function cron) instead
-  of manual admin-endpoint calls. Fixtures before the others, since
-  team-statistics/injuries/standings all depend on fixtures existing.
+  `syncStandings`, `syncLineups`, and `generatePredictionsForUpcomingFixtures`
+  to a scheduler (cron / Cloud Scheduler / Supabase Edge Function cron)
+  instead of manual admin-endpoint calls. Fixtures before the others, since
+  team-statistics/injuries/standings/lineups all depend on fixtures
+  existing; lineups specifically benefits from running much more often
+  than the others as kickoff approaches (spec section 6: "refresh closer
+  to kickoff").
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

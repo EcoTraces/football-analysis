@@ -38,10 +38,10 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   teams/competitions/standings reads, a `FootballDataProvider` abstraction
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
-  default; opt in via env vars), fixture/team-statistics/injuries/standings
-  sync jobs, a prediction-generation job, and admin endpoints to trigger
-  each — authenticated by a Supabase JWT plus an admin role check. See
-  `API.md`.
+  default; opt in via env vars), fixture/team-statistics/injuries/standings/
+  lineups sync jobs, a prediction-generation job, and admin endpoints to
+  trigger each — authenticated by a Supabase JWT plus an admin role check.
+  See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -69,10 +69,16 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   follows the vendor's documentation, tested only against injected fake
   HTTP responses. Get a real key and run a sync before trusting it in
   production. See `Data_Sources.md`.
-- Lineups/odds have no sync job yet (`getLineup` exists on the provider but
-  nothing calls it; there's no `getOdds` implementation at all) — fixtures,
-  team statistics, injuries, and standings are the data actually ingested
-  today.
+- No odds sync job or `OddsProvider` implementation exists at all yet —
+  fixtures, team statistics, injuries, standings, and lineups are the data
+  actually ingested today.
+- The lineups sync (`syncLineups.ts`) only looks at fixtures within a
+  window around kickoff (±24h by default) rather than every fixture ever
+  recorded, since lineups aren't meaningful further out. It always records
+  `confirmation_status: 'confirmed'`, reasoned from api-football's
+  documentation saying this endpoint only updates once lineups are
+  officially released — not a "predicted lineup" feature — but that
+  reasoning is itself unverified against a live response.
 - The standings sync (`syncStandings.ts`) feeds the existing `GET
   /standings/:leagueId` route with real data for the first time — that
   route existed since the initial scaffold but had nothing real to read
@@ -151,6 +157,8 @@ curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" \
 curl -X POST "http://localhost:8080/api/admin/injuries/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/standings/sync" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/lineups/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/predictions/run" \
   -H "Authorization: Bearer $ADMIN_JWT"

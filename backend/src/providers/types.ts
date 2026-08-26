@@ -67,6 +67,19 @@ export interface ProviderStanding {
   form: string | null;
 }
 
+export interface ProviderLineupPlayer {
+  externalId: string;
+  name: string;
+}
+
+export interface ProviderLineup {
+  teamExternalId: string;
+  teamName: string;
+  formation: string | null;
+  startingPlayers: ProviderLineupPlayer[];
+  substitutePlayers: ProviderLineupPlayer[];
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -109,7 +122,9 @@ export interface InjuryProvider {
 }
 
 export interface LineupProvider {
-  getLineup(fixtureExternalId: string): Promise<ProviderResponse<unknown>>;
+  // One fixture call returns both teams' lineups, not one — unlike the
+  // team/season-scoped providers above.
+  getLineup(fixtureExternalId: string): Promise<ProviderResponse<ProviderLineup[]>>;
 }
 
 export interface StandingsProvider {
