@@ -3,6 +3,7 @@ import type {
   ProviderFixture,
   ProviderInjury,
   ProviderResponse,
+  ProviderStanding,
   ProviderTeamStatistics
 } from "./types.js";
 
@@ -52,7 +53,7 @@ export class NullProvider implements FootballDataProvider {
   async getStandings(
     _competitionExternalId: string,
     _seasonExternalId: string
-  ): Promise<ProviderResponse<unknown[]>> {
+  ): Promise<ProviderResponse<ProviderStanding[]>> {
     return this.unavailable();
   }
 }

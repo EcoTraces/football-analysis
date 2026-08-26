@@ -6,6 +6,7 @@ import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredicti
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
+import { syncStandings } from "../jobs/syncStandings.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
@@ -68,6 +69,16 @@ export function createAdminRouter(
     try {
       requireProvider(provider);
       const result = await syncInjuries(supabase, provider, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/standings/sync", async (_req, res, next) => {
+    try {
+      requireProvider(provider);
+      const result = await syncStandings(supabase, provider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);

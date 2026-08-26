@@ -237,4 +237,129 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.searchParams.get("team")).toBe("33");
     expect(requestedUrl.searchParams.get("season")).toBe("2026");
   });
+
+  it("maps a well-formed standings response, flattening a single group", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            league: {
+              standings: [
+                [
+                  {
+                    rank: 1,
+                    team: { id: 33, name: "Sample United" },
+                    points: 45,
+                    form: "WWDLW",
+                    all: { played: 20, win: 14, draw: 3, lose: 3, goals: { for: 40, against: 20 } }
+                  },
+                  {
+                    rank: 2,
+                    team: { id: 34, name: "Sample City" },
+                    points: 40,
+                    form: "WDWWL",
+                    all: { played: 20, win: 12, draw: 4, lose: 4, goals: { for: 38, against: 22 } }
+                  }
+                ]
+              ]
+            }
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getStandings("39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      {
+        teamExternalId: "33",
+        teamName: "Sample United",
+        position: 1,
+        played: 20,
+        wins: 14,
+        draws: 3,
+        losses: 3,
+        goalsFor: 40,
+        goalsAgainst: 20,
+        points: 45,
+        form: "WWDLW"
+      },
+      {
+        teamExternalId: "34",
+        teamName: "Sample City",
+        position: 2,
+        played: 20,
+        wins: 12,
+        draws: 4,
+        losses: 4,
+        goalsFor: 38,
+        goalsAgainst: 22,
+        points: 40,
+        form: "WDWWL"
+      }
+    ]);
+  });
+
+  it("flattens multiple standings groups (e.g. group-stage tables) into one list", async () => {
+    const row = (rank: number, teamId: number) => ({
+      rank,
+      team: { id: teamId, name: `Team ${teamId}` },
+      points: 10,
+      form: null,
+      all: { played: 5, win: 3, draw: 1, lose: 1, goals: { for: 10, against: 5 } }
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [{ league: { standings: [[row(1, 1)], [row(1, 2)]] } }]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getStandings("2", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toHaveLength(2);
+    expect(result.data.map((r) => r.teamExternalId)).toEqual(["1", "2"]);
+  });
+
+  it("skips a standings row missing required fields rather than guessing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            league: {
+              standings: [
+                [
+                  { rank: 1, team: { id: 33, name: "Sample United" } } // no points/all
+                ]
+              ]
+            }
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getStandings("39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("passes league/season params through for standings", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getStandings("39", "2026");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/standings");
+    expect(requestedUrl.searchParams.get("league")).toBe("39");
+    expect(requestedUrl.searchParams.get("season")).toBe("2026");
+  });
 });

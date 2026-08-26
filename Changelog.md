@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-26 — Standings sync job
+
+- Added `syncStandings.ts`: populates `standings` from the provider's own
+  league-table endpoint for every distinct (competition, season) pair
+  implied by real fixtures — one call returns the whole table, so unlike
+  team-statistics/injuries there's no per-team fan-out. Upserts a `teams`
+  row per entry (find-or-create by external id) and then a `standings` row
+  via a real `upsert(..., { onConflict: "season_id,team_id" })`, another
+  genuine plain-column constraint from the initial schema.
+- Gave `StandingsProvider.getStandings` a real typed return
+  (`ProviderStanding[]`) instead of `unknown[]` — `ApiFootballProvider`
+  flattens the vendor's grouped table structure (`league.standings`, an
+  array of arrays for competitions with split tables) into one list, and
+  skips rows missing required fields rather than guessing.
+- This is the first job to give the pre-existing `GET /standings/:leagueId`
+  read route real data — that route has existed since the initial scaffold
+  with nothing real to read until now.
+- Refactored: this is the third sync job needing the same "batch-lookup
+  external ids by internal id" logic, so pulled `externalId`/
+  `loadExternalRefs` out of `syncTeamStatistics.ts`'s and `syncInjuries.ts`'s
+  local copies into `referenceDataService.ts` as shared exports, and
+  updated both existing jobs to use them — rather than writing a third
+  near-identical copy for this one.
+- 12 new tests (4 in `apiFootballProvider.test.ts` for the standings
+  mapping — including flattening multiple groups and skipping incomplete
+  rows, 8 in `syncStandings.test.ts` covering deduplication, idempotency,
+  a position/points change actually landing on a later sync, missing-
+  external-ref skipping, per-item failure isolation, and synthetic-fixture
+  exclusion) — 68 backend tests passing in total, clean lint/typecheck/
+  build. Manually verified the new route requires auth on a running server,
+  and that the referenceDataService refactor didn't change behavior (full
+  suite re-run green before and after).
+
 ## 2026-08-26 — Injuries sync job
 
 - Added `syncInjuries.ts`: populates `players` and `injuries` from the

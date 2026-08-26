@@ -40,7 +40,9 @@ unless `?includeSynthetic=true`).
 
 ### `GET /standings/:leagueId`
 Standings for a season (`leagueId` is actually a `season_id` — see
-`Task.md` for renaming this once the standings model is fleshed out).
+`Task.md` for renaming this once the standings model is fleshed out). Now
+backed by real data once `POST /admin/standings/sync` has been run for
+that season — before that, returns an empty list, not a fabricated table.
 
 ## Admin
 
@@ -78,6 +80,15 @@ recently dated report per player, and upserts a `players` row plus one
 combinationsSkipped, combinationsFailed, playersProcessed,
 playersRejected }`. Same `409 no_provider_configured` behavior as the other
 sync endpoints. See `Data_Sources.md` for the status-classification caveat.
+
+### `POST /admin/standings/sync`
+Calls the configured provider's standings endpoint for every distinct
+(competition, season) pair implied by real fixtures (one call returns the
+whole table) and upserts a `standings` row per team. Returns `{ runId,
+combinationsConsidered, combinationsSkipped, combinationsFailed,
+rowsProcessed, rowsRejected }`. Same `409 no_provider_configured` behavior
+as the other sync endpoints. See `Data_Sources.md` for the group-flattening
+caveat.
 
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest

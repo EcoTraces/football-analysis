@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderTeamStatistics } from "../providers/types.js";
-import { PROVIDER_KEY } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs } from "../services/referenceDataService.js";
 
 export interface SyncTeamStatisticsResult {
   runId: string;
@@ -15,16 +15,6 @@ interface TeamCompetitionSeason {
   teamId: string;
   competitionId: string;
   seasonId: string;
-}
-
-interface RefRow {
-  id: string;
-  external_ref: Record<string, string> | null;
-}
-
-function externalId(row: RefRow | undefined): string | null {
-  const value = row?.external_ref?.[PROVIDER_KEY];
-  return typeof value === "string" ? value : null;
 }
 
 // Every non-synthetic fixture implies two (team, competition, season)
@@ -48,13 +38,6 @@ async function loadCombinations(supabase: SupabaseClient): Promise<TeamCompetiti
     }
   }
   return [...seen.values()];
-}
-
-async function loadExternalRefs(supabase: SupabaseClient, table: string, ids: string[]): Promise<Map<string, RefRow>> {
-  if (ids.length === 0) return new Map();
-  const { data, error } = await supabase.from(table).select("id, external_ref").in("id", ids);
-  if (error) throw new Error(`Failed to load ${table} for team-statistics sync: ${error.message}`);
-  return new Map((data ?? []).map((row) => [row.id as string, row as RefRow]));
 }
 
 function statisticsRows(

@@ -52,6 +52,21 @@ export interface ProviderInjury {
   reportedForFixtureUtc: string;
 }
 
+export interface ProviderStanding {
+  teamExternalId: string;
+  teamName: string;
+  position: number;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  points: number;
+  // e.g. "WWDLW" — nullable since not every vendor/competition reports it.
+  form: string | null;
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -98,7 +113,7 @@ export interface LineupProvider {
 }
 
 export interface StandingsProvider {
-  getStandings(competitionExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>>;
+  getStandings(competitionExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderStanding[]>>;
 }
 
 export interface OddsProvider {

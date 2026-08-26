@@ -73,14 +73,28 @@
   freshness classifier surfaces the staleness, but nothing flips the
   status). Revisit once there's a signal to detect recovery from (e.g. the
   player appearing in a subsequent confirmed lineup).
-- [ ] Build lineups/standings/odds sync jobs — `ApiFootballProvider` already
-  implements the underlying calls (`getLineup`, `getStandings`); no job
-  calls them yet.
+- [x] Build the standings sync job — `syncStandings.ts`, keyed on
+  (competition, season) pairs implied by real fixtures (one provider call
+  returns the whole table), upserting a `standings` row per team via a real
+  `upsert(..., { onConflict: "season_id,team_id" })`. Feeds the existing
+  `GET /standings/:leagueId` read route with real data for the first time.
+  **Not yet verified against a live API key** — same caveat as the other
+  sync jobs.
+- [ ] `syncStandings.ts` flattens every group in the vendor's response
+  (`RawStandingsEnvelope.league.standings`, an array of arrays for
+  competitions with split tables like group stages or
+  championship/relegation rounds) into one list — a team appearing in two
+  groups in the same season just has the later one win via upsert order,
+  since this schema has no column for which group a row came from. Revisit
+  if that turns out to matter for a real competition's data.
+- [ ] Build lineups/odds sync jobs — `ApiFootballProvider` already
+  implements the underlying call (`getLineup`); no job calls it yet, and no
+  `OddsProvider` method exists on `ApiFootballProvider` at all yet.
 - [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
-  and `generatePredictionsForUpcomingFixtures` to a scheduler (cron / Cloud
-  Scheduler / Supabase Edge Function cron) instead of manual admin-endpoint
-  calls. Fixtures before team-statistics/injuries before predictions, since
-  the latter two depend on fixtures existing.
+  `syncStandings`, and `generatePredictionsForUpcomingFixtures` to a
+  scheduler (cron / Cloud Scheduler / Supabase Edge Function cron) instead
+  of manual admin-endpoint calls. Fixtures before the others, since
+  team-statistics/injuries/standings all depend on fixtures existing.
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

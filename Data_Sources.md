@@ -80,6 +80,22 @@ free-text `type`/`reason` fields (`ApiFootballProvider.ts::mapInjuryStatus`)
 — there's no documented enum to map onto this schema's status column, so
 treat it as a heuristic, not a guarantee, until checked against live data.
 
+`getStandings` returns a typed `ProviderStanding[]` too. The vendor nests a
+competition's table(s) inside `league.standings` as an array of arrays (one
+inner array per group — most competitions have exactly one, but a group
+stage or a split championship/relegation round has several); the mapping
+flattens all of them, since neither `ProviderStanding` nor the `standings`
+table tracks which group a row came from (see `Database.md`'s note on that
+simplification).
+
+**Shared helper extraction:** once a third sync job needed the same
+"batch-lookup a table's rows by internal id, then read each one's provider
+external id" logic, that logic moved out of each job file and into
+`referenceDataService.ts` as `loadExternalRefs`/`externalId` — see its
+export comments. `syncTeamStatistics.ts` and `syncInjuries.ts` were both
+updated to use it instead of their own copies when this happened, rather
+than leaving three near-identical implementations around.
+
 ### Single-day constraint
 
 `ApiFootballProvider.getFixturesForDateRange` only accepts a single UTC day
@@ -214,6 +230,34 @@ lineup) is tracked in `Task.md`, not implemented here.
 **Also unverified:** the `status` classification is a keyword heuristic
 over free text with no documented enum behind it — see the abstraction
 section above and `Task.md`.
+
+## Standings ingestion: `syncStandings.ts`
+
+`backend/src/jobs/syncStandings.ts::syncStandings` populates `standings`
+from the vendor's own league-table endpoint:
+
+1. Reads every distinct (competition, season) pair implied by real
+   fixtures. Unlike team-statistics and injuries, this needs no
+   external-key-based deduplication: an internal `competition_id` is
+   already 1:1 with one real competition (it's a season's external id,
+   not a competition's, that repeats across competitions — see
+   `Database.md`), so plain internal-id dedup is enough.
+2. Calls `provider.getStandings(competition, season)` — one call returns
+   the entire table, not one row.
+3. For each row, upserts a `teams` row (find-or-create by external id,
+   same as fixture ingestion — the table gives each team's id and name) and
+   then a `standings` row via a real `upsert(..., { onConflict:
+   "season_id,team_id" })`, a genuine plain-column constraint from the
+   initial schema.
+4. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Each (competition, season) combination is processed independently. Trigger
+it via `POST /api/admin/standings/sync`. This is the first job to give the
+pre-existing `GET /standings/:leagueId` read route real data — that route
+existed since the initial scaffold with nothing real to read until now.
+
+**Known limitation:** flattens every group in the vendor's response into
+one list — see the abstraction section above and `Database.md`.
 
 ## Adding another provider
 

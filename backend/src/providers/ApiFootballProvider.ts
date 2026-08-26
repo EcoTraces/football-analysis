@@ -3,6 +3,7 @@ import type {
   ProviderFixture,
   ProviderInjury,
   ProviderResponse,
+  ProviderStanding,
   ProviderTeamStatistics,
   ProviderUnavailable
 } from "./types.js";
@@ -194,8 +195,13 @@ export class ApiFootballProvider implements FootballDataProvider {
     return this.request("/fixtures/lineups", { fixture: fixtureExternalId });
   }
 
-  async getStandings(competitionExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>> {
-    return this.request<unknown[]>("/standings", { league: competitionExternalId, season: seasonExternalId });
+  async getStandings(competitionExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderStanding[]>> {
+    const result = await this.request<RawStandingsEnvelope[]>("/standings", {
+      league: competitionExternalId,
+      season: seasonExternalId
+    });
+    if (!result.ok) return result;
+    return { ...result, data: mapStandings(result.data) };
   }
 }
 
@@ -338,4 +344,75 @@ function mapInjury(raw: RawInjury): ProviderInjury | null {
     description: raw.player?.reason ?? raw.player?.type ?? null,
     reportedForFixtureUtc: new Date(fixtureDate).toISOString()
   };
+}
+
+// Shape per api-football v3's documented /standings response — unverified
+// against a live response, same caveat as the other Raw* interfaces above.
+// `standings` is an array of groups (e.g. separate group-stage tables, or a
+// split "Championship Round"/"Relegation Round" in some leagues) — this
+// mapping flattens every group into one list. This schema has no column
+// for which group a row came from, so a team appearing in two groups in
+// the same season would just have the later one win via upsert order; an
+// edge case accepted for now rather than modeled (see Task.md).
+interface RawStandingRow {
+  rank?: number | null;
+  team?: { id?: number | null; name?: string | null };
+  points?: number | null;
+  form?: string | null;
+  all?: {
+    played?: number | null;
+    win?: number | null;
+    draw?: number | null;
+    lose?: number | null;
+    goals?: { for?: number | null; against?: number | null };
+  };
+}
+
+interface RawStandingsEnvelope {
+  league?: { standings?: RawStandingRow[][] | null };
+}
+
+function mapStandingRow(raw: RawStandingRow): ProviderStanding | null {
+  const teamExternalId = raw.team?.id;
+  const teamName = raw.team?.name;
+  const position = raw.rank;
+  const points = raw.points;
+  const played = raw.all?.played;
+  const wins = raw.all?.win;
+  const draws = raw.all?.draw;
+  const losses = raw.all?.lose;
+  const goalsFor = raw.all?.goals?.for;
+  const goalsAgainst = raw.all?.goals?.against;
+
+  const required = [position, points, played, wins, draws, losses, goalsFor, goalsAgainst];
+  if (typeof teamExternalId !== "number" || !teamName || required.some((v) => typeof v !== "number")) return null;
+
+  return {
+    teamExternalId: String(teamExternalId),
+    teamName,
+    position: position as number,
+    played: played as number,
+    wins: wins as number,
+    draws: draws as number,
+    losses: losses as number,
+    goalsFor: goalsFor as number,
+    goalsAgainst: goalsAgainst as number,
+    points: points as number,
+    form: raw.form ?? null
+  };
+}
+
+function mapStandings(envelopes: RawStandingsEnvelope[]): ProviderStanding[] {
+  const rows: ProviderStanding[] = [];
+  for (const envelope of envelopes) {
+    for (const group of envelope.league?.standings ?? []) {
+      for (const raw of group) {
+        const mapped = mapStandingRow(raw);
+        if (mapped) rows.push(mapped);
+        // Rows missing required fields are skipped, not filled with
+        // guessed values — same policy as every other mapper here.
+      }
+    }
+  }
+  return rows;
 }

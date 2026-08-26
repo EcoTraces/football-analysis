@@ -38,9 +38,10 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   teams/competitions/standings reads, a `FootballDataProvider` abstraction
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
-  default; opt in via env vars), fixture/team-statistics/injuries sync
-  jobs, a prediction-generation job, and admin endpoints to trigger each —
-  authenticated by a Supabase JWT plus an admin role check. See `API.md`.
+  default; opt in via env vars), fixture/team-statistics/injuries/standings
+  sync jobs, a prediction-generation job, and admin endpoints to trigger
+  each — authenticated by a Supabase JWT plus an admin role check. See
+  `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -68,9 +69,17 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   follows the vendor's documentation, tested only against injected fake
   HTTP responses. Get a real key and run a sync before trusting it in
   production. See `Data_Sources.md`.
-- Lineups/standings/odds have provider methods implemented but no sync job
-  calling them yet — fixtures, team statistics, and injuries are the only
-  data actually ingested today.
+- Lineups/odds have no sync job yet (`getLineup` exists on the provider but
+  nothing calls it; there's no `getOdds` implementation at all) — fixtures,
+  team statistics, injuries, and standings are the data actually ingested
+  today.
+- The standings sync (`syncStandings.ts`) feeds the existing `GET
+  /standings/:leagueId` route with real data for the first time — that
+  route existed since the initial scaffold but had nothing real to read
+  until now. It flattens every group in a competition's table (some
+  competitions split into group stages or championship/relegation rounds)
+  into one list, since this schema has no column for which group a row
+  came from.
 - The team-statistics sync (`syncTeamStatistics.ts`) calls the vendor's own
   aggregated stats endpoint per team/competition/season rather than
   computing it from our own results — real data either way, but it means
@@ -140,6 +149,8 @@ curl -X POST "http://localhost:8080/api/admin/sync?days=3" \
 curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/injuries/sync" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/standings/sync" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/predictions/run" \
   -H "Authorization: Bearer $ADMIN_JWT"

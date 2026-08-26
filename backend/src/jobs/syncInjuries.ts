@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderInjury } from "../providers/types.js";
-import { PROVIDER_KEY, upsertPlayer } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs, upsertPlayer } from "../services/referenceDataService.js";
 
 export interface SyncInjuriesResult {
   runId: string;
@@ -16,16 +16,6 @@ interface TeamSeasonExternal {
   teamId: string;
   teamExternalId: string;
   seasonExternalId: string;
-}
-
-interface RefRow {
-  id: string;
-  external_ref: Record<string, string> | null;
-}
-
-function externalId(row: RefRow | undefined): string | null {
-  const value = row?.external_ref?.[PROVIDER_KEY];
-  return typeof value === "string" ? value : null;
 }
 
 interface LoadedCombinations {
@@ -58,13 +48,8 @@ async function loadCombinations(supabase: SupabaseClient): Promise<LoadedCombina
     }
   }
 
-  const { data: teamRows, error: teamError } = await supabase.from("teams").select("id, external_ref").in("id", [...teamIds]);
-  if (teamError) throw new Error(`Failed to load teams for injuries sync: ${teamError.message}`);
-  const teams = new Map((teamRows ?? []).map((row) => [row.id as string, row as RefRow]));
-
-  const { data: seasonRows, error: seasonError } = await supabase.from("seasons").select("id, external_ref").in("id", [...seasonIds]);
-  if (seasonError) throw new Error(`Failed to load seasons for injuries sync: ${seasonError.message}`);
-  const seasons = new Map((seasonRows ?? []).map((row) => [row.id as string, row as RefRow]));
+  const teams = await loadExternalRefs(supabase, "teams", [...teamIds]);
+  const seasons = await loadExternalRefs(supabase, "seasons", [...seasonIds]);
 
   const seen = new Map<string, TeamSeasonExternal>();
   let skipped = 0;

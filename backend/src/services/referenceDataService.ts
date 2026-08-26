@@ -2,6 +2,28 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const PROVIDER_KEY = "api_football";
 
+export interface RefRow {
+  id: string;
+  external_ref: Record<string, string> | null;
+}
+
+// Reads a row's provider external id, or null if it doesn't have one yet
+// (e.g. created before external_ref existed, or by some other path).
+export function externalId(row: RefRow | undefined): string | null {
+  const value = row?.external_ref?.[PROVIDER_KEY];
+  return typeof value === "string" ? value : null;
+}
+
+// Batches an external-id lookup for a set of internal ids in one query
+// instead of one row at a time — used by every sync job that needs to turn
+// internal UUIDs back into the provider's own ids before calling it.
+export async function loadExternalRefs(supabase: SupabaseClient, table: string, ids: string[]): Promise<Map<string, RefRow>> {
+  if (ids.length === 0) return new Map();
+  const { data, error } = await supabase.from(table).select("id, external_ref").in("id", ids);
+  if (error) throw new Error(`Failed to load ${table} external refs: ${error.message}`);
+  return new Map((data ?? []).map((row) => [row.id as string, row as RefRow]));
+}
+
 // Find-then-insert rather than a Postgres upsert-on-conflict: the uniqueness
 // constraints here are partial unique indexes over a jsonb expression
 // (external_ref->>'api_football'), and PostgREST's on_conflict parameter is

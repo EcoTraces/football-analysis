@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FootballDataProvider, ProviderFixture, ProviderInjury, ProviderResponse, ProviderTeamStatistics } from "../providers/types.js";
+import type { FootballDataProvider, ProviderFixture, ProviderInjury, ProviderResponse, ProviderStanding, ProviderTeamStatistics } from "../providers/types.js";
 import { FakeSupabase } from "./testSupabaseFake.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 
@@ -49,7 +49,7 @@ class FakeProvider implements FootballDataProvider {
   async getLineup(): Promise<ProviderResponse<unknown>> {
     return { ok: false, reason: "not_configured", message: "unused in this test", provider: this.name };
   }
-  async getStandings(): Promise<ProviderResponse<unknown[]>> {
+  async getStandings(): Promise<ProviderResponse<ProviderStanding[]>> {
     return { ok: false, reason: "not_configured", message: "unused in this test", provider: this.name };
   }
 }
