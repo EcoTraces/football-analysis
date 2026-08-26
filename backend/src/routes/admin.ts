@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
 import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredictions.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
+import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
@@ -42,6 +43,23 @@ export function createAdminRouter(
       to.setUTCDate(to.getUTCDate() + (days - 1));
 
       const result = await syncFixturesForDateRange(supabase, provider, from.toISOString(), to.toISOString(), logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/team-statistics/sync", async (_req, res, next) => {
+    try {
+      if (provider.name === "null") {
+        throw new ApiError(
+          409,
+          "No football data provider is configured (FOOTBALL_DATA_PROVIDER=null). See Data_Sources.md.",
+          "no_provider_configured"
+        );
+      }
+
+      const result = await syncTeamStatistics(supabase, provider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);

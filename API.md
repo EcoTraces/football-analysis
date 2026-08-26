@@ -59,6 +59,16 @@ capped at 14) using the configured `FootballDataProvider`. Returns
 Responds `409 no_provider_configured` if `FOOTBALL_DATA_PROVIDER=null`
 (the default) rather than silently doing nothing. See `Data_Sources.md`.
 
+### `POST /admin/team-statistics/sync`
+Calls the configured provider's aggregated team-statistics endpoint for
+every distinct (team, competition, season) implied by real (non-synthetic)
+fixtures, and upserts `overall`/`home`/`away` scope rows into
+`team_statistics`. Run this after `/admin/sync` and before
+`/admin/predictions/run` — predictions read from `team_statistics`, not
+from raw fixture scores. Returns `{ runId, combinationsConsidered,
+processed, skipped, failed }`. Same `409 no_provider_configured` behavior
+as `/admin/sync`. See `Data_Sources.md`.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.

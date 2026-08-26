@@ -14,6 +14,7 @@ export class FakeSupabase {
   private tables = new Map<string, FakeRow[]>();
   private nextId = 1;
   private insertFailures = new Map<string, number>();
+  private upsertFailures = new Map<string, number>();
   private authTokens = new Map<string, { id: string }>();
 
   /** Registers `token` as a valid session for the given user id, for auth.getUser(token). */
@@ -49,6 +50,18 @@ export class FakeSupabase {
     return true;
   }
 
+  /** Make the next `times` upsert(s) into `table` fail, to test error handling. */
+  failNextUpsert(table: string, times = 1): void {
+    this.upsertFailures.set(table, (this.upsertFailures.get(table) ?? 0) + times);
+  }
+
+  private consumeUpsertFailure(table: string): boolean {
+    const remaining = this.upsertFailures.get(table) ?? 0;
+    if (remaining <= 0) return false;
+    this.upsertFailures.set(table, remaining - 1);
+    return true;
+  }
+
   from(table: string) {
     if (!this.tables.has(table)) this.tables.set(table, []);
     // The nested object-literal methods below need `this` to mean the
@@ -64,6 +77,10 @@ export class FakeSupabase {
             filters.push((row) => resolvePath(row, column) === value);
             return builder;
           },
+          in(column: string, values: unknown[]) {
+            filters.push((row) => values.includes(resolvePath(row, column)));
+            return builder;
+          },
           async maybeSingle() {
             const match = self.tables.get(table)!.find((row) => filters.every((f) => f(row))) ?? null;
             return { data: match, error: null };
@@ -73,6 +90,12 @@ export class FakeSupabase {
             return match
               ? { data: match, error: null }
               : { data: null, error: { message: `No row found in ${table}` } };
+          },
+          // Lets callers `await` the query directly (no .single()/.maybeSingle())
+          // to get every matching row, matching real supabase-js's behavior.
+          async then(resolve: (v: { data: FakeRow[]; error: null }) => void) {
+            const matches = self.tables.get(table)!.filter((row) => filters.every((f) => f(row)));
+            resolve({ data: matches, error: null });
           }
         };
         return builder;
@@ -96,6 +119,26 @@ export class FakeSupabase {
               return;
             }
             self.tables.get(table)!.push(row);
+            resolve({ data: null, error: null });
+          }
+        };
+      },
+      upsert(payload: Record<string, unknown>, options?: { onConflict?: string }) {
+        const shouldFail = self.consumeUpsertFailure(table);
+        const conflictColumns = options?.onConflict?.split(",").map((c) => c.trim()) ?? ["id"];
+        return {
+          async then(resolve: (v: { data: null; error: unknown }) => void) {
+            if (shouldFail) {
+              resolve({ data: null, error: { message: `simulated upsert failure on ${table}` } });
+              return;
+            }
+            const rows = self.tables.get(table)!;
+            const existing = rows.find((row) => conflictColumns.every((col) => row[col] === payload[col]));
+            if (existing) {
+              Object.assign(existing, payload);
+            } else {
+              rows.push({ id: `${table}-${self.nextId++}`, ...payload });
+            }
             resolve({ data: null, error: null });
           }
         };

@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-08-26 — Team-statistics sync job
+
+- Added `syncTeamStatistics.ts`: populates `team_statistics` from the
+  provider's own aggregated `/teams/statistics` endpoint (not computed from
+  our own results) for every distinct (team, competition, season) implied
+  by real fixtures, deduplicated so a team isn't queried once per fixture.
+  Writes `overall`/`home`/`away` scope rows.
+- Gave `TeamStatsProvider.getTeamStatistics` a real typed return
+  (`ProviderTeamStatistics`) instead of `unknown` — `ApiFootballProvider`
+  now maps the vendor's raw response and returns `upstream_error` if
+  required fields are missing, rather than writing zeros that would look
+  identical to a team with an actual blank record.
+- This is the one ingestion job so far using a real `upsert(...,
+  { onConflict })` instead of find-then-insert — `team_statistics`'s
+  `(team_id, season_id, scope)` uniqueness is a genuine plain-column
+  constraint (unlike the expression-index uniqueness on fixtures/teams/
+  competitions/seasons), so PostgREST's on_conflict is documented to work
+  against it directly.
+- Added `POST /api/admin/team-statistics/sync` (inherits the same admin
+  auth as every other route on that router automatically, since it's
+  applied once via `router.use(...)` — didn't need separate wiring).
+- 9 new tests (2 in `apiFootballProvider.test.ts` for the new mapping, 7 in
+  `syncTeamStatistics.test.ts` covering deduplication, idempotency,
+  missing-external-ref skipping, per-item failure isolation, and synthetic-
+  fixture exclusion) — 44 backend tests passing in total, clean lint/
+  typecheck/build. Verified live against a running server that the new
+  route inherits the existing admin-auth rejection (401 with no token).
+- Predictions can now run on real (non-synthetic) fixtures once both
+  `/admin/sync` and `/admin/team-statistics/sync` have been run for them —
+  not yet exercised end-to-end against a live provider/database, same
+  caveat as the rest of the ingestion pipeline.
+
 ## 2026-08-26 — Admin route authentication
 
 - Added `requireAdmin` middleware (`backend/src/middleware/requireAdmin.ts`):

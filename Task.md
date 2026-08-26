@@ -40,16 +40,29 @@
   `/teams` sync.
 - [ ] Sync a real `/countries` list so competitions/teams get an
   authoritative country id and flag instead of match-by-name.
-- [ ] Build a results-sync job and a team-statistics aggregation job so
-  `team_statistics.overall` is populated from real match history (currently
-  only fixtures — no scores feed team_statistics yet).
+- [x] Build a team-statistics sync job — `syncTeamStatistics.ts`, calling
+  the vendor's own aggregated `/teams/statistics` endpoint (not computed
+  from our own results) for every distinct (team, competition, season)
+  implied by real fixtures, writing `overall`/`home`/`away` scope rows.
+  **Not yet verified against a live API key** — same caveat as fixtures.
+- [ ] No results-sync job exists — `syncFixtures.ts` only pulls a rolling
+  window of fixtures (today + N days), so historical results aren't
+  backfilled into our own `fixtures` table. `syncTeamStatistics.ts` doesn't
+  need that (it uses the vendor's pre-aggregated stats endpoint instead),
+  but nothing else in this repo benefits from historical results yet —
+  worth doing once head-to-head analysis (spec section 11) is built.
+- [ ] `syncTeamStatistics.ts` only populates `overall`/`home`/`away`
+  scopes — `last_5`/`last_10` (spec section 9's rolling windows) need
+  actual match-by-match results, which the vendor's aggregated endpoint
+  doesn't provide; that's the results-sync job above, not this one.
 - [ ] Build injuries/lineups/standings/odds sync jobs — `ApiFootballProvider`
-  already implements the underlying calls (`getTeamStatistics`,
-  `getInjuries`, `getLineup`, `getStandings`); no job calls them yet.
-- [ ] Wire `syncFixturesForDateRange` and
+  already implements the underlying calls (`getInjuries`, `getLineup`,
+  `getStandings`); no job calls them yet.
+- [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, and
   `generatePredictionsForUpcomingFixtures` to a scheduler (cron / Cloud
-  Scheduler / Supabase Edge Function cron) instead of manual `POST
-  /api/admin/sync` and `/api/admin/predictions/run` calls.
+  Scheduler / Supabase Edge Function cron) instead of manual admin-endpoint
+  calls. Order matters: fixtures before team-statistics before predictions,
+  since each depends on the previous one's output.
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

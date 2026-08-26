@@ -26,6 +26,11 @@ seed: `supabase/seed/dev_seed_synthetic.sql`.
   external-id uniqueness in 0002. `seasons`' external id is scoped by
   `competition_id` — a season's provider id like "2026" repeats across
   every competition, so global uniqueness there would be wrong.
+  `team_statistics`'s uniqueness (`team_id, season_id, scope`), by contrast,
+  is a genuine plain-column constraint from 0001 — `syncTeamStatistics.ts`
+  uses a real `upsert(..., { onConflict: ... })` against it rather than the
+  find-then-insert pattern the expression-index tables need (see
+  `Data_Sources.md`).
 - **Prediction history, not overwrite.** `predictions` rows are never
   mutated after creation; recalculating sets `superseded_at` on the old row
   and inserts a new one. `idx_predictions_current` (partial index on
@@ -58,9 +63,14 @@ seed: `supabase/seed/dev_seed_synthetic.sql`.
 
 - No migration tooling wired up yet (no `supabase/config.toml`/CLI
   integration in CI) — migrations are applied manually today.
-- Real fixtures can now be synced (`syncFixtures.ts`), but no job populates
-  `team_statistics` from real results yet — predictions still can't run on
-  non-synthetic fixtures until that exists.
+- Real fixtures and `overall`/`home`/`away` team statistics can now be
+  synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
+  run on non-synthetic fixtures once both have been run — but this hasn't
+  been exercised end-to-end against a live provider/database (see Task.md).
+- `team_statistics.last_5`/`last_10` scopes are never written by any
+  current job — the vendor's aggregated stats endpoint doesn't break
+  results down match-by-match, so those scopes need a future results-sync
+  job instead (see `Data_Sources.md`).
 - `model_evaluations` has no writer yet — no backtesting job exists (see
   `ML_Model.md`, `Task.md`).
 - `teams.country_id` and `competitions.competition_type` are not correctly

@@ -2,6 +2,7 @@ import type {
   FootballDataProvider,
   ProviderFixture,
   ProviderResponse,
+  ProviderTeamStatistics,
   ProviderUnavailable
 } from "./types.js";
 
@@ -150,12 +151,28 @@ export class ApiFootballProvider implements FootballDataProvider {
     teamExternalId: string,
     competitionExternalId: string,
     seasonExternalId: string
-  ): Promise<ProviderResponse<unknown>> {
-    return this.request("/teams/statistics", {
+  ): Promise<ProviderResponse<ProviderTeamStatistics>> {
+    const result = await this.request<RawTeamStatistics>("/teams/statistics", {
       team: teamExternalId,
       league: competitionExternalId,
       season: seasonExternalId
     });
+    if (!result.ok) return result;
+
+    const mapped = mapTeamStatistics(result.data);
+    if (!mapped) {
+      // The vendor returned 200 with a body that doesn't have the fields
+      // this mapping needs (e.g. an empty statistics object for a team with
+      // no fixtures yet) — treated as "no usable data," not as zeros, since
+      // zeros would be indistinguishable from a team that's actually played
+      // and drawn a blank.
+      return this.unavailable(
+        "upstream_error",
+        "API-Football's team statistics response is missing the fields this mapping expects " +
+          "(fixtures.played.total / goals.for.total.total / goals.against.total.total)."
+      );
+    }
+    return { ...result, data: mapped };
   }
 
   async getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<unknown[]>> {
@@ -223,4 +240,54 @@ interface RawFixture {
     away: { id: number; name: string };
   };
   goals?: { home: number | null; away: number | null };
+}
+
+// Shape per api-football v3's documented /teams/statistics response —
+// unverified against a live response, same caveat as RawFixture above.
+// `clean_sheet`/`failed_to_score` are read defensively (optional chaining,
+// null fallback) since they're less central to the documented contract
+// than the fixtures/goals counts and more likely to have shifted.
+interface RawTeamStatistics {
+  fixtures?: {
+    played?: { home?: number | null; away?: number | null; total?: number | null };
+  };
+  goals?: {
+    for?: {
+      total?: { home?: number | null; away?: number | null; total?: number | null };
+    };
+    against?: {
+      total?: { home?: number | null; away?: number | null; total?: number | null };
+    };
+  };
+  clean_sheet?: { total?: number | null };
+  failed_to_score?: { total?: number | null };
+}
+
+function mapTeamStatistics(raw: RawTeamStatistics): ProviderTeamStatistics | null {
+  const matchesPlayed = raw.fixtures?.played?.total;
+  const matchesPlayedHome = raw.fixtures?.played?.home;
+  const matchesPlayedAway = raw.fixtures?.played?.away;
+  const goalsFor = raw.goals?.for?.total?.total;
+  const goalsForHome = raw.goals?.for?.total?.home;
+  const goalsForAway = raw.goals?.for?.total?.away;
+  const goalsAgainst = raw.goals?.against?.total?.total;
+  const goalsAgainstHome = raw.goals?.against?.total?.home;
+  const goalsAgainstAway = raw.goals?.against?.total?.away;
+
+  const required = [matchesPlayed, matchesPlayedHome, matchesPlayedAway, goalsFor, goalsForHome, goalsForAway, goalsAgainst, goalsAgainstHome, goalsAgainstAway];
+  if (required.some((v) => typeof v !== "number")) return null;
+
+  return {
+    matchesPlayed: matchesPlayed as number,
+    matchesPlayedHome: matchesPlayedHome as number,
+    matchesPlayedAway: matchesPlayedAway as number,
+    goalsFor: goalsFor as number,
+    goalsForHome: goalsForHome as number,
+    goalsForAway: goalsForAway as number,
+    goalsAgainst: goalsAgainst as number,
+    goalsAgainstHome: goalsAgainstHome as number,
+    goalsAgainstAway: goalsAgainstAway as number,
+    cleanSheets: typeof raw.clean_sheet?.total === "number" ? raw.clean_sheet.total : null,
+    failedToScore: typeof raw.failed_to_score?.total === "number" ? raw.failed_to_score.total : null
+  };
 }

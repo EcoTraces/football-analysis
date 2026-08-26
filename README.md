@@ -38,8 +38,8 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   teams/competitions/standings reads, a `FootballDataProvider` abstraction
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
-  default; opt in via env vars), a fixture-sync job, a
-  prediction-generation job, and admin endpoints to trigger both —
+  default; opt in via env vars), a fixture-sync job, a team-statistics sync
+  job, a prediction-generation job, and admin endpoints to trigger each —
   authenticated by a Supabase JWT plus an admin role check. See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
@@ -69,10 +69,15 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   HTTP responses. Get a real key and run a sync before trusting it in
   production. See `Data_Sources.md`.
 - Injuries/lineups/standings/odds have provider methods implemented but no
-  sync job calling them yet — only fixtures actually get ingested today.
-- No results-sync or team-statistics job yet, so predictions still can't
-  run on real (non-synthetic) fixtures even though real fixtures can now be
-  synced.
+  sync job calling them yet — fixtures and team statistics are the only
+  data actually ingested today.
+- The team-statistics sync (`syncTeamStatistics.ts`) calls the vendor's own
+  aggregated stats endpoint per team/competition/season rather than
+  computing it from our own results — real data either way, but it means
+  `last_5`/`last_10` rolling windows aren't populated (the vendor's
+  aggregate endpoint doesn't break stats down match-by-match); that needs a
+  separate results-sync job. Predictions can now run on real fixtures once
+  both syncs have been run for them, in that order.
 - Admin endpoints now require a Supabase-authenticated admin user (see
   "Creating the first admin user" below) — but there's still no
   signup/role-assignment UI, no audit log of admin actions, and no
@@ -121,10 +126,14 @@ npm install && npm run dev
 cd frontend && cp .env.example .env
 npm install && npm run dev
 
-# 6. (Optional) pull real fixtures — set FOOTBALL_DATA_PROVIDER=api-football
+# 6. (Optional) pull real data — set FOOTBALL_DATA_PROVIDER=api-football
 # and FOOTBALL_DATA_API_KEY in backend/.env first (see Data_Sources.md),
-# then trigger a sync (see "Creating the first admin user" for $ADMIN_JWT):
+# then sync in order (see "Creating the first admin user" for $ADMIN_JWT):
 curl -X POST "http://localhost:8080/api/admin/sync?days=3" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" \
+  -H "Authorization: Bearer $ADMIN_JWT"
+curl -X POST "http://localhost:8080/api/admin/predictions/run" \
   -H "Authorization: Bearer $ADMIN_JWT"
 ```
 

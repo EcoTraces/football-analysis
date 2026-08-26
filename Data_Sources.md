@@ -56,7 +56,14 @@ the team id — added after implementing the real provider revealed that
 vendors scope team stats per competition (a team in two competitions the
 same season has different stats in each), not just per season as the
 interface originally assumed. This is the abstraction adapting to a real
-integration's actual requirements, not a workaround.
+integration's actual requirements, not a workaround. `getTeamStatistics`
+returns a typed `ProviderTeamStatistics` (matches played/goals for/against,
+overall and split by home/away, plus clean sheets and failed-to-score where
+the vendor provides them) rather than `unknown` — `ApiFootballProvider`
+maps the vendor's raw shape and returns `{ ok: false, reason:
+"upstream_error" }` if the response is missing fields the mapping needs,
+rather than writing zeros that would be indistinguishable from a team that
+actually has a blank record.
 
 `ProviderFixture` carries denormalized names (`competitionName`,
 `countryName`, `homeTeamName`, etc.) alongside external ids — real
@@ -115,6 +122,43 @@ competitions and only coincidentally right for domestic ones. A dedicated
 team-info sync (using the vendor's `/teams` endpoint, which does give each
 team's own country) is needed before that field is populated — see
 `Task.md`.
+
+## Team-statistics ingestion: `syncTeamStatistics.ts`
+
+`backend/src/jobs/syncTeamStatistics.ts::syncTeamStatistics` populates
+`team_statistics` from the vendor's own aggregated per-team stats endpoint
+— it does not compute anything from our own `fixtures` rows:
+
+1. Reads every distinct (team, competition, season) combination implied by
+   real (non-synthetic) fixtures — both home and away sides — and
+   deduplicates them, so a team with nineteen home fixtures in one
+   competition/season only costs one provider call for that combination,
+   not nineteen.
+2. Looks up each team/competition/season's external id (batched via `.in()`
+   queries, not one row at a time) and skips any combination missing one —
+   can't call the provider without it, and this is not treated as an error
+   worth failing the run over.
+3. Calls `provider.getTeamStatistics(team, competition, season)` and writes
+   three rows per combination — `overall`, `home`, `away` scopes — via a
+   real `upsert(..., { onConflict: "team_id,season_id,scope" })`, since
+   `team_statistics`'s uniqueness constraint is a genuine plain-column
+   constraint (unlike fixtures/teams/competitions/seasons — see
+   `Database.md`), so PostgREST's `on_conflict` is documented to work
+   against it correctly.
+4. Writes one `ingestion_runs` row per invocation, same as `syncFixtures.ts`.
+
+Each combination is processed independently — one team's provider call
+failing doesn't lose the others (same per-item isolation as
+`syncFixtures.ts`). Trigger it via `POST /api/admin/team-statistics/sync`,
+**after** `/api/admin/sync` (it reads from `fixtures`, so there must be some
+to read) and **before** `/api/admin/predictions/run` (which reads from
+`team_statistics`, not from fixtures' scores directly).
+
+**Known limitation:** this only ever writes `overall`/`home`/`away` scopes.
+`last_5`/`last_10` rolling windows (spec section 9) need match-by-match
+results, which the vendor's aggregated `/teams/statistics` endpoint doesn't
+provide — that needs a separate results-sync job pulling and storing
+individual match results, not an extension of this one (see `Task.md`).
 
 ## Adding another provider
 

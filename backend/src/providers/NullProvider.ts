@@ -1,7 +1,8 @@
 import type {
   FootballDataProvider,
   ProviderFixture,
-  ProviderResponse
+  ProviderResponse,
+  ProviderTeamStatistics
 } from "./types.js";
 
 // The default provider when no real data source is configured. It NEVER
@@ -35,7 +36,7 @@ export class NullProvider implements FootballDataProvider {
     _teamExternalId: string,
     _competitionExternalId: string,
     _seasonExternalId: string
-  ): Promise<ProviderResponse<unknown>> {
+  ): Promise<ProviderResponse<ProviderTeamStatistics>> {
     return this.unavailable();
   }
 

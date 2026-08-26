@@ -12,6 +12,16 @@ const RAW_FIXTURE = {
   goals: { home: null, away: null }
 };
 
+const RAW_TEAM_STATS = {
+  fixtures: { played: { home: 10, away: 10, total: 20 } },
+  goals: {
+    for: { total: { home: 20, away: 15, total: 35 } },
+    against: { total: { home: 8, away: 10, total: 18 } }
+  },
+  clean_sheet: { total: 7 },
+  failed_to_score: { total: 3 }
+};
+
 describe("ApiFootballProvider", () => {
   it("maps a successful fixtures response into ProviderFixture[]", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [RAW_FIXTURE], results: 1 }));
@@ -113,7 +123,7 @@ describe("ApiFootballProvider", () => {
   });
 
   it("passes team/league/season params through for team statistics", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: {} }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: RAW_TEAM_STATS }));
     const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
 
     await provider.getTeamStatistics("33", "39", "2026");
@@ -123,5 +133,39 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.searchParams.get("team")).toBe("33");
     expect(requestedUrl.searchParams.get("league")).toBe("39");
     expect(requestedUrl.searchParams.get("season")).toBe("2026");
+  });
+
+  it("maps a well-formed team statistics response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: RAW_TEAM_STATS }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getTeamStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual({
+      matchesPlayed: 20,
+      matchesPlayedHome: 10,
+      matchesPlayedAway: 10,
+      goalsFor: 35,
+      goalsForHome: 20,
+      goalsForAway: 15,
+      goalsAgainst: 18,
+      goalsAgainstHome: 8,
+      goalsAgainstAway: 10,
+      cleanSheets: 7,
+      failedToScore: 3
+    });
+  });
+
+  it("treats a team statistics response missing the required fields as upstream_error, not zeros", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: {} }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getTeamStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("upstream_error");
   });
 });

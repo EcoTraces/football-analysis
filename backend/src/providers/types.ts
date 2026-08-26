@@ -23,6 +23,20 @@ export interface ProviderFixture {
   awayScore: number | null;
 }
 
+export interface ProviderTeamStatistics {
+  matchesPlayed: number;
+  matchesPlayedHome: number;
+  matchesPlayedAway: number;
+  goalsFor: number;
+  goalsForHome: number;
+  goalsForAway: number;
+  goalsAgainst: number;
+  goalsAgainstHome: number;
+  goalsAgainstAway: number;
+  cleanSheets: number | null;
+  failedToScore: number | null;
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -57,7 +71,7 @@ export interface TeamStatsProvider {
     teamExternalId: string,
     competitionExternalId: string,
     seasonExternalId: string
-  ): Promise<ProviderResponse<unknown>>;
+  ): Promise<ProviderResponse<ProviderTeamStatistics>>;
 }
 
 export interface InjuryProvider {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FootballDataProvider, ProviderFixture, ProviderResponse } from "../providers/types.js";
+import type { FootballDataProvider, ProviderFixture, ProviderResponse, ProviderTeamStatistics } from "../providers/types.js";
 import { FakeSupabase } from "./testSupabaseFake.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 
@@ -40,7 +40,7 @@ class FakeProvider implements FootballDataProvider {
   async getResultsSince(sinceIso: string) {
     return this.getFixturesForDateRange(sinceIso, sinceIso);
   }
-  async getTeamStatistics(): Promise<ProviderResponse<unknown>> {
+  async getTeamStatistics(): Promise<ProviderResponse<ProviderTeamStatistics>> {
     return { ok: false, reason: "not_configured", message: "unused in this test", provider: this.name };
   }
   async getInjuries(): Promise<ProviderResponse<unknown[]>> {
