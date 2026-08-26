@@ -121,14 +121,37 @@
   immediately preceding snapshot — not implemented now, to keep this job's
   first version simple and unambiguously correct rather than guessing at
   the right dedup window.
-- [ ] Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
-  `syncStandings`, `syncLineups`, `syncOdds`, and
-  `generatePredictionsForUpcomingFixtures` to a scheduler (cron / Cloud
-  Scheduler / Supabase Edge Function cron) instead of manual admin-endpoint
-  calls. Fixtures before the others, since team-statistics/injuries/
-  standings/lineups/odds all depend on fixtures existing; lineups and odds
-  specifically benefit from running much more often than the others as
-  kickoff approaches (spec section 6: "refresh closer to kickoff").
+- [x] Wire the sync/prediction jobs to a scheduler — `backend/src/scheduler/scheduler.ts`,
+  an in-process cron scheduler (`node-cron`) started from `index.ts` when
+  `SCHEDULER_ENABLED=true` (off by default). Fixtures/team-statistics/
+  injuries/standings run once daily, staggered 15–30 minutes apart so each
+  depends only on the previous one having finished (fixtures first, since
+  the others all read from it); lineups and odds run every 15 minutes,
+  since they only become meaningful/accurate close to kickoff (spec section
+  6: "refresh closer to kickoff"); predictions run once daily after the
+  ingestion chain. If no data provider is configured, the six sync jobs are
+  skipped entirely (with one startup warning, not a no-op every tick) —
+  predictions still runs, since it reads `team_statistics` from the
+  database rather than calling the provider. Each job is wrapped so a
+  thrown/rejected error is logged, not left to crash the process or block
+  later ticks. Uses node-cron's `noOverlap` option so a slow run of a
+  15-minute job can't start a second overlapping run of itself.
+- [ ] The scheduler assumes a single backend instance — `node-cron` has no
+  cross-process coordination (no lock/leader-election), so running more
+  than one replica with `SCHEDULER_ENABLED=true` would sync everything N
+  times over redundantly. Fine for today's single-instance deployment
+  (`Deployment.md`); revisit (e.g. a distributed lock, or moving this to an
+  external scheduler like Cloud Scheduler hitting the existing admin
+  endpoints) before running more than one replica.
+- [ ] The scheduler's cron cadences are fixed constants in
+  `scheduler.ts`, not configurable via env vars — fine for now since
+  nothing has asked for per-job tuning yet; revisit if a real operational
+  need for different schedules per environment shows up.
+- [ ] None of the scheduler's cron timing has been observed running for
+  real over multiple days (only unit-tested against fake timers/providers
+  and smoke-tested for a few seconds at boot) — same "not yet verified
+  against live infrastructure" caveat as the rest of the ingestion
+  pipeline.
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.

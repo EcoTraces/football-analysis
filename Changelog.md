@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-08-26 — Scheduler for sync/prediction jobs
+
+- Added `backend/src/scheduler/scheduler.ts`: an in-process cron scheduler
+  (`node-cron`) wiring `syncFixtures`/`syncTeamStatistics`/`syncInjuries`/
+  `syncStandings`/`syncLineups`/`syncOdds`/predictions to real recurring
+  schedules instead of relying solely on manual `POST /admin/*` calls.
+  Off by default — set `SCHEDULER_ENABLED=true` (new env var, defaults
+  `false`) to start it.
+- Fixtures/team-statistics/injuries/standings run once daily, staggered
+  15–30 minutes apart in dependency order; predictions run once daily
+  after those; lineups and odds run every 15 minutes, since both only
+  become meaningful/accurate close to kickoff (spec section 6). If no data
+  provider is configured, the six sync jobs are skipped entirely at
+  startup (one clear warning, not a no-op every tick) — predictions still
+  runs, since it reads from the database rather than the provider, matching
+  the existing admin route's behavior.
+- Each scheduled run is wrapped so a thrown/rejected error is logged
+  instead of crashing the process or blocking a later tick; every task
+  uses node-cron's `noOverlap` option so a slow 15-minute job can't overlap
+  with its own next tick.
+- Refactored `/admin/predictions/run`'s "look up the latest poisson-baseline
+  model_version, then run predictions against it" logic out of `admin.ts`
+  and into a new shared `runLatestPoissonPredictionsJob` in
+  `generatePredictions.ts`, so the admin route and the scheduler share one
+  implementation instead of the scheduler duplicating it.
+- Added `.order()`/`.limit()` support to the test double
+  (`testSupabaseFake.ts`) — needed to test the model-version lookup, the
+  first job requiring "most recent row" semantics rather than an exact/set/
+  range filter.
+- Added graceful shutdown to `index.ts`: `SIGTERM`/`SIGINT` now stop the
+  scheduler and close the HTTP server cleanly, verified manually against a
+  running server (confirmed the shutdown log line and clean process exit).
+- 10 new tests (`scheduler.test.ts`) covering: every exported cron
+  expression is syntactically valid; all six sync jobs plus predictions are
+  scheduled when a provider is configured; only predictions is scheduled
+  (with a warning) when none is; `stop()` is idempotent; the fixtures job's
+  3-day UTC window and the lineups/odds jobs' 24-hour kickoff window are
+  wired with the right default parameters; the predictions job's two
+  branches (no model_version yet vs. a real run); and the error-guarding
+  wrapper catches and logs rather than propagating — 104 backend tests
+  passing in total, clean lint/typecheck/build.
+- Manually smoke-tested against a running server (dummy Supabase
+  credentials, since no live project is available in this environment):
+  confirmed the startup log correctly skips the six sync jobs and warns
+  when `FOOTBALL_DATA_PROVIDER=null`, schedules only `predictions`, and
+  that `SIGTERM` triggers a clean shutdown. Not the same as observing it
+  drive a real ingestion pipeline over multiple days — flagged explicitly
+  in `Task.md`/`Road_map.md` as still needed, along with the scheduler's
+  single-backend-instance assumption (no cross-process locking) before
+  scaling to more than one replica.
+
 ## 2026-08-26 — Odds/markets sync job
 
 - Added `syncOdds.ts`: populates `odds_snapshots` from the provider's own

@@ -127,6 +127,17 @@ Runs `generatePredictionsForUpcomingFixtures` against the latest
 ### `GET /admin/data-health`
 Counts of production fixtures, synthetic fixtures, and current predictions.
 
+## Scheduler (no HTTP surface)
+
+Every sync/prediction endpoint above can also run automatically instead of
+being called by hand — set `SCHEDULER_ENABLED=true` in the backend's
+environment to start an in-process cron scheduler
+(`backend/src/scheduler/scheduler.ts`) at boot. There's no admin route for
+this; it's a boot-time flag, not something toggled at runtime. See
+`Data_Sources.md` for the cadence and known limitations (single-instance
+assumption, fixed cron expressions, unverified against real multi-day
+timing).
+
 ## Not yet implemented
 
 `GET /api/players/:id`, `GET /api/injuries`, `GET /api/lineups/:matchId`,

@@ -10,7 +10,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 3. Architecture | ✅ Done | `Architecture.md` |
 | 4. Database design | ✅ Done | `Database.md`, `supabase/migrations/0001_init.sql` |
 | 5. Data providers | 🟡 Implemented, unverified | `ApiFootballProvider` against api-football v3; not yet exercised against a live key (see `Data_Sources.md`) |
-| 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert) |
+| 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds, schedulable | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert); all six plus predictions can now run on a cron via `SCHEDULER_ENABLED=true` (`scheduler.ts`) instead of manual admin calls, assuming a single backend instance |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
 | 9. Prediction engine | 🟡 Baseline only | Poisson/Dixon-Coles; no ensemble, no other algorithms yet |
@@ -47,9 +47,15 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
    api-football's lineups endpoint never returns a "predicted" (as opposed
    to officially confirmed) lineup, and `syncOdds.ts`'s bet-name
    classification (`mapBet`) against real `/odds` responses.
-5. Wire `syncFixturesForDateRange`, `syncTeamStatistics`, `syncInjuries`,
-   `syncStandings`, `syncLineups`, `syncOdds`, and the prediction job to a
-   scheduler instead of manual admin triggers — lineups and odds in
-   particular need to run much more frequently than the others as kickoff
-   approaches.
+5. Run the scheduler (`SCHEDULER_ENABLED=true`) for real, over multiple
+   days, against a real provider and Supabase project — so far it's only
+   been unit-tested against fakes and smoke-tested for a few seconds at
+   boot. Confirm the daily ingestion chain's ordering actually holds up
+   (fixtures → team-stats/injuries/standings → predictions) and that
+   lineups/odds' 15-minute cadence behaves as expected close to kickoff.
 6. Start the backtesting pipeline once enough real historical results exist.
+7. Before running more than one backend replica in production, address the
+   scheduler's single-instance assumption (`scheduler.ts` has no
+   cross-process locking) — either a distributed lock, or moving scheduling
+   to an external trigger (e.g. Cloud Scheduler) hitting the existing admin
+   endpoints instead of an in-process cron.

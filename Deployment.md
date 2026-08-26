@@ -19,6 +19,15 @@ env vars: see `backend/.env.example`. `SUPABASE_SERVICE_ROLE_KEY` must never
 reach the frontend or client-side code — it belongs only in this service's
 runtime environment.
 
+If `SCHEDULER_ENABLED=true` (the in-process cron scheduler,
+`backend/src/scheduler/scheduler.ts` — see `Data_Sources.md`), deploy
+exactly **one** instance of this service. The scheduler has no
+cross-process locking, so running more than one replica with it enabled
+would run every sync job redundantly on each replica rather than once.
+Scale horizontally with `SCHEDULER_ENABLED=false` and an external trigger
+(e.g. Cloud Scheduler hitting the `/api/admin/*/sync` endpoints) instead,
+until the scheduler gets real cross-instance coordination.
+
 ## ML service (Python/FastAPI)
 
 Containerized via `ml-service/Dockerfile`. Stateless — no database, no

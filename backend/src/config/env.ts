@@ -8,6 +8,10 @@ const envSchema = z.object({
   ML_SERVICE_URL: z.string().url().default("http://localhost:8000"),
   FOOTBALL_DATA_PROVIDER: z.enum(["null", "api-football"]).default("null"),
   FOOTBALL_DATA_API_KEY: z.string().optional().default(""),
+  SCHEDULER_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   ODDS_API_KEY: z.string().optional().default(""),
   WEATHER_API_KEY: z.string().optional().default(""),
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),

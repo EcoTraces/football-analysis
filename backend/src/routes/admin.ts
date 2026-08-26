@@ -1,8 +1,7 @@
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
-import { PredictionClient } from "../services/predictionClient.js";
-import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredictions.js";
+import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
@@ -116,27 +115,16 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/predictions/run", async (req, res, next) => {
+  router.post("/admin/predictions/run", async (_req, res, next) => {
     try {
-      const { data: modelVersion, error } = await supabase
-        .from("model_versions")
-        .select("id")
-        .eq("name", "poisson-baseline")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) throw new Error(error.message);
-      if (!modelVersion) {
+      const result = await runLatestPoissonPredictionsJob(supabase, mlServiceUrl, logger);
+      if (!result.modelVersionId) {
         res.status(409).json({
           error: { code: "no_model_version", message: "No poisson-baseline model_version row exists yet." }
         });
         return;
       }
-
-      const client = new PredictionClient(mlServiceUrl);
-      const result = await generatePredictionsForUpcomingFixtures(supabase, client, modelVersion.id, logger);
-      res.json({ data: result });
+      res.json({ data: { processed: result.processed, skipped: result.skipped, failed: result.failed } });
     } catch (err) {
       next(err);
     }

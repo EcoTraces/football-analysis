@@ -125,6 +125,49 @@ export async function generatePredictionsForUpcomingFixtures(
   return { processed, skipped, failed };
 }
 
+export interface RunLatestPoissonPredictionsResult {
+  modelVersionId: string | null;
+  processed: number;
+  skipped: number;
+  failed: number;
+}
+
+// Shared by the admin `/admin/predictions/run` route and the scheduler
+// (scheduler/scheduler.ts) so the "which model version to run" lookup lives
+// in one place. `modelVersionId: null` means no poisson-baseline
+// model_version row exists yet — the caller decides how to surface that
+// (a 409 for the HTTP route, a log warning for the scheduler), not this
+// function throwing or guessing at a model version.
+export async function runLatestPoissonPredictionsJob(
+  supabase: SupabaseClient,
+  mlServiceUrl: string,
+  logger: Logger,
+  windowHours = 72
+): Promise<RunLatestPoissonPredictionsResult> {
+  const { data: modelVersion, error } = await supabase
+    .from("model_versions")
+    .select("id")
+    .eq("name", "poisson-baseline")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Failed to load poisson-baseline model_version: ${error.message}`);
+  if (!modelVersion) {
+    return { modelVersionId: null, processed: 0, skipped: 0, failed: 0 };
+  }
+
+  const client = new PredictionClient(mlServiceUrl);
+  const result = await generatePredictionsForUpcomingFixtures(
+    supabase,
+    client,
+    modelVersion.id as string,
+    logger,
+    windowHours
+  );
+  return { modelVersionId: modelVersion.id as string, ...result };
+}
+
 // Confidence is deliberately NOT a function of probability alone (spec
 // section 26) — it reflects how much data backed the estimate.
 function confidenceFor(homeMatches: number, awayMatches: number, dataQuality: string): "low" | "medium" | "high" {

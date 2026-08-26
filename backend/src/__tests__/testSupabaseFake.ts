@@ -73,6 +73,24 @@ export class FakeSupabase {
     return {
       select(_columns: string) {
         const filters: Array<(row: FakeRow) => boolean> = [];
+        let orderColumn: string | null = null;
+        let orderAscending = true;
+        let limitCount: number | null = null;
+        const matches = (): FakeRow[] => {
+          let result = self.tables.get(table)!.filter((row) => filters.every((f) => f(row)));
+          if (orderColumn) {
+            const column = orderColumn;
+            result = [...result].sort((a, b) => {
+              const av = resolvePath(a, column) as string | number;
+              const bv = resolvePath(b, column) as string | number;
+              if (av === bv) return 0;
+              const cmp = av < bv ? -1 : 1;
+              return orderAscending ? cmp : -cmp;
+            });
+          }
+          if (limitCount !== null) result = result.slice(0, limitCount);
+          return result;
+        };
         const builder = {
           eq(column: string, value: unknown) {
             filters.push((row) => resolvePath(row, column) === value);
@@ -90,21 +108,26 @@ export class FakeSupabase {
             filters.push((row) => (resolvePath(row, column) as string | number) <= (value as string | number));
             return builder;
           },
+          order(column: string, options?: { ascending?: boolean }) {
+            orderColumn = column;
+            orderAscending = options?.ascending !== false;
+            return builder;
+          },
+          limit(count: number) {
+            limitCount = count;
+            return builder;
+          },
           async maybeSingle() {
-            const match = self.tables.get(table)!.find((row) => filters.every((f) => f(row))) ?? null;
-            return { data: match, error: null };
+            return { data: matches()[0] ?? null, error: null };
           },
           async single() {
-            const match = self.tables.get(table)!.find((row) => filters.every((f) => f(row)));
-            return match
-              ? { data: match, error: null }
-              : { data: null, error: { message: `No row found in ${table}` } };
+            const match = matches()[0];
+            return match ? { data: match, error: null } : { data: null, error: { message: `No row found in ${table}` } };
           },
           // Lets callers `await` the query directly (no .single()/.maybeSingle())
           // to get every matching row, matching real supabase-js's behavior.
           async then(resolve: (v: { data: FakeRow[]; error: null }) => void) {
-            const matches = self.tables.get(table)!.filter((row) => filters.every((f) => f(row)));
-            resolve({ data: matches, error: null });
+            resolve({ data: matches(), error: null });
           }
         };
         return builder;

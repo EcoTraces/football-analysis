@@ -349,6 +349,54 @@ changed (see `Task.md`). Also unverified against a live response, like
 every mapping in this file — `mapBet`'s market classification is a
 best-effort guess at the vendor's bet-name strings, not a documented enum.
 
+## Scheduler: `backend/src/scheduler/scheduler.ts`
+
+Every sync/prediction job above exists as a plain async function callable
+from an admin route (manual) or from a cron tick (automatic) — the jobs
+themselves don't know or care which. `startScheduler()` wires the latter,
+using [`node-cron`](https://www.npmjs.com/package/node-cron), when
+`SCHEDULER_ENABLED=true` (`backend/.env.example`, off by default):
+
+- Fixtures, team-statistics, injuries, and standings run once daily,
+  staggered 15–30 minutes apart in that order (`02:00`, `02:30`, `02:45`,
+  `03:00` UTC) so each starts after the one it depends on has had time to
+  finish — team-statistics/injuries/standings all read fixtures that
+  `syncFixtures` just wrote. Predictions run once daily after that, at
+  `03:15` UTC, reading the `team_statistics` those jobs just wrote.
+- Lineups and odds run every 15 minutes (offset from each other, `:00/:15/
+  :30/:45` and `:05/:20/:35/:50`), since both are only meaningful/accurate
+  close to kickoff (spec section 6: "refresh closer to kickoff") — running
+  them once a day like the others would defeat the point.
+- If no data provider is configured (`FOOTBALL_DATA_PROVIDER=null`), the
+  six sync jobs are **not scheduled at all** — one clear warning is logged
+  at startup instead of silently no-op'ing on every tick forever. The
+  predictions job is still scheduled regardless, since it reads from the
+  database rather than calling the provider (matching `/admin/predictions/run`,
+  which has never required a provider either).
+- Each scheduled run is wrapped (`guarded()`) so a thrown or rejected error
+  is logged and swallowed rather than surfacing as an unhandled rejection
+  inside node-cron's timer callback — one job failing must never crash the
+  process or block a later tick of any job. node-cron's `noOverlap` option
+  is set on every task, so a slow run of a 15-minute job can't overlap with
+  the next tick of itself.
+
+**Known limitation — single instance only.** `node-cron` has no
+cross-process coordination. Running the backend as more than one replica
+with `SCHEDULER_ENABLED=true` would have every replica independently
+scheduling and running the same jobs, syncing (and, for `syncOdds.ts`,
+appending odds snapshots) redundantly N times over rather than once. Fine
+for today's single-instance deployment (`Deployment.md`); a distributed
+lock or moving scheduling to an external trigger (Cloud Scheduler hitting
+the existing admin endpoints) would be needed before scaling out.
+
+**Also not done:** cron cadences are fixed constants in `scheduler.ts`, not
+env-configurable — no real operational need for per-environment tuning has
+come up yet. And none of this has been observed running for real over
+multiple days; it's unit-tested against fakes (`backend/src/__tests__/scheduler.test.ts`)
+and was smoke-tested by booting the server for a few seconds and confirming
+the startup logs and a clean `SIGTERM` shutdown — not the same as watching
+it actually drive a real ingestion pipeline over days of wall-clock time.
+
 ## Adding another provider
 
 1. Pick a reputable source (spec section 5) and confirm rate limits,

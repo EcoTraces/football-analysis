@@ -15,6 +15,7 @@ import { createTeamsRouter } from "./routes/teams.js";
 import { createCompetitionsRouter } from "./routes/competitions.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createErrorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { startScheduler } from "./scheduler/scheduler.js";
 
 const env = loadEnv();
 const logger = pino({ level: env.NODE_ENV === "production" ? "info" : "debug" });
@@ -50,6 +51,21 @@ app.use("/api", createAdminRouter(supabase, provider, env.ML_SERVICE_URL, logger
 app.use(notFoundHandler);
 app.use(createErrorHandler(logger));
 
-app.listen(env.PORT, () => {
+const server = app.listen(env.PORT, () => {
   logger.info(`Backend listening on port ${env.PORT} (provider=${provider.name})`);
 });
+
+const scheduler = env.SCHEDULER_ENABLED
+  ? startScheduler({ supabase, provider, mlServiceUrl: env.ML_SERVICE_URL, logger })
+  : null;
+if (!scheduler) {
+  logger.info("Scheduler disabled (SCHEDULER_ENABLED=false) — sync/prediction jobs run only via POST /api/admin/*.");
+}
+
+function shutdown(signal: string): void {
+  logger.info(`${signal} received, shutting down`);
+  scheduler?.stop();
+  server.close(() => process.exit(0));
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

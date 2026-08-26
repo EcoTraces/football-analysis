@@ -39,9 +39,11 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   with a `NullProvider` default (never fabricates data — returns explicit
   "not configured" responses) and a real `ApiFootballProvider` (disabled by
   default; opt in via env vars), fixture/team-statistics/injuries/standings/
-  lineups/odds sync jobs, a prediction-generation job, and admin endpoints
-  to trigger each — authenticated by a Supabase JWT plus an admin role
-  check. See `API.md`.
+  lineups/odds sync jobs, a prediction-generation job, admin endpoints to
+  trigger each — authenticated by a Supabase JWT plus an admin role check
+  — and an optional in-process cron scheduler (`SCHEDULER_ENABLED=true`)
+  that runs the same jobs automatically instead of relying on manual
+  endpoint calls. See `API.md`.
 - **ML service** (Python/FastAPI): a Dixon-Coles-adjusted independent Poisson
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
@@ -79,6 +81,14 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   and there's no de-duplication yet — running it on a tight schedule with
   unchanged prices still grows the table. **Not yet verified against a live
   API key** — same caveat as the other sync jobs.
+- The scheduler (`SCHEDULER_ENABLED=true`, off by default) runs all six
+  sync jobs plus predictions in-process via `node-cron`, but assumes a
+  single backend instance — there's no cross-process locking, so running
+  more than one replica with it enabled would sync everything redundantly
+  N times over. Its cron cadences are fixed constants, not configurable per
+  environment, and none of its timing has been observed running for real
+  over multiple days — only unit-tested and smoke-tested for a few seconds
+  at boot.
 - The lineups sync (`syncLineups.ts`) only looks at fixtures within a
   window around kickoff (±24h by default) rather than every fixture ever
   recorded, since lineups aren't meaningful further out. It always records
@@ -175,6 +185,12 @@ curl -X POST "http://localhost:8080/api/admin/predictions/run" \
 
 Or `docker compose up` from the repo root once `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are set in your environment.
+
+Instead of running the curl chain above by hand each time, set
+`SCHEDULER_ENABLED=true` in `backend/.env` to run all six sync jobs plus
+predictions automatically on a cron schedule (`backend/src/scheduler/scheduler.ts`)
+— see that file for the exact cadence, and the caveats above and in
+`Task.md` before relying on it.
 
 ## Creating the first admin user
 
