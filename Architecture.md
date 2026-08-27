@@ -83,9 +83,6 @@ sign-up, an admin Users panel — see `Database.md`'s "Access control").
 - Caching layer
 - Search/indexing
 - Model ensemble beyond the single Poisson baseline
-- Admin dashboard UI for the sync/job/health endpoints (`/admin/*/sync`,
-  `/admin/jobs*`, `/health/*`) — only the Users panel (`/admin/users`) has
-  a frontend so far; the rest is API/curl-only
 - Admin-action audit log
 
 See `Road_map.md` for sequencing.

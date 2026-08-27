@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026-08-27 — Admin sync/jobs dashboard
+
+Closes the last "deliberately deferred" item from `Architecture.md`: the
+observability/job-history/health endpoints built earlier this week
+(`GET /health/*`, `GET /admin/jobs*`) had no frontend at all — every admin
+action was curl-only. Now `/admin` is a real dashboard.
+
+- New `/admin` page: provider connectivity (`GET /health/api-football`,
+  including rate-limit remaining), scheduler status and each job's next
+  run time (`GET /health/scheduler`), database reachability and per-dataset
+  freshness badges reusing the existing `FreshnessBadge` component
+  (`GET /health/data`), a job summary (last run / last succeeded per job,
+  `GET /admin/jobs/summary`), a scrollable recent-runs table
+  (`GET /admin/jobs`), and manual trigger buttons for all seven jobs
+  (fixtures/team-statistics/injuries/standings/lineups/odds/predictions),
+  each showing its own success result or error message inline and
+  refreshing the job tables afterward.
+- Restructured `/admin` routing into a shared `AdminLayout` (a Dashboard/
+  Users sub-nav under one `<RequireAdmin>`) instead of gating `/admin/users`
+  on its own — adding a second admin page no longer means repeating the
+  route guard.
+- Each dashboard section loads and fails independently (`Promise.all` over
+  per-section try/catch, not one big call) — a database outage doesn't
+  blank the scheduler/provider cards, and vice versa, matching this app's
+  existing "explicit unavailable state per section" convention rather than
+  an all-or-nothing loading screen.
+- 4 new tests (`AdminDashboard.test.tsx`): loading state, successful render
+  of all three health cards, one section's error rendering independently of
+  the others, and a sync trigger showing its result and refreshing job
+  history — 17 frontend tests passing in total (unchanged backend count),
+  clean lint/typecheck/build on both.
+- Manually verified in a real browser (Playwright, mocked network
+  responses — no live provider or Supabase project in this environment):
+  every card, badge, and table renders correctly with realistic mocked
+  data; a real backend error (`409 no_provider_configured`, matching what
+  this environment's actual unconfigured provider would return) surfaces
+  correctly under its button; the Dashboard/Users sub-nav navigates
+  correctly in both directions.
+
 ## 2026-08-27 — Require sign-in for the whole app, not just admin routes
 
 Follow-up to the same day's access-control work: until now, only

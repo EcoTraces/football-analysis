@@ -69,3 +69,74 @@ export interface AdminUserSummary {
   displayName: string | null;
   createdAt: string;
 }
+
+export type FreshnessColor = "GREEN" | "YELLOW" | "RED" | "GRAY";
+
+export interface FreshnessEntry {
+  domain: string;
+  lastUpdated: string | null;
+  status: Freshness;
+  color: FreshnessColor;
+}
+
+export interface DataHealth {
+  database: "reachable" | "unreachable";
+  databaseError: string | null;
+  productionFixtureCount: number;
+  provider: string;
+  providerConfigured: boolean;
+  freshness: FreshnessEntry[];
+}
+
+export interface RateLimitStatus {
+  limit: number | null;
+  remaining: number | null;
+  observedAt: string;
+}
+
+export interface LastRequestStatus {
+  ok: boolean;
+  reason?: string;
+  at: string;
+}
+
+export interface ApiFootballHealth {
+  status: "NOT_CONFIGURED" | "UNKNOWN" | "CONNECTED" | "ERROR";
+  message: string | null;
+  lastRequest: LastRequestStatus | null;
+  rateLimit: RateLimitStatus | null;
+}
+
+export interface SchedulerJobStatus {
+  name: string;
+  cronExpression: string;
+  nextRun: string | null;
+}
+
+export interface SchedulerHealth {
+  status: "DISABLED" | "RUNNING";
+  message: string | null;
+  jobs: SchedulerJobStatus[];
+}
+
+export type IngestionRunStatus = "running" | "succeeded" | "failed" | "partial";
+
+export interface IngestionRun {
+  id: string;
+  job_name: string;
+  provider: string;
+  status: IngestionRunStatus;
+  records_processed: number;
+  records_rejected: number;
+  error_summary: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export type JobsSummary = Record<string, { lastRun: IngestionRun; lastSuccess: IngestionRun | null }>;
+
+export interface AdminDataHealthCounts {
+  productionFixtures: number;
+  syntheticFixtures: number;
+  currentPredictions: number;
+}

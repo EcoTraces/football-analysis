@@ -86,7 +86,9 @@ user whose `user_profiles.role` is `admin`
 unrecognized token → `401 unauthenticated`; a valid but non-admin user →
 `403 forbidden`. See README.md → "User access control" for how to get a
 token. **Not yet verified against a real Supabase project's JWTs** — see
-`Task.md`.
+`Task.md`. The frontend's `/admin` (dashboard) and `/admin/users` pages
+consume every endpoint below, plus the health endpoints above — no admin
+action requires curl anymore.
 
 ### `GET /admin/users`
 Lists every real account (via `auth.admin.listUsers()`) joined with its

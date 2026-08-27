@@ -56,7 +56,10 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
 - **Frontend** (React/Vite/TypeScript/Tailwind): sign-in/sign-up (required —
   the app has no anonymous read-only mode), today's fixtures, a match
   detail page with prediction cards and explainability factors, an admin
-  Users panel, dark/light mode, accessible freshness badges, and a
+  section (`/admin`) with a sync/jobs dashboard — provider connectivity,
+  scheduler status, per-dataset freshness, job history, and manual sync
+  trigger buttons for every job — plus the Users panel to promote/demote
+  accounts, dark/light mode, accessible freshness badges, and a
   responsible-gambling footer on every page.
 - **Dev-only synthetic seed data** (`supabase/seed/dev_seed_synthetic.sql`):
   clearly flagged `is_synthetic = true`, excluded from every production read

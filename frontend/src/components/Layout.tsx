@@ -19,7 +19,7 @@ function AuthNav() {
   return (
     <>
       {profile?.role === "admin" && (
-        <Link to="/admin/users" className="hover:underline">
+        <Link to="/admin" className="hover:underline">
           Admin
         </Link>
       )}

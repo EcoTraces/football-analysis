@@ -251,10 +251,23 @@
 
 ## Frontend
 
-- [ ] Dashboard, search, notifications, and admin UI — none exist yet.
+- [x] User accounts (Supabase Auth) — `/sign-in`/`/sign-up` pages exist,
+  `AuthProvider`/`useAuth()` tracks session + own profile. The whole app
+  requires sign-in now, not just admin routes (see "Security" above).
+- [x] Admin dashboard UI — `/admin` (provider connectivity, scheduler
+  status, per-dataset freshness, job history + summary, manual sync
+  trigger buttons for every job) and `/admin/users` (promote/demote), both
+  under a shared `AdminLayout` sub-nav. No admin action is curl-only
+  anymore. **Not yet verified against a live provider/Supabase project** —
+  every render state was checked with mocked network responses in a real
+  browser (Playwright), not real data (see `Data_Sources.md`'s and this
+  file's live-verification caveats throughout).
+- [ ] The admin dashboard's manual sync buttons always use each job's
+  backend default window (e.g. `days=1` for fixtures, `hours=24` for
+  lineups/odds) — no UI to override them. Fine for now; add input fields
+  if an operator actually needs a wider one-off sync.
+- [ ] Search, notifications, and a search/results UI — none exist yet.
 - [ ] Daily analysis and accumulator research pages.
-- [ ] User accounts (Supabase Auth) — schema (`user_profiles`) is ready,
-  frontend has no auth flow yet.
 
 ## Infra
 

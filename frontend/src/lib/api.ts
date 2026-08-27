@@ -1,4 +1,17 @@
-import type { AdminUserSummary, ApiEnvelope, FixtureSummary, MatchDetail, MeProfile, UserRole } from "./types";
+import type {
+  AdminDataHealthCounts,
+  AdminUserSummary,
+  ApiEnvelope,
+  ApiFootballHealth,
+  DataHealth,
+  FixtureSummary,
+  IngestionRun,
+  JobsSummary,
+  MatchDetail,
+  MeProfile,
+  SchedulerHealth,
+  UserRole
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api";
 
@@ -55,4 +68,56 @@ export function setUserRole(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ role })
   });
+}
+
+// --- Health (public — no auth required, see backend/src/routes/health.ts) ---
+
+export function getDataHealth(): Promise<DataHealth> {
+  return request<DataHealth>("/health/data");
+}
+
+export function getApiFootballHealth(): Promise<ApiFootballHealth> {
+  return request<ApiFootballHealth>("/health/api-football");
+}
+
+export function getSchedulerHealth(): Promise<SchedulerHealth> {
+  return request<SchedulerHealth>("/health/scheduler");
+}
+
+// --- Admin: job history, fixture counts, and manual sync triggers ---
+
+export function getAdminJobs(accessToken: string, limit = 20): Promise<ApiEnvelope<IngestionRun[]>> {
+  return authedRequest<ApiEnvelope<IngestionRun[]>>(`/admin/jobs?limit=${limit}`, accessToken);
+}
+
+export function getAdminJobsSummary(accessToken: string): Promise<ApiEnvelope<JobsSummary>> {
+  return authedRequest<ApiEnvelope<JobsSummary>>("/admin/jobs/summary", accessToken);
+}
+
+export function getAdminDataHealth(accessToken: string): Promise<ApiEnvelope<AdminDataHealthCounts>> {
+  return authedRequest<ApiEnvelope<AdminDataHealthCounts>>("/admin/data-health", accessToken);
+}
+
+export interface SyncAction {
+  key: string;
+  label: string;
+  /** Path including any query string — sync jobs use the backend's own defaults (see admin.ts). */
+  path: string;
+}
+
+// Every job this platform actually runs, in the order the scheduler runs
+// them (fixtures before anything that reads fixtures — see scheduler.ts).
+export const SYNC_ACTIONS: SyncAction[] = [
+  { key: "sync_fixtures", label: "Fixtures", path: "/admin/sync" },
+  { key: "sync_team_statistics", label: "Team statistics", path: "/admin/team-statistics/sync" },
+  { key: "sync_injuries", label: "Injuries", path: "/admin/injuries/sync" },
+  { key: "sync_standings", label: "Standings", path: "/admin/standings/sync" },
+  { key: "sync_lineups", label: "Lineups", path: "/admin/lineups/sync" },
+  { key: "sync_odds", label: "Odds", path: "/admin/odds/sync" },
+  { key: "predictions", label: "Predictions", path: "/admin/predictions/run" }
+];
+
+/** Triggers one sync/prediction job with the backend's own defaults. Response shape varies by job — see API.md. */
+export function triggerSync(accessToken: string, path: string): Promise<ApiEnvelope<Record<string, unknown>>> {
+  return authedRequest<ApiEnvelope<Record<string, unknown>>>(path, accessToken, { method: "POST" });
 }

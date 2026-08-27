@@ -2,10 +2,12 @@ import { Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { RequireAuth } from "./components/RequireAuth";
 import { RequireAdmin } from "./components/RequireAdmin";
+import { AdminLayout } from "./components/AdminLayout";
 import { FixturesToday } from "./pages/FixturesToday";
 import { MatchDetail } from "./pages/MatchDetail";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
+import { AdminDashboard } from "./pages/admin/AdminDashboard";
 import { AdminUsers } from "./pages/admin/AdminUsers";
 
 // The football data itself requires a signed-in account — only /sign-in
@@ -36,13 +38,16 @@ export function App() {
         <Route path="sign-in" element={<SignIn />} />
         <Route path="sign-up" element={<SignUp />} />
         <Route
-          path="admin/users"
+          path="admin"
           element={
             <RequireAdmin>
-              <AdminUsers />
+              <AdminLayout />
             </RequireAdmin>
           }
-        />
+        >
+          <Route index element={<AdminDashboard />} />
+          <Route path="users" element={<AdminUsers />} />
+        </Route>
       </Route>
     </Routes>
   );
