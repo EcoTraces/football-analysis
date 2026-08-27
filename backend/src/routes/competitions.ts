@@ -1,8 +1,12 @@
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createRequireAuth } from "../middleware/auth.js";
 
+// Every route here requires a signed-in user (any role) — see
+// README.md → "User access control".
 export function createCompetitionsRouter(supabase: SupabaseClient): Router {
   const router = Router();
+  router.use(createRequireAuth(supabase));
 
   router.get("/leagues", async (req, res, next) => {
     try {

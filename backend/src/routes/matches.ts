@@ -4,11 +4,15 @@ import { z } from "zod";
 import { ApiError } from "../middleware/errorHandler.js";
 import { getCurrentPredictions } from "../services/predictionsService.js";
 import { classifyFreshness } from "../lib/freshness.js";
+import { createRequireAuth } from "../middleware/auth.js";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 
+// Every route here requires a signed-in user (any role) — see
+// README.md → "User access control".
 export function createMatchesRouter(supabase: SupabaseClient): Router {
   const router = Router();
+  router.use(createRequireAuth(supabase));
 
   router.get("/matches/:id", async (req, res, next) => {
     try {

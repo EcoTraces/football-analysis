@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-08-27 — Require sign-in for the whole app, not just admin routes
+
+Follow-up to the same day's access-control work: until now, only
+`/api/admin/*` required a signed-in user — fixtures, matches, teams,
+leagues, and standings were publicly readable by design (a public sports
+site). Changed on request: the app now has no anonymous read-only mode.
+
+- Applied `requireAuth` (any signed-in user, no role check) to
+  `createFixturesRouter`, `createMatchesRouter`, `createTeamsRouter`, and
+  `createCompetitionsRouter` — every backend route except `/api/health*`
+  now requires `Authorization: Bearer <supabase-jwt>`.
+- Wrapped the frontend's `/` (`FixturesToday`) and `/matches/:id`
+  (`MatchDetail`) routes in `<RequireAuth>`; an unauthenticated visitor is
+  redirected straight to `/sign-in`. `getTodayFixtures`/`getMatch` in
+  `lib/api.ts` now require and send the session's access token, matching
+  the pattern already used for `/me` and the admin endpoints.
+- This closes the gap deliberately: the backend enforcement is independent
+  of the frontend's route guards, so a direct API call bypassing the UI
+  gets the same `401 unauthenticated` a browser would.
+- 5 new tests (`requireAuth.test.ts`, mirroring `requireAdmin.test.ts`'s
+  structure: missing/malformed header, unrecognized token, and a valid
+  token accepted regardless of role) — 141 backend / 13 frontend tests
+  passing, clean lint/typecheck/build on both.
+- Manually verified live: `GET /api/health` still `200` with no token;
+  `GET /api/fixtures/today` and `GET /api/leagues` now `401` without one.
+  In a real browser (Playwright against the dev server, dummy-but-valid
+  Supabase credentials, no live project available in this environment),
+  visiting `/` or `/matches/:id` while signed out lands on `/sign-in`.
+- Updated API.md (moved fixtures/matches/teams/leagues/standings from
+  "Public" to "Authenticated"), README.md, Architecture.md, Road_map.md,
+  and Task.md accordingly. Same "not yet verified against a real Supabase
+  project's JWTs" caveat as every other auth claim in this repo.
+
 ## 2026-08-27 — User access control: signup, sign-in, and an admin Users panel
 
 - Added real frontend authentication: `/sign-in` and `/sign-up` pages

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { getTodayFixtures } from "../lib/api";
 import type { FixtureSummary } from "../lib/types";
 import { FreshnessBadge } from "../components/FreshnessBadge";
+import { useAuth } from "../lib/auth";
 
 type LoadState =
   | { status: "loading" }
@@ -10,11 +11,16 @@ type LoadState =
   | { status: "ready"; fixtures: FixtureSummary[] };
 
 export function FixturesToday() {
+  // This page only ever renders inside <RequireAuth>, which doesn't render
+  // its children until status is "signed-in" — session.access_token is
+  // guaranteed to exist by then.
+  const { session } = useAuth();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
+    if (!session) return;
     let cancelled = false;
-    getTodayFixtures()
+    getTodayFixtures(session.access_token)
       .then((res) => {
         if (!cancelled) setState({ status: "ready", fixtures: res.data });
       })
@@ -26,7 +32,7 @@ export function FixturesToday() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session]);
 
   return (
     <div>

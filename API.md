@@ -36,6 +36,20 @@ entry in `jobs` is `{ name, cronExpression, nextRun }`.
 ### `GET /health/model`
 Placeholder — model monitoring is not implemented yet.
 
+## Authenticated (any signed-in user)
+
+Every route below requires `Authorization: Bearer <supabase-jwt>` for any
+signed-in user — no role check (`backend/src/middleware/auth.ts`'s
+`requireAuth`). Missing/malformed header or an unrecognized token → `401
+unauthenticated`. The football data itself is not publicly browsable; see
+README.md → "User access control".
+
+### `GET /me`
+Auto-provisions the caller's own `user_profiles` row on first call (default
+role `user`) rather than requiring a separate signup step. Returns `{ id,
+email, displayName, role, createdAt }`. Used by the frontend right after
+sign-in to decide whether to show admin UI.
+
 ### `GET /fixtures/today`
 Fixtures with `kickoff_utc` in today's UTC window, excluding synthetic rows
 unless `?includeSynthetic=true`. Each fixture includes a `freshness` field
@@ -63,16 +77,6 @@ Standings for a season (`leagueId` is actually a `season_id` — see
 `Task.md` for renaming this once the standings model is fleshed out). Now
 backed by real data once `POST /admin/standings/sync` has been run for
 that season — before that, returns an empty list, not a fabricated table.
-
-## Authenticated (any signed-in user)
-
-### `GET /me`
-Requires `Authorization: Bearer <supabase-jwt>` for any signed-in user (no
-role check — see `backend/src/middleware/auth.ts`'s `requireAuth`).
-Auto-provisions the caller's own `user_profiles` row on first call (default
-role `user`) rather than requiring a separate signup step. Returns `{ id,
-email, displayName, role, createdAt }`. Used by the frontend right after
-sign-in to decide whether to show admin UI.
 
 ## Admin
 

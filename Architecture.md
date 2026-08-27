@@ -25,8 +25,9 @@ Football data providers (abstracted — see Data_Sources.md)
   built around, rather than proxying through the backend (see `Database.md`'s
   "Access control" section for how `role` specifically is still kept out of
   that direct-write path). The JWT from that session is what gets sent as
-  `Authorization: Bearer <token>` to the backend's `/api/me` and
-  `/api/admin/*` routes.
+  `Authorization: Bearer <token>` to every backend route except
+  `/api/health*` — the football data itself requires a signed-in user, not
+  just `/api/admin/*` (see README.md → "User access control").
 - **Backend** is the sole writer of football-domain tables, using the
   Supabase service role key (bypasses RLS by design — see `Database.md`).
   It reads/writes fixtures, predictions, etc., and proxies prediction

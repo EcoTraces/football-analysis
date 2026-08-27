@@ -4,6 +4,7 @@ import { getMatch } from "../lib/api";
 import type { MatchDetail as MatchDetailType } from "../lib/types";
 import { FreshnessBadge } from "../components/FreshnessBadge";
 import { PredictionCard } from "../components/PredictionCard";
+import { useAuth } from "../lib/auth";
 
 type LoadState =
   | { status: "loading" }
@@ -12,12 +13,15 @@ type LoadState =
 
 export function MatchDetail() {
   const { id } = useParams<{ id: string }>();
+  // This page only ever renders inside <RequireAuth> — session is
+  // guaranteed to exist by the time we get here.
+  const { session } = useAuth();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !session) return;
     let cancelled = false;
-    getMatch(id)
+    getMatch(id, session.access_token)
       .then((res) => {
         if (!cancelled) setState({ status: "ready", match: res.data });
       })
@@ -29,7 +33,7 @@ export function MatchDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, session]);
 
   if (state.status === "loading") return <p role="status">Loading match…</p>;
   if (state.status === "error") return <p role="alert" className="text-red-600">Data unavailable: {state.message}</p>;

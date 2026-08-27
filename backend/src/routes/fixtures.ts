@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { listFixtures, todayRangeUtc } from "../services/fixturesService.js";
 import { ApiError } from "../middleware/errorHandler.js";
+import { createRequireAuth } from "../middleware/auth.js";
 
 const filtersSchema = z.object({
   from: z.string().datetime().optional(),
@@ -13,8 +14,11 @@ const filtersSchema = z.object({
   includeSynthetic: z.enum(["true", "false"]).optional()
 });
 
+// Every route here requires a signed-in user (any role) — the platform is
+// no longer publicly browsable; see README.md → "User access control".
 export function createFixturesRouter(supabase: SupabaseClient): Router {
   const router = Router();
+  router.use(createRequireAuth(supabase));
 
   router.get("/fixtures/today", async (req, res, next) => {
     try {

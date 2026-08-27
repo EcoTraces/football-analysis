@@ -27,6 +27,21 @@
   role, and the INSERT policy now pins new rows to `role = 'user'`. See
   `Database.md`'s "Access control" section. **Not yet run against a live
   Supabase project** — same caveat as everything else in this file.
+- [x] Gated the whole app behind authentication — previously only
+  `/api/admin/*` required a signed-in user; fixtures/matches/teams/leagues/
+  standings were publicly readable. `requireAuth` (any signed-in user, no
+  role check) is now applied to `createFixturesRouter`/`createMatchesRouter`/
+  `createTeamsRouter`/`createCompetitionsRouter` — only `/api/health*`
+  remains public. The frontend's `/` and `/matches/:id` routes are wrapped
+  in `<RequireAuth>`, redirecting an unauthenticated visitor straight to
+  `/sign-in`; this is enforced independently on the backend too, so a
+  direct API call can't bypass the UI-level gate. 5 new tests
+  (`requireAuth.test.ts`, mirroring `requireAdmin.test.ts`'s structure).
+  Manually verified live: `GET /api/health` stays `200` with no token,
+  `GET /api/fixtures/today`/`GET /api/leagues` now `401` without one; in a
+  real browser, `/` and `/matches/:id` redirect to `/sign-in` when signed
+  out. **Not yet verified against a real Supabase project's JWTs** — same
+  caveat as the rest of this file.
 - [ ] Add request logging/audit trail for admin actions (who ran
   `/admin/sync`, when, with what result; who promoted/demoted whom via the
   new `/admin/users/:id/role`) — `requireAdmin`/`requireAuth` know the

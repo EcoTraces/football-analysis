@@ -53,10 +53,11 @@ principle (`Coding_Rules.md` → "No Fake Data Rule"). Instead this repo has:
   goals model computing 1X2, BTTS, and Over/Under 2.5 probabilities from each
   team's scoring/conceding averages, with confidence/data-quality derived
   from sample size — not from the probability itself. See `ML_Model.md`.
-- **Frontend** (React/Vite/TypeScript/Tailwind): today's fixtures, a match
-  detail page with prediction cards and explainability factors, dark/light
-  mode, accessible freshness badges, and a responsible-gambling footer on
-  every page.
+- **Frontend** (React/Vite/TypeScript/Tailwind): sign-in/sign-up (required —
+  the app has no anonymous read-only mode), today's fixtures, a match
+  detail page with prediction cards and explainability factors, an admin
+  Users panel, dark/light mode, accessible freshness badges, and a
+  responsible-gambling footer on every page.
 - **Dev-only synthetic seed data** (`supabase/seed/dev_seed_synthetic.sql`):
   clearly flagged `is_synthetic = true`, excluded from every production read
   path by default, used to exercise the pipeline locally without a live data
@@ -199,9 +200,18 @@ predictions automatically on a cron schedule (`backend/src/scheduler/scheduler.t
 
 ## User access control (admin vs. regular users)
 
-Every `/api/admin/*` route requires a valid Supabase-issued JWT for a user
-whose `user_profiles.role` is `admin` (`backend/src/middleware/requireAdmin.ts`);
-`GET /api/me` only requires a valid JWT, any role. Two roles exist today —
+**The football data itself is not publicly browsable.** Every backend
+route except `/api/health*` — fixtures, matches, teams, leagues, standings,
+not just `/api/admin/*` — requires a valid Supabase-issued JWT
+(`backend/src/middleware/auth.ts`'s `requireAuth`). In the frontend, an
+unauthenticated visitor hitting `/` or `/matches/:id` is redirected
+straight to `/sign-in`; there's no anonymous read-only mode. This is
+enforced on the backend independently of the frontend's route guards, so a
+direct API call can't bypass it either.
+
+`/api/admin/*` additionally requires `user_profiles.role = 'admin'`
+(`backend/src/middleware/requireAdmin.ts`); `GET /api/me` only requires a
+valid JWT, any role. Two roles exist today —
 `user` (default, self-serve signup) and `admin` (promoted by an existing
 admin, or bootstrapped once by hand — see below). `role` can only ever be
 changed by the backend's service-role client: RLS plus a database trigger
@@ -270,7 +280,7 @@ tests. To actually verify it against live data:
    curl -s http://localhost:8080/api/health/api-football   # expect status: "UNKNOWN" before the first request
    curl -X POST "http://localhost:8080/api/admin/sync?days=1" -H "Authorization: Bearer $ADMIN_JWT"
    curl -s http://localhost:8080/api/health/api-football   # expect status: "CONNECTED" and a populated rateLimit
-   curl -s "http://localhost:8080/api/fixtures/today"       # confirm real fixtures came back, not synthetic ones
+   curl -s "http://localhost:8080/api/fixtures/today" -H "Authorization: Bearer $ADMIN_JWT"   # confirm real fixtures came back, not synthetic ones — any signed-in user's token works here, not just an admin's
    curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" -H "Authorization: Bearer $ADMIN_JWT"
    curl -X POST "http://localhost:8080/api/admin/standings/sync" -H "Authorization: Bearer $ADMIN_JWT"
    curl -s http://localhost:8080/api/admin/jobs -H "Authorization: Bearer $ADMIN_JWT"   # real ingestion_runs history

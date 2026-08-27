@@ -24,12 +24,14 @@ function authedRequest<T>(path: string, accessToken: string, init: RequestInit =
   });
 }
 
-export function getTodayFixtures(): Promise<ApiEnvelope<FixtureSummary[]>> {
-  return request<ApiEnvelope<FixtureSummary[]>>("/fixtures/today");
+// Requires a signed-in session — the backend rejects these without a
+// bearer token (see README.md → "User access control").
+export function getTodayFixtures(accessToken: string): Promise<ApiEnvelope<FixtureSummary[]>> {
+  return authedRequest<ApiEnvelope<FixtureSummary[]>>("/fixtures/today", accessToken);
 }
 
-export function getMatch(id: string): Promise<ApiEnvelope<MatchDetail>> {
-  return request<ApiEnvelope<MatchDetail>>(`/matches/${id}`);
+export function getMatch(id: string, accessToken: string): Promise<ApiEnvelope<MatchDetail>> {
+  return authedRequest<ApiEnvelope<MatchDetail>>(`/matches/${id}`, accessToken);
 }
 
 /** The current session's own profile (role, display name) — also auto-provisions the profile row on first call. */
