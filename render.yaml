@@ -1,0 +1,45 @@
+# Render Blueprint for the backend API — https://render.com/docs/blueprint-spec
+#
+# Deploys backend/Dockerfile as a web service. Nothing else in this repo is
+# deployed here: the ML service (predictions) and the frontend are separate
+# pieces with their own deploy targets — see Deployment.md. Fields marked
+# `sync: false` are secrets/environment-specific values Render will prompt
+# for when you create the Blueprint (or that you set later in the
+# service's Environment tab) rather than values baked into this file —
+# never put a real key/secret directly in this file, since it's committed
+# to the repo.
+#
+# PORT is deliberately not set here: Render injects its own PORT into the
+# container, and backend/src/config/env.ts already reads process.env.PORT
+# with no hardcoded default that would conflict.
+
+services:
+  - type: web
+    name: football-analysis-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ML_SERVICE_URL
+        sync: false
+      - key: FOOTBALL_DATA_PROVIDER
+        value: "null"
+      - key: FOOTBALL_DATA_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX
+        value: "120"
+      - key: SCHEDULER_ENABLED
+        value: "false"

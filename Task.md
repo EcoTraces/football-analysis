@@ -273,8 +273,15 @@
 
 - [ ] CI: add a security-scanning step (e.g. `npm audit` gate, `pip-audit`)
   before deployment.
-- [ ] Production deployment target and config (frontend hosting, backend
-  hosting, ML service hosting) — currently Dockerfiles/compose only.
+- [x] Backend deployment config for Render — `render.yaml` (Blueprint,
+  Docker runtime, secrets marked `sync: false`) plus a `backend/.dockerignore`
+  so a local `.env` can never end up baked into an image. See
+  `Deployment.md` → "Deploying the backend to Render" for the exact
+  click-through steps. **Not yet actually deployed** — no Render account is
+  connected to this repo/environment; this is config only, waiting on the
+  user to connect their own account and click deploy.
+- [ ] ML service and frontend still have no concrete hosting target
+  (Dockerfiles exist, no Blueprint/IaC) — only the backend does now.
 - [ ] Caching layer for fixtures/standings once there's a real provider
   worth caching.
 

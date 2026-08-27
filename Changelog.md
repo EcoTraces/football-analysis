@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-08-27 — Render deployment config for the backend
+
+- Added `render.yaml` (Render Blueprint spec, repo root): a Docker web
+  service built from the existing `backend/Dockerfile`, `PORT` left for
+  Render to inject (the app already reads `process.env.PORT` with a sane
+  default, no code change needed), `healthCheckPath: /api/health`, and
+  every secret (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `FOOTBALL_DATA_API_KEY`, `ML_SERVICE_URL`, `ALLOWED_ORIGINS`) marked
+  `sync: false` so Render prompts for them at Blueprint-creation time
+  instead of them ever being written into this committed file.
+- Added `backend/.dockerignore` (didn't exist before) — excludes
+  `node_modules`, `dist`, and any `.env*` file, so a local `docker build`
+  can never accidentally bake a real credential into an image layer.
+- Rewrote `Deployment.md`'s backend section with the actual click-through
+  steps for Render specifically (Blueprint creation, which env vars need
+  filling in vs. which are safe to leave at their default, how to verify
+  the deploy with `curl .../api/health`, and the free-tier
+  spin-down-on-idle caveat interacting with `SCHEDULER_ENABLED=true`).
+  Also fixed a stale line in the same file that still said "no auth exists
+  on `/api/admin/*` yet" — auth has existed since earlier this week; the
+  accurate caveat is "unverified against a real Supabase project," not
+  "absent."
+- **Not done, and cannot be done from here**: no Render account is
+  connected to this environment, so nothing has actually been deployed —
+  this is configuration only. The user connects their own GitHub repo to
+  Render and clicks deploy themselves (entirely from a browser, phone or
+  computer — see `Deployment.md`).
+
 ## 2026-08-27 — Admin sync/jobs dashboard
 
 Closes the last "deliberately deferred" item from `Architecture.md`: the

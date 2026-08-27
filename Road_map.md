@@ -24,7 +24,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
 | 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; the entire app (not just `/api/admin/*`) now requires a signed-in user, admin routes additionally require the admin role (unverified against a real project — see Task.md); a real signup + admin-promotion UI now exists, closing the "no signup/role-assignment UI" gap; a role self-escalation RLS gap was found and fixed (`0004_user_profiles_role_guard.sql`, also unverified against a live project); still no admin-action audit log |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
-| 20. Production deployment | ⬜ Not started | Dockerfiles + compose only; no hosting configured |
+| 20. Production deployment | 🟡 Backend deploy config only | `render.yaml` Blueprint for the backend exists (`Deployment.md`); not yet actually deployed anywhere (no hosting account connected in this environment) — ML service and frontend still have no concrete hosting target |
 | 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
 
 ## Immediate next steps (see Task.md for details)
