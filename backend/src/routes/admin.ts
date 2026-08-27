@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
@@ -46,6 +47,73 @@ export function summarizeIngestionRuns(
   return summary;
 }
 
+export interface AdminUserSummary {
+  id: string;
+  email: string | null;
+  role: string;
+  displayName: string | null;
+  createdAt: string;
+}
+
+export const roleUpdateSchema = z.object({ role: z.enum(["user", "admin"]) });
+
+// Pure and exported for direct unit testing — joins auth.users (via the
+// admin API, the only way to read it) with user_profiles' role/display_name.
+export async function listUsersWithRoles(supabase: SupabaseClient): Promise<AdminUserSummary[]> {
+  const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+  if (authError) throw new Error(`Failed to list auth users: ${authError.message}`);
+
+  const { data: profiles, error: profilesError } = await supabase
+    .from("user_profiles")
+    .select("id, display_name, role, created_at");
+  if (profilesError) throw new Error(`Failed to list user_profiles: ${profilesError.message}`);
+
+  const profileById = new Map((profiles ?? []).map((p) => [p.id as string, p]));
+
+  return authUsers.users.map((u: { id: string; email?: string; created_at: string }) => {
+    const profile = profileById.get(u.id);
+    return {
+      id: u.id,
+      email: u.email ?? null,
+      role: (profile?.role as string | undefined) ?? "user",
+      displayName: (profile?.display_name as string | null | undefined) ?? null,
+      createdAt: u.created_at
+    };
+  });
+}
+
+// Pure and exported for direct unit testing. Refuses to demote the only
+// remaining admin (see the route comment) and 404s a role change targeting
+// a user with no user_profiles row rather than silently affecting zero rows.
+export async function updateUserRole(
+  supabase: SupabaseClient,
+  targetUserId: string,
+  role: "user" | "admin"
+): Promise<{ id: string; role: string }> {
+  const { data: targetProfile, error: targetError } = await supabase
+    .from("user_profiles")
+    .select("id, role")
+    .eq("id", targetUserId)
+    .maybeSingle();
+  if (targetError) throw new Error(targetError.message);
+  if (!targetProfile) {
+    throw new ApiError(404, "No user_profiles row exists for this user id.", "user_not_found");
+  }
+
+  if (role === "user" && targetProfile.role === "admin") {
+    const { data: admins, error: adminsError } = await supabase.from("user_profiles").select("id").eq("role", "admin");
+    if (adminsError) throw new Error(adminsError.message);
+    if ((admins ?? []).length <= 1) {
+      throw new ApiError(409, "Refusing to demote the only remaining admin account.", "last_admin");
+    }
+  }
+
+  const { error } = await supabase.from("user_profiles").update({ role }).eq("id", targetUserId);
+  if (error) throw new Error(error.message);
+
+  return { id: targetUserId, role };
+}
+
 function requireProvider(provider: FootballDataProvider): void {
   if (provider.name === "null") {
     throw new ApiError(
@@ -58,8 +126,8 @@ function requireProvider(provider: FootballDataProvider): void {
 
 // Every route on this router requires a valid Supabase JWT for a user whose
 // user_profiles.role is 'admin' — see requireAdmin.ts and README.md →
-// "Creating the first admin user". Applied once via router.use() so a
-// future route added here can't accidentally ship unauthenticated.
+// "User access control". Applied once via router.use() so a future route
+// added here can't accidentally ship unauthenticated.
 export function createAdminRouter(
   supabase: SupabaseClient,
   provider: FootballDataProvider,
@@ -202,6 +270,37 @@ export function createAdminRouter(
       if (error) throw new Error(error.message);
 
       res.json({ data: summarizeIngestionRuns((data ?? []) as IngestionRunRow[]) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Lists every real (auth.users) account, joined with its user_profiles
+  // role/display_name — the "real admin team" tool README.md → "User
+  // access control" promised: promote/demote without direct SQL, except
+  // for the one first-admin bootstrap that still needs it. Only the first
+  // page (up to 200 accounts) is fetched; this platform has no user base
+  // anywhere near that size yet, so pagination is deferred until it
+  // actually matters (see Task.md).
+  router.get("/admin/users", async (_req, res, next) => {
+    try {
+      res.json({ data: await listUsersWithRoles(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Promotes/demotes an account. Refuses to demote the last remaining
+  // admin — there is no other way back in short of direct database access,
+  // and locking every admin out is a strictly worse failure mode than
+  // rejecting the request.
+  router.post("/admin/users/:id/role", async (req, res, next) => {
+    try {
+      const parsed = roleUpdateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
+      }
+      res.json({ data: await updateUserRole(supabase, req.params.id as string, parsed.data.role) });
     } catch (err) {
       next(err);
     }

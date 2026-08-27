@@ -51,3 +51,21 @@ export interface ApiEnvelope<T> {
   data: T;
   meta?: Record<string, unknown>;
 }
+
+export type UserRole = "user" | "admin";
+
+export interface MeProfile {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  role: UserRole;
+  createdAt: string;
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string | null;
+  role: UserRole;
+  displayName: string | null;
+  createdAt: string;
+}

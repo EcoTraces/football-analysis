@@ -11,16 +11,39 @@
   exercised against a real Supabase project's actual JWTs**, only against
   the fake's `auth.getUser`/`user_profiles` behavior. Test against a live
   project before relying on it in production.
-- [ ] No signup or role-assignment UI exists — the only way to create an
-  admin today is the manual SQL step in README.md → "Creating the first
-  admin user." Fine for one operator, not for a real admin team.
+- [x] Signup + role-assignment UI — the frontend now has real `/sign-in`/
+  `/sign-up` pages (Supabase Auth, email+password) and an admin-only
+  `/admin/users` panel (`GET /admin/users`, `POST /admin/users/:id/role`)
+  to promote/demote accounts without direct SQL. Only the very first admin
+  still needs the one-time manual SQL bootstrap (README.md → "User access
+  control") — unavoidable, since there's no admin yet to promote you.
+  `POST /admin/users/:id/role` refuses to demote the only remaining admin
+  (`409 last_admin`).
+- [x] Closed a role self-escalation gap found while building the above:
+  0001's RLS policies let a signed-in user PATCH their own `role` to
+  `'admin'` directly (row-level, not column-level, restriction). Fixed in
+  `supabase/migrations/0004_user_profiles_role_guard.sql` — a `before
+  update` trigger blocks any `role` change unless running as the service
+  role, and the INSERT policy now pins new rows to `role = 'user'`. See
+  `Database.md`'s "Access control" section. **Not yet run against a live
+  Supabase project** — same caveat as everything else in this file.
 - [ ] Add request logging/audit trail for admin actions (who ran
-  `/admin/sync`, when, with what result) — `requireAdmin` knows the
-  authenticated user id at that point but nothing persists it yet.
+  `/admin/sync`, when, with what result; who promoted/demoted whom via the
+  new `/admin/users/:id/role`) — `requireAdmin`/`requireAuth` know the
+  authenticated user id at that point (`req.authUser`) but nothing persists
+  it yet.
 - [ ] Consider token revocation/expiry edge cases explicitly: `auth.getUser()`
   should reject an expired or revoked token, but this hasn't been verified
   against Supabase's actual token lifecycle (only against the test fake,
   which has no concept of expiry).
+- [ ] `GET /admin/users` fetches only the first 200 accounts (no
+  pagination) — fine until this platform has a real user base, not a
+  long-term design.
+- [ ] No email-confirmation-required UX has been tested against a real
+  Supabase project — `SignUp.tsx` handles both cases (immediate session vs.
+  "check your email") based on whether `signUp()` returns a session, but
+  which one actually happens depends on the project's Auth settings, which
+  this environment has no live project to check against.
 
 ## Data
 

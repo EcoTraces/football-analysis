@@ -64,15 +64,38 @@ Standings for a season (`leagueId` is actually a `season_id` — see
 backed by real data once `POST /admin/standings/sync` has been run for
 that season — before that, returns an empty list, not a fabricated table.
 
+## Authenticated (any signed-in user)
+
+### `GET /me`
+Requires `Authorization: Bearer <supabase-jwt>` for any signed-in user (no
+role check — see `backend/src/middleware/auth.ts`'s `requireAuth`).
+Auto-provisions the caller's own `user_profiles` row on first call (default
+role `user`) rather than requiring a separate signup step. Returns `{ id,
+email, displayName, role, createdAt }`. Used by the frontend right after
+sign-in to decide whether to show admin UI.
+
 ## Admin
 
 Every route below requires `Authorization: Bearer <supabase-jwt>` for a
 user whose `user_profiles.role` is `admin`
 (`backend/src/middleware/requireAdmin.ts`). Missing/malformed header or an
 unrecognized token → `401 unauthenticated`; a valid but non-admin user →
-`403 forbidden`. See README.md → "Creating the first admin user" for how to
-get a token. **Not yet verified against a real Supabase project's JWTs** —
-see `Task.md`.
+`403 forbidden`. See README.md → "User access control" for how to get a
+token. **Not yet verified against a real Supabase project's JWTs** — see
+`Task.md`.
+
+### `GET /admin/users`
+Lists every real account (via `auth.admin.listUsers()`) joined with its
+`user_profiles` role/display name: `{ id, email, role, displayName,
+createdAt }[]`. Only the first 200 accounts are fetched — no pagination
+yet (see `Task.md`).
+
+### `POST /admin/users/:id/role`
+Body `{ role: "user" | "admin" }`. Promotes/demotes the target account.
+`404 user_not_found` if no `user_profiles` row exists for that id; `409
+last_admin` if this would demote the only remaining admin (refused, not
+allowed — there's no recovery from zero admins short of direct database
+access). Returns `{ id, role }`.
 
 ### `POST /admin/sync?days=N`
 Syncs fixtures from today (UTC) through `days` days ahead (default 1,

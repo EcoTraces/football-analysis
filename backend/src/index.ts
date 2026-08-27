@@ -14,6 +14,7 @@ import { createMatchesRouter } from "./routes/matches.js";
 import { createTeamsRouter } from "./routes/teams.js";
 import { createCompetitionsRouter } from "./routes/competitions.js";
 import { createAdminRouter } from "./routes/admin.js";
+import { createMeRouter } from "./routes/me.js";
 import { createErrorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { startScheduler } from "./scheduler/scheduler.js";
 
@@ -53,6 +54,7 @@ app.use("/api", createFixturesRouter(supabase));
 app.use("/api", createMatchesRouter(supabase));
 app.use("/api", createTeamsRouter(supabase));
 app.use("/api", createCompetitionsRouter(supabase));
+app.use("/api", createMeRouter(supabase));
 app.use("/api", createAdminRouter(supabase, provider, env.ML_SERVICE_URL, logger));
 
 app.use(notFoundHandler);

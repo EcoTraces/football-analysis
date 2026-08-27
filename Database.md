@@ -5,8 +5,10 @@ schema), `0002_provider_external_refs.sql` (external-id columns/indexes for
 countries/seasons/fixtures/teams/competitions), and
 `0003_injuries_and_players_refs.sql` (external-id uniqueness for `players`,
 plus a uniqueness constraint on `injuries` that 0001 didn't anticipate
-needing) — each added once a real ingestion job needed it. Dev-only
-synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
+needing), and `0004_user_profiles_role_guard.sql` (closes a role
+self-escalation gap in the 0001 RLS policies — see "Access control" below)
+— each added once a real need showed up. Dev-only synthetic seed:
+`supabase/seed/dev_seed_synthetic.sql`.
 
 ## Design conventions
 
@@ -53,6 +55,36 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
   only their own rows). Football-domain tables have no RLS policies — the
   backend, using the service role key, is their only writer, and reads go
   through the API rather than directly from the frontend with the anon key.
+  `user_profiles` is the one table the frontend now does read/write
+  directly with the anon key (for Auth + reading its own row) — see
+  "Access control" below for how `role` specifically is still kept out of
+  that direct-write path.
+
+## Access control
+
+`user_profiles.role` (`'user'` default, `'admin'`) is the platform's entire
+privilege boundary — `requireAdmin.ts` trusts it completely. 0001's RLS
+policies restricted which *row* a signed-in user could touch (`auth.uid()
+= id`) but not which *columns*, so the original "Users update own profile"
+policy let any signed-in user PATCH their own `role` to `'admin'` via a
+direct Supabase client call, and "Users insert own profile" let a
+freshly-registered user's own insert set `role: 'admin'` immediately.
+Nothing in this repo exploited this before `0004_user_profiles_role_guard.sql`
+(the frontend had no direct Supabase client at all until the same change
+that added one), but it was a live landmine for the moment one showed up —
+which is exactly what happened once sign-in/sign-up pages were built.
+
+`0004` fixes it two ways: the INSERT policy's `with check` now pins
+`role = 'user'`, and a `before update` trigger blocks any change to `role`
+unless the request is running as the service role (`auth.role() =
+'service_role'`) — which RLS's `using`/`with check` clauses can't express
+on their own, since the service role bypasses RLS entirely rather than
+being subject to a stricter policy. The backend's admin role-management
+endpoints (`POST /admin/users/:id/role`, `admin.ts`) and the one-time
+first-admin SQL bootstrap (README.md → "User access control") both still
+work because they always run as the service role or with direct database
+access respectively; a signed-in end user's session, via the anon key,
+never does.
 
 ## Core entities
 
@@ -76,6 +108,14 @@ synthetic seed: `supabase/seed/dev_seed_synthetic.sql`.
 
 - No migration tooling wired up yet (no `supabase/config.toml`/CLI
   integration in CI) — migrations are applied manually today.
+- `0004_user_profiles_role_guard.sql`'s trigger and tightened INSERT policy
+  have not been run against a real Postgres/Supabase project — no live
+  project is available in this environment. The logic (a `before update`
+  trigger checking `auth.role() = 'service_role'`) follows documented
+  Supabase/Postgres behavior, not a confirmed live test; apply and smoke-test
+  it (sign up a user, confirm they can't PATCH their own `role` via the
+  Supabase client, confirm `POST /admin/users/:id/role` still works) before
+  relying on it in production.
 - Real fixtures and `overall`/`home`/`away` team statistics can now be
   synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
   run on non-synthetic fixtures once both have been run — but this hasn't

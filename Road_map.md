@@ -15,14 +15,14 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
 | 9. Prediction engine | 🟡 Baseline only | Poisson/Dixon-Coles; no ensemble, no other algorithms yet |
 | 10. Model training/backtesting | ⬜ Not started | No historical dataset loaded; `model_evaluations` has no writer |
-| 11. Frontend | 🟡 Core pages done | Fixtures today + match detail; no dashboard/search/auth UI |
+| 11. Frontend | 🟡 Core pages + auth done | Fixtures today + match detail; sign-in/sign-up pages and an admin Users panel now exist (Supabase Auth); no dashboard/search UI |
 | 12. Analytics dashboard | ⬜ Not started | |
 | 13. Daily analysis | ⬜ Not started | |
 | 14. Accumulator research | ⬜ Not started | |
 | 15. Notifications | ⬜ Not started | Schema exists (`notifications` table); no delivery |
-| 16. Admin dashboard (UI) | ⬜ Not started | API endpoints exist and are now authenticated (`/api/admin/*`); no UI |
+| 16. Admin dashboard (UI) | 🟡 Users panel done, sync/jobs UI not started | `/admin/users` (promote/demote) exists; the sync-trigger/job-history/health endpoints (`/admin/*/sync`, `/admin/jobs*`, `/health/*`) still have no frontend, only curl/API access |
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
-| 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; admin routes now require a Supabase JWT + admin role (unverified against a real project — see Task.md); still no audit log, no signup/role-assignment UI |
+| 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; admin routes require a Supabase JWT + admin role (unverified against a real project — see Task.md); a real signup + admin-promotion UI now exists, closing the "no signup/role-assignment UI" gap; a role self-escalation RLS gap was found and fixed (`0004_user_profiles_role_guard.sql`, also unverified against a live project); still no admin-action audit log |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
 | 20. Production deployment | ⬜ Not started | Dockerfiles + compose only; no hosting configured |
 | 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
@@ -41,7 +41,12 @@ against fakes; only the live verification itself is outstanding.
 1. Test `requireAdmin` against a real Supabase project (create an admin
    user per README.md, get a real JWT, confirm `/api/admin/*` accepts it
    and rejects a non-admin user's JWT) — so far only verified against a
-   fake auth client and against a running server's rejection paths.
+   fake auth client and against a running server's rejection paths. While
+   there: apply `0004_user_profiles_role_guard.sql`, sign up a test user
+   in the frontend, and confirm they genuinely cannot PATCH their own
+   `role` via a direct Supabase client call, then confirm
+   `POST /admin/users/:id/role` still works from an admin session — the
+   whole point of that migration, unverified against a live project.
 2. Get a real API-Football key and run `POST /api/admin/sync?days=1`
    against a real Supabase project to verify `ApiFootballProvider`'s
    mapping against a live response — it has only been tested against

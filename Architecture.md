@@ -3,10 +3,10 @@
 ## Overview
 
 ```
-React Frontend (Vite/TS/Tailwind)
-        |
-        v
-Node.js/Express API (TypeScript)
+React Frontend (Vite/TS/Tailwind) ---- Supabase Auth (anon key, RLS)
+        |                                       ^
+        v                                       |
+Node.js/Express API (TypeScript) --------------+
         |
         +--------------------------+
         |                          |
@@ -17,9 +17,16 @@ Supabase (Postgres + Auth)   Python/FastAPI ML service
 Football data providers (abstracted — see Data_Sources.md)
 ```
 
-- **Frontend** talks only to the backend's REST API — never directly to
-  Supabase for football data (only Supabase Auth, if/when user accounts are
-  wired into the frontend, would use the anon key directly under RLS).
+- **Frontend** talks to the backend's REST API for all football-domain data
+  (fixtures, predictions, standings, etc.) — never directly to Supabase for
+  that. It does talk directly to Supabase Auth with the anon key (sign in/
+  up/out, session/JWT) and to `user_profiles` for its own row, both under
+  RLS — the one place this app uses the direct-client pattern Supabase is
+  built around, rather than proxying through the backend (see `Database.md`'s
+  "Access control" section for how `role` specifically is still kept out of
+  that direct-write path). The JWT from that session is what gets sent as
+  `Authorization: Bearer <token>` to the backend's `/api/me` and
+  `/api/admin/*` routes.
 - **Backend** is the sole writer of football-domain tables, using the
   Supabase service role key (bypasses RLS by design — see `Database.md`).
   It reads/writes fixtures, predictions, etc., and proxies prediction
@@ -67,15 +74,17 @@ Supabase (managed Postgres) was chosen per the project brief. It gives:
 relational integrity for a genuinely relational domain (fixtures reference
 teams, competitions, seasons — this doesn't fit a document model cleanly),
 Row Level Security for user-owned tables (`user_profiles`, `notifications`),
-and built-in auth if/when the frontend needs user accounts.
+and built-in auth, now used by the frontend for user accounts (sign-in/
+sign-up, an admin Users panel — see `Database.md`'s "Access control").
 
 ## Deliberately deferred
 
-- Background job scheduling (cron/Cloud Scheduler/etc.)
 - Caching layer
 - Search/indexing
 - Model ensemble beyond the single Poisson baseline
-- Admin dashboard UI (the API endpoints exist; no frontend for them yet)
-- Authentication/authorization on admin routes
+- Admin dashboard UI for the sync/job/health endpoints (`/admin/*/sync`,
+  `/admin/jobs*`, `/health/*`) — only the Users panel (`/admin/users`) has
+  a frontend so far; the rest is API/curl-only
+- Admin-action audit log
 
 See `Road_map.md` for sequencing.

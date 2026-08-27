@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-08-27 — User access control: signup, sign-in, and an admin Users panel
+
+- Added real frontend authentication: `/sign-in` and `/sign-up` pages
+  (Supabase Auth, email+password), an `AuthProvider`/`useAuth()` context
+  tracking session + own profile/role, and header UI showing signed-in
+  state (email, an "Admin" nav link for admins, sign-out). New accounts
+  always start as `role: 'user'`.
+- Added `GET /api/me` (any signed-in user, no role check): returns the
+  caller's own profile, auto-provisioning the `user_profiles` row on first
+  call. Added admin-only `GET /admin/users` (every real account joined with
+  its role) and `POST /admin/users/:id/role` (promote/demote), backing a
+  new `/admin/users` frontend page. The endpoint refuses to demote the only
+  remaining admin (`409 last_admin`) — no recovery from zero admins short
+  of direct database access.
+- **Found and fixed a real security gap while building this**: 0001's RLS
+  policies on `user_profiles` restricted which row a signed-in user could
+  touch, but not which columns — a user could PATCH their own `role` to
+  `'admin'` directly. Nothing exploited this before now (the frontend had
+  no direct Supabase client at all until this change), but it would have
+  been live the moment one was added, which is exactly what happened here.
+  Fixed in `supabase/migrations/0004_user_profiles_role_guard.sql`: the
+  INSERT policy now pins new rows to `role = 'user'`, and a `before update`
+  trigger blocks any `role` change unless the request is running as the
+  service role — which is what the backend's role-management endpoint and
+  the first-admin SQL bootstrap always are, so neither is affected.
+- Refactored `requireAdmin.ts`'s JWT-verification logic into a shared
+  `getAuthenticatedUser` (`middleware/auth.ts`), also used by the new
+  `requireAuth` (any signed-in user, no role check) — `req.authUser` is now
+  attached by both instead of the admin check duplicating it.
+- Renamed README.md's "Creating the first admin user" section to "User
+  access control," rewritten around the new sign-up flow: users self-serve
+  sign up, admins promote from the `/admin/users` panel, and only the very
+  first admin still needs a one-time manual SQL bootstrap (unavoidable —
+  there's no admin yet to promote you).
+- 21 new tests (8 backend: `me.test.ts`, `adminUsers.test.ts`; 8 frontend:
+  `RequireAuth.test.tsx`, `RequireAdmin.test.tsx`, exercising every auth
+  state — not-configured, loading, signed-out, signed-in non-admin,
+  signed-in admin — via a directly-injected `AuthContext` rather than
+  mocking the Supabase SDK) — 137 backend / 13 frontend tests passing in
+  total, clean lint/typecheck/build on both. Manually verified in a real
+  browser (Playwright against the dev server, no live Supabase project
+  available in this environment): `/sign-in`, `/sign-up`, and
+  `/admin/users` all show an explicit "Authentication is not configured"
+  message with real (unset) env vars rather than crashing or rendering a
+  broken form; with dummy-but-syntactically-valid Supabase credentials, the
+  real sign-in/sign-up forms render correctly and `/admin/users` correctly
+  redirects an unauthenticated visitor to `/sign-in`.
+- **Not done, and cannot be done from here**: migration 0004 has not been
+  run against a real Supabase project — same "no live project available in
+  this environment" caveat as every other migration and provider claim in
+  this changelog. The actual signed-in/admin-panel-rendered states are
+  covered by component tests with an injected auth context, not by driving
+  a real Supabase Auth session in a browser.
+
 ## 2026-08-26 — Retry/rate-limit hardening + job observability infrastructure
 
 Closes the two remaining cross-cutting gaps as far as they can be closed

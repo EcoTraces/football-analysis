@@ -121,11 +121,11 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   approximate until checked against real responses. It also never marks a
   recovered player `returned`; they just go stale (surfaced by the
   freshness classifier) rather than being actively corrected.
-- Admin endpoints now require a Supabase-authenticated admin user (see
-  "Creating the first admin user" below) — but there's still no
-  signup/role-assignment UI, no audit log of admin actions, and no
-  automated test running the middleware against a real Supabase project
-  (only against a fake auth/database — see `Task.md`).
+- Admin endpoints require a Supabase-authenticated admin user, and there's
+  now a real signup page and an in-app admin Users panel to promote/demote
+  accounts (see "User access control" below) — but still no audit log of
+  admin actions, and no automated test running any of this against a real
+  Supabase project (only against a fake auth/database — see `Task.md`).
 - No model backtesting/validation pipeline, no league-specific calibration,
   no model ensemble — one baseline Poisson model only.
 - No accumulator research, value/EV analysis, notifications, or admin
@@ -171,7 +171,7 @@ npm install && npm run dev
 
 # 6. (Optional) pull real data — set FOOTBALL_DATA_PROVIDER=api-football
 # and FOOTBALL_DATA_API_KEY in backend/.env first (see Data_Sources.md),
-# then sync in order (see "Creating the first admin user" for $ADMIN_JWT):
+# then sync in order (see "User access control" below for $ADMIN_JWT):
 curl -X POST "http://localhost:8080/api/admin/sync?days=3" \
   -H "Authorization: Bearer $ADMIN_JWT"
 curl -X POST "http://localhost:8080/api/admin/team-statistics/sync" \
@@ -197,30 +197,51 @@ predictions automatically on a cron schedule (`backend/src/scheduler/scheduler.t
 — see that file for the exact cadence, and the caveats above and in
 `Task.md` before relying on it.
 
-## Creating the first admin user
+## User access control (admin vs. regular users)
 
 Every `/api/admin/*` route requires a valid Supabase-issued JWT for a user
-whose `user_profiles.role` is `admin` (`backend/src/middleware/requireAdmin.ts`).
-There's no signup or role-assignment UI yet, so the first admin is created
-by hand:
+whose `user_profiles.role` is `admin` (`backend/src/middleware/requireAdmin.ts`);
+`GET /api/me` only requires a valid JWT, any role. Two roles exist today —
+`user` (default, self-serve signup) and `admin` (promoted by an existing
+admin, or bootstrapped once by hand — see below). `role` can only ever be
+changed by the backend's service-role client: RLS plus a database trigger
+(`supabase/migrations/0004_user_profiles_role_guard.sql`) block a signed-in
+user from writing their own `role` column directly, closing off a
+self-promotion path that existed (unexploited — nothing used it) before
+the frontend had a direct Supabase client at all.
 
-1. Create a user via Supabase Auth (dashboard → Authentication → Add user,
-   or `supabase.auth.signUp(...)` from any client using your project's
-   anon key).
-2. Give that user's `user_profiles` row the admin role — it's created
-   automatically once they have a session (or insert it directly):
-   ```sql
-   insert into user_profiles (id, role)
-   values ('<the user''s auth.users id>', 'admin')
-   on conflict (id) do update set role = 'admin';
-   ```
-3. Get a JWT for that user (sign in via `supabase.auth.signInWithPassword(...)`
-   with the anon key from any script — the access token in the response is
-   what you pass as `Authorization: Bearer <token>`).
+**Regular users** sign up themselves at `/sign-up` in the frontend (email +
+password via Supabase Auth) — no admin action needed, and new accounts
+always start as `role: 'user'`.
 
-The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is never used as this
-bearer token — it's a backend-only secret with no associated user, and
-`auth.getUser()` would reject it anyway.
+**Promoting/demoting an admin** — once at least one admin exists, they can
+manage roles from the frontend's `/admin/users` page (calls `GET
+/admin/users` / `POST /admin/users/:id/role`, both admin-only). The backend
+refuses to demote the last remaining admin (`409 last_admin`) — there's no
+recovery from zero admins short of the manual SQL below.
+
+**Bootstrapping the very first admin** (unavoidable — someone has to be
+first, and there's no admin yet to promote you): sign up normally at
+`/sign-up`, then promote that one account by hand against your Supabase
+project:
+```sql
+update user_profiles set role = 'admin' where id = '<the user''s auth.users id>';
+```
+(Find the id in Supabase dashboard → Authentication → Users, or via `SELECT id FROM auth.users WHERE email = '<email>'`.)
+This direct SQL statement runs with Postgres superuser privileges, which is
+exactly why it's the one path that bypasses the "only the backend service
+role can change role" restriction above — an operator with direct database
+access always can, same as before this feature existed. Once promoted,
+sign out and back in (or wait for the JWT to refresh) so the frontend picks
+up the new role, and use `/admin/users` for everyone after that.
+
+Need a bearer token for `curl`/Postman instead of the UI? Sign in via
+`supabase.auth.signInWithPassword(...)` from any script using your
+project's anon key — the access token in the response is what you pass as
+`Authorization: Bearer <token>`. The service role key
+(`SUPABASE_SERVICE_ROLE_KEY`) is never used as this bearer token — it's a
+backend-only secret with no associated user, and `auth.getUser()` would
+reject it anyway.
 
 ## Configuring a live API-Football key
 
@@ -244,7 +265,7 @@ tests. To actually verify it against live data:
    `FOOTBALL_DATA_API_KEY` is empty while `FOOTBALL_DATA_PROVIDER=api-football`,
    rather than silently falling back to fabricated data.
 4. Run the verification chain below against a real Supabase project (get
-   `$ADMIN_JWT` per "Creating the first admin user"):
+   `$ADMIN_JWT` per "User access control" above):
    ```bash
    curl -s http://localhost:8080/api/health/api-football   # expect status: "UNKNOWN" before the first request
    curl -X POST "http://localhost:8080/api/admin/sync?days=1" -H "Authorization: Bearer $ADMIN_JWT"

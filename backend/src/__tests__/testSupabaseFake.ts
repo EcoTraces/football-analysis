@@ -16,11 +16,17 @@ export class FakeSupabase {
   private nextId = 1;
   private insertFailures = new Map<string, number>();
   private upsertFailures = new Map<string, number>();
-  private authTokens = new Map<string, { id: string }>();
+  private authTokens = new Map<string, { id: string; email?: string }>();
+  private authAdminUsers: Array<{ id: string; email: string; created_at: string }> = [];
 
   /** Registers `token` as a valid session for the given user id, for auth.getUser(token). */
-  setAuthUser(token: string, userId: string): void {
-    this.authTokens.set(token, { id: userId });
+  setAuthUser(token: string, userId: string, email?: string): void {
+    this.authTokens.set(token, { id: userId, email });
+  }
+
+  /** Seeds the list returned by auth.admin.listUsers() (the "real" auth.users table). */
+  seedAuthUsers(users: Array<{ id: string; email: string; created_at?: string }>): void {
+    this.authAdminUsers = users.map((u) => ({ created_at: new Date().toISOString(), ...u }));
   }
 
   auth = {
@@ -28,6 +34,11 @@ export class FakeSupabase {
       const user = this.authTokens.get(token);
       if (!user) return { data: { user: null }, error: { message: "invalid token" } };
       return { data: { user }, error: null };
+    },
+    admin: {
+      listUsers: async (_opts?: { page?: number; perPage?: number }) => {
+        return { data: { users: this.authAdminUsers }, error: null };
+      }
     }
   };
 
