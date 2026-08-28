@@ -13,7 +13,8 @@ describe("NullProvider", () => {
       provider.getLineup("1"),
       provider.getStandings("1", "2026"),
       provider.getOdds("1"),
-      provider.getFixtureStatistics("1")
+      provider.getFixtureStatistics("1"),
+      provider.getPlayerStatistics("1", "39", "2026")
     ]);
 
     for (const result of results) {

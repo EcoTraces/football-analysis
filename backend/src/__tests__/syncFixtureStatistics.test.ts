@@ -50,6 +50,9 @@ class FakeProvider implements FootballDataProvider {
   async getOdds() {
     return { ok: false as const, reason: "not_configured" as const, message: "unused", provider: this.name };
   }
+  async getPlayerStatistics() {
+    return { ok: false as const, reason: "not_configured" as const, message: "unused", provider: this.name };
+  }
 }
 
 function fakeClient(fake: FakeSupabase): SupabaseClient {

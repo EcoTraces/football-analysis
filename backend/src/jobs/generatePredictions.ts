@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
+import type { PlayerCandidateInput } from "../services/predictionClient.js";
 
 const LEAGUE_AVG_HOME_GOALS = 1.5; // conservative cross-league default; see ML_Model.md
 const LEAGUE_AVG_AWAY_GOALS = 1.1;
@@ -24,6 +25,33 @@ async function loadOverallStats(supabase: SupabaseClient, teamId: string, season
     .maybeSingle<TeamStatsRow>();
   if (error) throw new Error(`Failed to load team_statistics: ${error.message}`);
   return data;
+}
+
+interface PlayerStatsRow {
+  player_name: string;
+  goals_scored: number | null;
+  matches_played: number;
+}
+
+// undefined (not []) when nothing has ever been synced for this team's
+// season — the ml-service treats that as "don't build this side's
+// anytime-goalscorer market at all" rather than "built it, nobody
+// qualified" (see PoissonPredictionRequest's comment in predictionClient.ts).
+async function loadPlayerCandidates(
+  supabase: SupabaseClient,
+  teamId: string,
+  seasonId: string
+): Promise<PlayerCandidateInput[] | undefined> {
+  const { data, error } = await supabase
+    .from("player_statistics")
+    .select("player_name, goals_scored, matches_played")
+    .eq("team_id", teamId)
+    .eq("season_id", seasonId);
+  if (error) throw new Error(`Failed to load player_statistics: ${error.message}`);
+
+  const rows = (data ?? []) as PlayerStatsRow[];
+  if (rows.length === 0) return undefined;
+  return rows.map((r) => ({ name: r.player_name, goalsScored: r.goals_scored ?? 0, matchesPlayed: r.matches_played }));
 }
 
 // undefined (not sent), not 0, when this specific team's cards/corners
@@ -62,9 +90,11 @@ export async function generatePredictionsForUpcomingFixtures(
 
   for (const fixture of fixtures ?? []) {
     try {
-      const [homeStats, awayStats] = await Promise.all([
+      const [homeStats, awayStats, homePlayers, awayPlayers] = await Promise.all([
         loadOverallStats(supabase, fixture.home_team_id as string, fixture.season_id as string),
-        loadOverallStats(supabase, fixture.away_team_id as string, fixture.season_id as string)
+        loadOverallStats(supabase, fixture.away_team_id as string, fixture.season_id as string),
+        loadPlayerCandidates(supabase, fixture.home_team_id as string, fixture.season_id as string),
+        loadPlayerCandidates(supabase, fixture.away_team_id as string, fixture.season_id as string)
       ]);
 
       if (
@@ -93,7 +123,9 @@ export async function generatePredictionsForUpcomingFixtures(
         homeTeamAvgYellowCards: avgOrUndefined(homeStats.yellow_cards, homeStats.matches_played),
         awayTeamAvgYellowCards: avgOrUndefined(awayStats.yellow_cards, awayStats.matches_played),
         homeTeamAvgCorners: avgOrUndefined(homeStats.corners, homeStats.matches_played),
-        awayTeamAvgCorners: avgOrUndefined(awayStats.corners, awayStats.matches_played)
+        awayTeamAvgCorners: avgOrUndefined(awayStats.corners, awayStats.matches_played),
+        homeTeamPlayers: homePlayers,
+        awayTeamPlayers: awayPlayers
       });
 
       if (!result) {

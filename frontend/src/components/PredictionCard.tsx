@@ -11,8 +11,16 @@ const MARKET_LABELS: Record<string, string> = {
   total_corners: "Total corners (O/U 9.5)",
   first_half_result: "First-half result",
   second_half_result: "Second-half result",
-  half_with_most_goals: "Half with most goals"
+  half_with_most_goals: "Half with most goals",
+  home_anytime_goalscorer: "Anytime goalscorer — home team",
+  away_anytime_goalscorer: "Anytime goalscorer — away team"
 };
+
+// These two markets' selections are player names (free text from
+// player_statistics.player_name), not an enum — CSS capitalize would
+// mangle a real name like "de Bruyne" into "De Bruyne", so they're
+// rendered as-is rather than through the enum-label styling below.
+const FREE_TEXT_SELECTION_MARKETS = new Set(["home_anytime_goalscorer", "away_anytime_goalscorer"]);
 
 // Selections not listed here (home/draw/away/yes/no/over/under, and
 // correct_score's own "2-1"-style scorelines) fall back to the raw
@@ -64,7 +72,7 @@ export function PredictionCard({ predictions, market }: { predictions: Predictio
       <ul className="space-y-2">
         {rows.map((row) => (
           <li key={row.selection} className="flex items-center justify-between text-sm">
-            <span className={SELECTION_LABELS[row.selection] ? undefined : "capitalize"}>
+            <span className={SELECTION_LABELS[row.selection] || FREE_TEXT_SELECTION_MARKETS.has(market) ? undefined : "capitalize"}>
               {SELECTION_LABELS[row.selection] ?? row.selection}
             </span>
             <span className="font-mono">{`${(row.probability * 100).toFixed(0)}%`}</span>

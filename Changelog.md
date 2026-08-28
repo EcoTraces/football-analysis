@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-08-28 — Anytime goalscorer markets
+
+Closes out the market wishlist from the last three entries — this is the
+last one, and by far the biggest: it needed a whole new data pipeline this
+schema never had at all (no goals-per-player anywhere), and the market
+itself is a genuinely different shape from every other one built so far.
+
+- **New data pipeline.** `player_statistics` table (migration 0006 —
+  `player_id, team_id, season_id`, a denormalized `player_name` to avoid
+  needing a relational-embed `select` the shared `FakeSupabase` test double
+  can't do, `matches_played`, `goals_scored`, `minutes_played`).
+  `PlayerStatsProvider`/`ApiFootballProvider.getPlayerStatistics`
+  (api-football's `/players` endpoint, team/competition/season-scoped —
+  **single page only**, documented, not fixed, since the market only ever
+  surfaces a team's top 6 scorers anyway). `mapPlayerStatistics` picks the
+  stint matching the requested competition when a player has multiple
+  (e.g. league + cup for the same team). `syncPlayerStatistics.ts` mirrors
+  `syncTeamStatistics.ts`'s combination-dedup shape exactly, reusing
+  `upsertPlayer` from the lineups job. Wired into
+  `POST /admin/player-statistics/sync` and the scheduler (daily, right
+  after team-statistics). `GET /health/data` gained a `playerStatistics`
+  freshness domain.
+- **The model** (`ml-service/app/models/player_market.py`) is not a
+  derivation of anything else in this service:
+  - Selections are **not mutually exclusive** — "will player X score" and
+    "will player Y score" are independent events, so a market's rows don't
+    sum to 1 the way every other market's does. Tests deliberately don't
+    assert that they do.
+  - **Not lineup-gated**, stated as a real, deliberate simplification: it
+    ranks a team's own historical top scorers (`top_scorers()`: ≥3
+    appearances, ≥1 goal, top 6 by season goals) and assumes each is as
+    likely to play as their record suggests, rather than checking who's
+    actually selected for the specific fixture. This platform already has
+    `lineups` data close to kickoff, so a more accurate version is
+    possible — not built here, since gating on confirmed lineups would
+    mean the market doesn't exist until shortly before kickoff, unlike
+    every other prediction (available days out). See `ML_Model.md`.
+  - The probability itself: a player's own share of their team's season
+    goals scales the team's match-level expected-goals rate down to a
+    player-level Poisson rate (`P(scores) = 1 - e^-lambda`).
+  - Two separate markets, `home_anytime_goalscorer`/`away_anytime_goalscorer`
+    — `predictions` has no team-side column, and mixing both squads' names
+    into one flat list would be ambiguous about whose player is whose.
+  - Per-side optional gating (unlike cards/corners' per-pair gating):
+    `generatePredictions.ts` sends `undefined`, not `[]`, when nothing's
+    been synced for that team's season yet.
+- Backend/DB needed no new schema for the predictions themselves (same
+  free-text `market`/`selection` columns as every other market) — all new
+  schema surface is for the underlying player data.
+- Frontend: two more `PredictionCard`s. Player names render as-is rather
+  than through the usual CSS-capitalize styling — capitalize would mangle
+  a real name like "de Bruyne" into "De Bruyne".
+- Test counts: backend 179/179 (was 166), ml-service 39/39 (was 28),
+  frontend 26/26 (was 24). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Not calibrated, backtested, or verified against a live API-Football
+  key** — more open assumptions here than any other market built this
+  session: the historical-share-based probability model itself, the
+  not-lineup-gated simplification, the single-page `/players` pagination
+  gap, and the usual unverified-vendor-response-shape caveat that applies
+  to every mapping in this project.
+
 ## 2026-08-28 — First-half/second-half result and half-with-most-goals markets
 
 Third round of market build-out. Unlike cards/corners, these don't need any

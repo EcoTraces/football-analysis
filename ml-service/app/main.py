@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
 from app.models.half_markets import build_half_matrices, half_result_probabilities, half_with_most_goals_probabilities
+from app.models.player_market import anytime_scorer_probability, top_scorers
+from app.models.player_market import PlayerCandidate as ScorerCandidate
 from app.models.poisson import (
     TeamStrength,
     data_quality_for,
@@ -11,10 +13,42 @@ from app.models.poisson import (
     score_matrix,
     top_correct_scores,
 )
-from app.schemas import Factor, MarketProbability, PoissonPredictionRequest, PoissonPredictionResponse
+from app.schemas import Factor, MarketProbability, PlayerCandidateInput, PoissonPredictionRequest, PoissonPredictionResponse
 
 MODEL_NAME = "poisson-baseline"
 MODEL_VERSION = "0.1.0"
+
+
+def _anytime_goalscorer_predictions(
+    market: str,
+    players_input: list[PlayerCandidateInput] | None,
+    team_lambda: float,
+    team_matches_played: int,
+    team_goals_scored_avg: float,
+) -> list[MarketProbability]:
+    """Builds the anytime-goalscorer selections for one team/side. Returns []
+    when there's nothing to build from — no players sent, or a team with no
+    recorded goals yet — rather than raising, since this is one optional
+    piece of a response that otherwise still has plenty to return.
+
+    Selections here are independent probabilities, not mutually exclusive —
+    see player_market.py's module docstring. No `factors` either: a list of
+    up to 6 largely-unrelated per-player numbers isn't well served by the
+    2-3 bullet explanations used elsewhere.
+    """
+    if players_input is None:
+        return []
+
+    team_total_goals = team_goals_scored_avg * team_matches_played
+    if team_total_goals <= 0:
+        return []
+
+    candidates = [ScorerCandidate(name=p.name, goals_scored=p.goals_scored, matches_played=p.matches_played) for p in players_input]
+    predictions = []
+    for candidate in top_scorers(candidates):
+        probability = anytime_scorer_probability(team_lambda, team_total_goals, candidate.goals_scored)
+        predictions.append(MarketProbability(market=market, selection=candidate.name, probability=probability, factors=[]))
+    return predictions
 
 # Fixed lines, not fitted or configurable — same simplification as goals'
 # over_under_2_5. 3.5 total cards and 9.5 total corners are commonly offered
@@ -181,6 +215,30 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
                 market="half_with_most_goals", selection="equal", probability=most_goals_probs["equal"], factors=[]
             ),
         ]
+    )
+
+    # Anytime goalscorer: independent, non-mutually-exclusive selections —
+    # see player_market.py's module docstring and _anytime_goalscorer_predictions'.
+    # Two separate markets (not one shared one) since predictions has no
+    # team-side column and mixing both squads' names into one flat list
+    # would be ambiguous about which team a name belongs to.
+    predictions.extend(
+        _anytime_goalscorer_predictions(
+            "home_anytime_goalscorer",
+            payload.home_team_players,
+            lambda_home,
+            payload.home_team.matches_played,
+            payload.home_team.goals_scored_avg,
+        )
+    )
+    predictions.extend(
+        _anytime_goalscorer_predictions(
+            "away_anytime_goalscorer",
+            payload.away_team_players,
+            lambda_away,
+            payload.away_team.matches_played,
+            payload.away_team.goals_scored_avg,
+        )
     )
 
     return PoissonPredictionResponse(

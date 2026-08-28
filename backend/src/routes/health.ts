@@ -33,6 +33,7 @@ export const FRESHNESS_CHECKS: FreshnessCheck[] = [
   { domain: "fixtures", table: "fixtures", column: "source_timestamp", filterSynthetic: true },
   { domain: "standings", table: "standings", column: "source_timestamp", filterSynthetic: true },
   { domain: "teamStatistics", table: "team_statistics", column: "source_timestamp", filterSynthetic: true },
+  { domain: "playerStatistics", table: "player_statistics", column: "source_timestamp", filterSynthetic: true },
   { domain: "injuries", table: "injuries", column: "source_timestamp", filterSynthetic: true },
   { domain: "lineups", table: "lineups", column: "source_timestamp", filterSynthetic: true },
   { domain: "odds", table: "odds_snapshots", column: "captured_at", filterSynthetic: true },

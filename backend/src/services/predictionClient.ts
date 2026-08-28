@@ -4,6 +4,12 @@ export interface TeamStrengthInput {
   goalsConcededAvg: number;
 }
 
+export interface PlayerCandidateInput {
+  name: string;
+  goalsScored: number;
+  matchesPlayed: number;
+}
+
 export interface PoissonPredictionRequest {
   homeTeam: TeamStrengthInput;
   awayTeam: TeamStrengthInput;
@@ -16,6 +22,11 @@ export interface PoissonPredictionRequest {
   awayTeamAvgYellowCards?: number;
   homeTeamAvgCorners?: number;
   awayTeamAvgCorners?: number;
+  // Optional, per side independently (unlike the cards/corners pairs above)
+  // — the ml-service only builds a side's anytime-goalscorer market when
+  // its own list is present, regardless of what the other side sent.
+  homeTeamPlayers?: PlayerCandidateInput[];
+  awayTeamPlayers?: PlayerCandidateInput[];
 }
 
 export interface MarketProbability {

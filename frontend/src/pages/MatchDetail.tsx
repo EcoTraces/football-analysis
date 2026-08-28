@@ -77,6 +77,11 @@ export function MatchDetail() {
           <PredictionCard predictions={match.predictions} market="first_half_result" />
           <PredictionCard predictions={match.predictions} market="second_half_result" />
           <PredictionCard predictions={match.predictions} market="half_with_most_goals" />
+          {/* Independent per-player probabilities, not mutually exclusive —
+              see player_market.py. Only appear once player_statistics has
+              been synced for that team's season. */}
+          <PredictionCard predictions={match.predictions} market="home_anytime_goalscorer" />
+          <PredictionCard predictions={match.predictions} market="away_anytime_goalscorer" />
         </div>
       )}
     </div>

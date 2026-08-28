@@ -38,4 +38,10 @@ describe("classifyFreshness", () => {
     expect(classifyFreshness(ts, "fixtureStatistics", now)).toBe("LIVE");
     expect(classifyFreshness(ts, "fixtureStatistics", now)).toBe(classifyFreshness(ts, "teamStatistics", now));
   });
+
+  it("uses the same once-daily-cadence policy for playerStatistics as teamStatistics", () => {
+    const ts = new Date(now.getTime() - 3 * 60 * 60_000).toISOString();
+    expect(classifyFreshness(ts, "playerStatistics", now)).toBe("LIVE");
+    expect(classifyFreshness(ts, "playerStatistics", now)).toBe(classifyFreshness(ts, "teamStatistics", now));
+  });
 });

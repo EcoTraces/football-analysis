@@ -49,6 +49,17 @@ export interface ProviderTeamStatistics {
   redCards: number | null;
 }
 
+// Per-player season stats, scoped to one team (a player who transferred
+// mid-season has a separate stint/response entry per team — see
+// getPlayerStatistics's comment in ApiFootballProvider.ts).
+export interface ProviderPlayerStatistics {
+  playerExternalId: string;
+  playerName: string;
+  matchesPlayed: number;
+  goalsScored: number | null;
+  minutesPlayed: number | null;
+}
+
 export interface ProviderInjury {
   playerExternalId: string;
   playerName: string;
@@ -185,6 +196,17 @@ export interface FixtureStatisticsProvider {
   getFixtureStatistics(fixtureExternalId: string): Promise<ProviderResponse<ProviderFixtureStatistics[]>>;
 }
 
+export interface PlayerStatsProvider {
+  // Team/season-scoped like TeamStatsProvider, not per-fixture — see
+  // getPlayerStatistics's comment in ApiFootballProvider.ts for the
+  // single-page-only limitation this method has.
+  getPlayerStatistics(
+    teamExternalId: string,
+    competitionExternalId: string,
+    seasonExternalId: string
+  ): Promise<ProviderResponse<ProviderPlayerStatistics[]>>;
+}
+
 export interface FootballDataProvider
   extends FixtureProvider,
     ResultsProvider,
@@ -193,6 +215,7 @@ export interface FootballDataProvider
     LineupProvider,
     StandingsProvider,
     OddsProvider,
-    FixtureStatisticsProvider {
+    FixtureStatisticsProvider,
+    PlayerStatsProvider {
   readonly name: string;
 }

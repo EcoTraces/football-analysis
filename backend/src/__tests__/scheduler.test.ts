@@ -14,6 +14,7 @@ import {
   guarded,
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
+  PLAYER_STATISTICS_SYNC_CRON,
   INJURIES_SYNC_CRON,
   STANDINGS_SYNC_CRON,
   LINEUPS_SYNC_CRON,
@@ -36,6 +37,7 @@ class StubProvider implements FootballDataProvider {
   getStandings: FootballDataProvider["getStandings"] = () => notConfigured(this.name);
   getOdds: FootballDataProvider["getOdds"] = () => notConfigured(this.name);
   getFixtureStatistics: FootballDataProvider["getFixtureStatistics"] = () => notConfigured(this.name);
+  getPlayerStatistics: FootballDataProvider["getPlayerStatistics"] = () => notConfigured(this.name);
 }
 
 function fakeLogger(): Logger {
@@ -51,6 +53,7 @@ describe("scheduler", () => {
     for (const expr of [
       FIXTURES_SYNC_CRON,
       TEAM_STATISTICS_SYNC_CRON,
+      PLAYER_STATISTICS_SYNC_CRON,
       INJURIES_SYNC_CRON,
       STANDINGS_SYNC_CRON,
       LINEUPS_SYNC_CRON,
@@ -62,7 +65,7 @@ describe("scheduler", () => {
     }
   });
 
-  it("schedules all seven sync jobs plus predictions when a real provider is configured", () => {
+  it("schedules all eight sync jobs plus predictions when a real provider is configured", () => {
     const logger = fakeLogger();
     const scheduler = startScheduler({
       supabase: fakeClient(new FakeSupabase()),
@@ -75,6 +78,7 @@ describe("scheduler", () => {
       [
         "sync_fixtures",
         "sync_team_statistics",
+        "sync_player_statistics",
         "sync_injuries",
         "sync_standings",
         "sync_lineups",

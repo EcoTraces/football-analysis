@@ -116,6 +116,56 @@ own pair of per-half score matrices, built from scaled-down lambdas.
   `score.halftime` field), so there's now a real data source to eventually
   check these predictions against, but that check hasn't been done.
 
+## Anytime goalscorer: `home_anytime_goalscorer`, `away_anytime_goalscorer`
+
+Location: `ml-service/app/models/player_market.py`. The biggest departure
+from every other market in this file — both in what it needs (per-player
+data, which required a brand-new ingestion pipeline — `player_statistics`,
+`syncPlayerStatistics.ts`, see `Data_Sources.md`) and in its output shape.
+
+- **Not mutually exclusive.** Every other market's selections partition one
+  probability distribution and sum to 1 (home/draw/away, over/under, ...).
+  This one doesn't: "will player X score" and "will player Y score" are
+  independent events (both, either, or neither can happen), so
+  `home_anytime_goalscorer`'s rows are NOT constrained to sum to 1 — and
+  the tests deliberately don't assert that they do. Two separate markets
+  (home/away), not one shared one, since `predictions` has no team-side
+  column and mixing both squads' names into one flat list would be
+  ambiguous about which team a name belongs to.
+- **Not lineup-gated — stated plainly as a real simplification.** This does
+  NOT check whether a player is actually selected, fit, or even still at
+  the club for the specific fixture being predicted. It ranks a team's own
+  historical top scorers (`top_scorers()`: at least `MIN_APPEARANCES = 3`
+  appearances, at least one goal, capped at `MAX_CANDIDATES = 6`, sorted by
+  season goals) and assumes each is as likely to play and score as their
+  season record suggests. This platform already has `lineups` data
+  (refreshed close to kickoff), so a more accurate lineup-gated version is
+  possible — deliberately not built here, since gating on confirmed
+  lineups would mean this market simply doesn't exist until shortly before
+  kickoff, unlike every other market (available as soon as a fixture gets
+  any prediction at all, days out). See `Task.md` for the tradeoff.
+- **The probability itself** (`anytime_scorer_probability()`) is an
+  independent-Poisson approximation: a player's own historical share of
+  their team's total goals (`player_goals / team_total_goals`, both season
+  totals) scales the team's match-level `lambda_home`/`lambda_away` down to
+  a player-level rate, and `P(scores >= 1) = 1 - e^-lambda`.
+  `team_total_goals` is derived from the same `goals_scored_avg *
+  matches_played` already in the request — no new field needed for it.
+- **No `factors`.** A list of up to 6 largely-unrelated per-player numbers
+  isn't well served by the 2-3 bullet explanations used elsewhere.
+- **Per-side optional data, independently.** `/predict/poisson` only builds
+  a side's market when that side's player list is present in the request
+  (`homeTeamPlayers`/`awayTeamPlayers`) — the backend sends `undefined`,
+  not `[]`, when nothing has ever been synced for that team's season
+  (`generatePredictions.ts::loadPlayerCandidates`), same "no data, no
+  market" policy as cards/corners, just per-side instead of per-pair.
+- **`/players`' pagination isn't fully handled.** api-football's endpoint
+  returns 20 players/page; `ApiFootballProvider.getPlayerStatistics` only
+  requests the first page. A fringe player past the 20th slot being missed
+  is very unlikely to matter, since only the top 6 scorers are ever
+  surfaced anyway — but it's a real, documented gap, not an oversight to
+  discover later.
+
 ### Known limitations (be honest about these)
 
 - **`RHO` is not fitted.** -0.1 is a commonly cited starting value in the

@@ -84,7 +84,8 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   a window around kickoff (±24h by default), like lineups, and only stores
   `1x2`/`btts`/`over_under_2_5` — other markets and lines a bookmaker offers
   are read but not stored, including `double_chance`, `correct_score`,
-  `total_cards`, and `total_corners`, which the prediction engine produces
+  `total_cards`, `total_corners`, the half-based markets, and the
+  anytime-goalscorer markets, all of which the prediction engine produces
   (see `ML_Model.md`) but odds ingestion doesn't cover yet — no bookmaker
   price to compare any of those against. It's deliberately **not
   idempotent**: `odds_snapshots` is
@@ -199,7 +200,7 @@ Or `docker compose up` from the repo root once `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` are set in your environment.
 
 Instead of running the curl chain above by hand each time, set
-`SCHEDULER_ENABLED=true` in `backend/.env` to run all seven sync jobs plus
+`SCHEDULER_ENABLED=true` in `backend/.env` to run all eight sync jobs plus
 predictions automatically on a cron schedule (`backend/src/scheduler/scheduler.ts`)
 — see that file for the exact cadence, and the caveats above and in
 `Task.md` before relying on it.

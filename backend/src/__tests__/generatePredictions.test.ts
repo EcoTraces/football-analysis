@@ -58,6 +58,11 @@ describe("generatePredictionsForUpcomingFixtures", () => {
         corners: 48
       }
     ]);
+    fake.seed("player_statistics", [
+      { id: "ps-1", team_id: "team-home", season_id: "season-1", player_name: "Home Striker", goals_scored: 12, matches_played: 10 },
+      { id: "ps-2", team_id: "team-home", season_id: "season-1", player_name: "Home Winger", goals_scored: 3, matches_played: 9 }
+      // team-away has no player_statistics rows at all
+    ]);
 
     const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
     const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
@@ -72,6 +77,12 @@ describe("generatePredictionsForUpcomingFixtures", () => {
     expect(payload.homeTeamAvgCorners).toBe(5.5); // 55 / 10
     expect(payload.awayTeamAvgYellowCards).toBeUndefined(); // null in the row — never sent as 0
     expect(payload.awayTeamAvgCorners).toBeCloseTo(4.8); // 48 / 10
+
+    expect(payload.homeTeamPlayers).toEqual([
+      { name: "Home Striker", goalsScored: 12, matchesPlayed: 10 },
+      { name: "Home Winger", goalsScored: 3, matchesPlayed: 9 }
+    ]);
+    expect(payload.awayTeamPlayers).toBeUndefined(); // no player_statistics rows synced for this team yet
 
     const predictions = fake.rows("predictions");
     expect(predictions).toHaveLength(1);

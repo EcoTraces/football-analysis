@@ -63,6 +63,58 @@ def test_predict_poisson_returns_all_markets():
         assert len(market_predictions) == 3
         assert sum(p["probability"] for p in market_predictions) == pytest.approx(1.0, abs=1e-6)
 
+    # No player lists were sent — no fabricated anytime-goalscorer market either.
+    assert not any(m == "home_anytime_goalscorer" for m, _ in markets)
+    assert not any(m == "away_anytime_goalscorer" for m, _ in markets)
+
+
+def test_predict_poisson_includes_anytime_goalscorer_only_for_sides_with_players_sent():
+    payload = {
+        "homeTeam": {"matchesPlayed": 15, "goalsScoredAvg": 1.8, "goalsConcededAvg": 0.9},
+        "awayTeam": {"matchesPlayed": 15, "goalsScoredAvg": 1.2, "goalsConcededAvg": 1.3},
+        "leagueAvgHomeGoals": 1.5,
+        "leagueAvgAwayGoals": 1.1,
+        "homeTeamPlayers": [
+            {"name": "Home Striker", "goalsScored": 12, "matchesPlayed": 15},
+            {"name": "Home Winger", "goalsScored": 5, "matchesPlayed": 14},
+            {"name": "Home Bench", "goalsScored": 1, "matchesPlayed": 2},  # below MIN_APPEARANCES
+        ],
+        # awayTeamPlayers deliberately omitted
+    }
+    res = client.post("/predict/poisson", json=payload)
+    assert res.status_code == 200
+
+    body = res.json()
+    home_scorer_predictions = [p for p in body["predictions"] if p["market"] == "home_anytime_goalscorer"]
+    away_scorer_predictions = [p for p in body["predictions"] if p["market"] == "away_anytime_goalscorer"]
+
+    names = {p["selection"] for p in home_scorer_predictions}
+    assert "Home Striker" in names
+    assert "Home Winger" in names
+    assert "Home Bench" not in names  # too few appearances
+
+    for p in home_scorer_predictions:
+        assert 0.0 < p["probability"] < 1.0
+        assert p["factors"] == []
+
+    # These are independent probabilities, not mutually exclusive selections
+    # — deliberately NOT asserting they sum to 1 (see player_market.py).
+    assert away_scorer_predictions == []  # no away players sent at all
+
+
+def test_predict_poisson_omits_anytime_goalscorer_for_a_team_with_no_recorded_goals():
+    payload = {
+        "homeTeam": {"matchesPlayed": 15, "goalsScoredAvg": 1.8, "goalsConcededAvg": 0.9},
+        "awayTeam": {"matchesPlayed": 0, "goalsScoredAvg": 0, "goalsConcededAvg": 0},
+        "leagueAvgHomeGoals": 1.5,
+        "leagueAvgAwayGoals": 1.1,
+        "awayTeamPlayers": [{"name": "New Signing", "goalsScored": 0, "matchesPlayed": 0}],
+    }
+    res = client.post("/predict/poisson", json=payload)
+    assert res.status_code == 200
+    markets = {p["market"] for p in res.json()["predictions"]}
+    assert "away_anytime_goalscorer" not in markets
+
 
 def test_predict_poisson_includes_cards_and_corners_only_when_both_teams_averages_are_sent():
     base_payload = {

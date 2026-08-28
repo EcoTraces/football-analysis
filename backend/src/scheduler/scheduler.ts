@@ -10,6 +10,7 @@ import { syncStandings } from "../jobs/syncStandings.js";
 import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
 import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
+import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 
 export interface SchedulerDeps {
@@ -31,6 +32,7 @@ export interface SchedulerDeps {
 // per-job cron tuning; add that later if a real operational need shows up.
 export const FIXTURES_SYNC_CRON = "0 2 * * *";
 export const TEAM_STATISTICS_SYNC_CRON = "30 2 * * *";
+export const PLAYER_STATISTICS_SYNC_CRON = "35 2 * * *"; // Same team/season-scoped shape as team-statistics — grouped right after it.
 export const INJURIES_SYNC_CRON = "45 2 * * *";
 export const STANDINGS_SYNC_CRON = "0 3 * * *";
 export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions — a finished match's corners don't change once posted, so once a day is enough (unlike lineups/odds, nothing about it needs to be "closer to kickoff").
@@ -65,6 +67,11 @@ export async function runFixturesSync(deps: SchedulerDeps): Promise<void> {
 export async function runTeamStatisticsSync(deps: SchedulerDeps): Promise<void> {
   const result = await syncTeamStatistics(deps.supabase, deps.provider, deps.logger);
   deps.logger.info({ job: "sync_team_statistics", result }, "Scheduled sync finished");
+}
+
+export async function runPlayerStatisticsSync(deps: SchedulerDeps): Promise<void> {
+  const result = await syncPlayerStatistics(deps.supabase, deps.provider, deps.logger);
+  deps.logger.info({ job: "sync_player_statistics", result }, "Scheduled sync finished");
 }
 
 export async function runInjuriesSync(deps: SchedulerDeps): Promise<void> {
@@ -146,6 +153,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   if (isProviderConfigured(deps.provider)) {
     add("sync_fixtures", FIXTURES_SYNC_CRON, () => runFixturesSync(deps));
     add("sync_team_statistics", TEAM_STATISTICS_SYNC_CRON, () => runTeamStatisticsSync(deps));
+    add("sync_player_statistics", PLAYER_STATISTICS_SYNC_CRON, () => runPlayerStatisticsSync(deps));
     add("sync_injuries", INJURIES_SYNC_CRON, () => runInjuriesSync(deps));
     add("sync_standings", STANDINGS_SYNC_CRON, () => runStandingsSync(deps));
     add("sync_lineups", LINEUPS_SYNC_CRON, () => runLineupsSync(deps));
@@ -157,8 +165,8 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     // no-op every tick) and say why, once, at startup.
     deps.logger.warn(
       "Scheduler starting with no football data provider configured (FOOTBALL_DATA_PROVIDER=null) — " +
-        "fixture/team-statistics/injuries/standings/lineups/odds/fixture-statistics sync jobs will NOT be " +
-        "scheduled. The predictions job still runs; it reads from the database, not the provider."
+        "fixture/team-statistics/player-statistics/injuries/standings/lineups/odds/fixture-statistics sync " +
+        "jobs will NOT be scheduled. The predictions job still runs; it reads from the database, not the provider."
     );
   }
 

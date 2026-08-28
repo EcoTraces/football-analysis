@@ -328,6 +328,37 @@
   existing full-time score. 2 new tests. **Not yet verified against a live
   API-Football key** — the exact shape of `score.halftime` in a real
   response is unconfirmed, same caveat as every mapping in this file.
+- [x] Player-level statistics ingestion, for the anytime-goalscorer markets
+  (see "Model" below) — the biggest single build this session, since
+  nothing in this schema tracked goals-per-player before it (`players` only
+  ever had name/position/team). New: `player_statistics` table (0006,
+  `player_id, team_id, season_id, player_name` (denormalized — see the
+  migration's comment on why), `matches_played`, `goals_scored`,
+  `minutes_played`); `PlayerStatsProvider`/`getPlayerStatistics`
+  (api-football's `/players` endpoint, team/competition/season-scoped like
+  `getTeamStatistics` — **single page only**, a documented limitation, not
+  a bug, since the anytime-goalscorer market only ever surfaces a team's
+  top 6 scorers anyway); `ApiFootballProvider.ts::mapPlayerStatistics`
+  picks the stint matching the requested competition when a player has
+  multiple (e.g. league + cup); `syncPlayerStatistics.ts` (mirrors
+  `syncTeamStatistics.ts`'s combination-dedup shape exactly, reuses
+  `upsertPlayer` from `syncLineups.ts`), wired into
+  `POST /admin/player-statistics/sync` and the scheduler (daily, right
+  after team-statistics). `GET /health/data` gained a `playerStatistics`
+  freshness domain (same cadence as `teamStatistics`).
+  New tests: `syncPlayerStatistics.test.ts` (7), 4 new
+  `apiFootballProvider.test.ts` tests for the competition-stint-matching
+  logic, plus 1 each for the new `playerStatistics` freshness domain in
+  `freshness.test.ts`/`health.test.ts`. 179 backend tests total (was 166).
+  **Not yet verified against a live API-Football key** — same caveat as
+  every provider mapping in this file; in particular the exact shape of a
+  multi-stint `/players` response (same team, two competitions) is
+  unconfirmed.
+- [ ] `upsertPlayer` (`referenceDataService.ts`) doesn't update an existing
+  player's `players.team_id` on a repeat call — a transferred player's row
+  can go stale. `player_statistics` itself is correctly keyed by
+  `player_id, team_id, season_id` so a transfer gets its own row there;
+  only direct reads of `players.team_id` are affected. See `Database.md`.
 
 ## Model
 
@@ -395,18 +426,24 @@
   calibrated or backtested against anything** — see `ML_Model.md`'s
   caveat, and the `fixtures.home_score_ht`/`away_score_ht` item above for
   the data source that would eventually let that check happen.
-- [ ] "Player to score" (anytime goalscorer) market — the last unbuilt item
-  from the original market wishlist (double chance/correct score/cards/
-  corners/half-based markets above are all done). Substantially bigger than
-  any of those: there is currently **no player-level scoring data anywhere**
-  in this schema — `players` only has name/position/team, no goals-per-
-  player table. Needs, at minimum: a new provider method for per-player
-  season stats (api-football's `/players` endpoint), a new
-  `player_statistics`-style table and sync job, a way to know who's actually
-  starting (this platform already has `lineups`, so that part exists), and
-  a model for splitting a team's expected goals among its likely scorers by
-  their individual scoring share — a different shape of problem than any
-  market built so far, not a quick extension of one.
+- [x] "Player to score" (`home_anytime_goalscorer`/`away_anytime_goalscorer`)
+  markets — the last item from the original market wishlist, and the
+  biggest: it needed the whole `player_statistics` ingestion pipeline (see
+  "Data" above) that didn't exist at all before this. The model itself
+  (`ml-service/app/models/player_market.py`) is a genuinely different shape
+  from every other market: independent per-player probabilities that are
+  **not** mutually exclusive (don't sum to 1), and **not lineup-gated** — a
+  stated, deliberate simplification (ranks a team's own top season
+  scorers, doesn't check who's actually selected for this specific
+  fixture; see `ML_Model.md` for the reasoning and the lineup-gated
+  version this could become). 11 new ml-service tests (39/39 total —
+  9 in `test_player_market.py`, 2 new `test_api.py` tests), extended
+  `generatePredictions.test.ts`'s existing case rather than adding a new
+  one (part of the 179/179 count above), 2 new frontend tests (26/26
+  total, was 24). **Not calibrated, backtested, or verified against a
+  live API-Football key** — see `ML_Model.md`'s caveats, plural, for this
+  one; there are more open assumptions here than any other market built
+  this session.
 - [ ] Backtesting pipeline: load historical results, walk-forward
   train/validation/test split, write to `model_evaluations`.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare

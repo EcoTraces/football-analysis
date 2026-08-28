@@ -75,6 +75,18 @@ describe("checkFreshness", () => {
     const result = await checkFreshness(fakeClient(fake), fixtureStatisticsCheck);
     expect(result.status).toBe("LIVE");
   });
+
+  it("playerStatistics check reads the player_statistics table, filtered by is_synthetic", async () => {
+    const playerStatisticsCheck = FRESHNESS_CHECKS.find((c) => c.domain === "playerStatistics")!;
+    expect(playerStatisticsCheck.table).toBe("player_statistics");
+    expect(playerStatisticsCheck.filterSynthetic).toBe(true);
+
+    const fake = new FakeSupabase();
+    fake.seed("player_statistics", [{ id: "ps-1", is_synthetic: false, source_timestamp: new Date().toISOString() }]);
+
+    const result = await checkFreshness(fakeClient(fake), playerStatisticsCheck);
+    expect(result.status).toBe("LIVE");
+  });
 });
 
 describe("apiFootballHealthStatus", () => {

@@ -110,6 +110,7 @@ export interface SyncAction {
 export const SYNC_ACTIONS: SyncAction[] = [
   { key: "sync_fixtures", label: "Fixtures", path: "/admin/sync" },
   { key: "sync_team_statistics", label: "Team statistics", path: "/admin/team-statistics/sync" },
+  { key: "sync_player_statistics", label: "Player statistics", path: "/admin/player-statistics/sync" },
   { key: "sync_injuries", label: "Injuries", path: "/admin/injuries/sync" },
   { key: "sync_standings", label: "Standings", path: "/admin/standings/sync" },
   { key: "sync_lineups", label: "Lineups", path: "/admin/lineups/sync" },

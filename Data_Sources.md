@@ -77,8 +77,9 @@ depends on:
 - `StandingsProvider` — `getStandings(competition, season)`
 - `OddsProvider` — `getOdds(fixture)`
 - `FixtureStatisticsProvider` — `getFixtureStatistics(fixture)`
+- `PlayerStatsProvider` — `getPlayerStatistics(team, competition, season)`
 
-`FootballDataProvider` composes all eight. Every method returns a
+`FootballDataProvider` composes all nine. Every method returns a
 `ProviderResponse<T>` — either `{ ok: true, data, sourceTimestamp,
 provider }` or `{ ok: false, reason, message, provider }` with `reason` one
 of `not_configured | rate_limited | upstream_error | timeout |
@@ -169,6 +170,18 @@ team covering many stat types (shots, possession, cards, corners, fouls,
 discarded (same "map only what's used" policy as `mapOdds`'s restriction
 to covered markets). See "Fixture-statistics ingestion" below for how
 per-fixture rows become a team-season corners average.
+
+`getPlayerStatistics` returns a typed `ProviderPlayerStatistics[]` — one
+entry per player, team/season-scoped like `getTeamStatistics`. api-football's
+`/players` endpoint is paginated (default 20 players/page); this only ever
+requests the first page — a known, documented limitation (see its comment
+in `ApiFootballProvider.ts`), not fixed here since the anytime-goalscorer
+market only ever surfaces a team's top scorers anyway
+(`player_market.py::MAX_CANDIDATES`), and a fringe player past the 20th
+slot is exceedingly unlikely to be among them. A player who played both
+league and cup football for the same team has multiple `statistics` stints
+in the vendor's response; `mapPlayerStatistics` picks the one matching the
+requested competition, falling back to the first stint if none matches.
 
 **Shared helper extraction:** once a third sync job needed the same
 "batch-lookup a table's rows by internal id, then read each one's provider
@@ -457,6 +470,35 @@ until backfilled some other way — there's no unbounded "catch every
 finished fixture eventually" pass, matching the same quota-conscious
 windowing tradeoff lineups/odds already make.
 
+## Player-statistics ingestion: `syncPlayerStatistics.ts`
+
+`backend/src/jobs/syncPlayerStatistics.ts::syncPlayerStatistics` mirrors
+`syncTeamStatistics.ts` almost exactly, one level down: team/season-scoped,
+same combination-dedup shape, same idempotent-upsert design — just for
+players instead of the team as a whole. This job:
+
+1. Uses the same `loadCombinations` shape as `syncTeamStatistics.ts` — one
+   (team, competition, season) combination per non-synthetic fixture,
+   deduplicated.
+2. For each combination with a known external id for all three, calls
+   `provider.getPlayerStatistics(team, competition, season)`.
+3. For each returned player, calls `upsertPlayer` (the same helper
+   `syncLineups.ts` uses) to resolve/create the internal player row, then
+   upserts one `player_statistics` row per (player, team, season) — a real
+   plain-column `unique (player_id, team_id, season_id)` constraint (0006).
+4. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Trigger it via `POST /api/admin/player-statistics/sync` (no window
+parameter — it's team/season-scoped like team-statistics, not windowed
+around kickoff like lineups/odds/fixture-statistics).
+
+**Known limitations:** the single-page-only `/players` pagination gap
+above; and `upsertPlayer` doesn't update an existing player's `team_id` on
+a repeat call, so a transferred player's `players.team_id` can go stale
+(see `Database.md`'s "Known gaps" — `player_statistics` itself isn't
+affected, since it's keyed by `player_id, team_id, season_id`, so a
+transfer correctly gets its own row for the new team).
+
 ## Scheduler: `backend/src/scheduler/scheduler.ts`
 
 Every sync/prediction job above exists as a plain async function callable
@@ -465,22 +507,25 @@ themselves don't know or care which. `startScheduler()` wires the latter,
 using [`node-cron`](https://www.npmjs.com/package/node-cron), when
 `SCHEDULER_ENABLED=true` (`backend/.env.example`, off by default):
 
-- Fixtures, team-statistics, injuries, standings, and fixture-statistics
-  run once daily, staggered 10–30 minutes apart in that order (`02:00`,
-  `02:30`, `02:45`, `03:00`, `03:10` UTC) so each starts after the one it
-  depends on has had time to finish — team-statistics/injuries/standings
-  all read fixtures that `syncFixtures` just wrote, and fixture-statistics
+- Fixtures, team-statistics, player-statistics, injuries, standings, and
+  fixture-statistics run once daily, staggered 5–30 minutes apart in that
+  order (`02:00`, `02:30`, `02:35`, `02:45`, `03:00`, `03:10` UTC) so each
+  starts after the one it depends on has had time to finish —
+  team-statistics/player-statistics/injuries/standings all read fixtures
+  that `syncFixtures` just wrote (player-statistics grouped right after
+  team-statistics — same team/season-scoped shape), and fixture-statistics
   runs last (before predictions) since nothing about corners needs to be
   "closer to kickoff" the way lineups/odds do — a finished match's corners
   don't change once posted. Predictions run once daily after that, at
   `03:15` UTC, reading the `team_statistics` those jobs just wrote
-  (goals/cards directly, corners via fixture-statistics's aggregation).
+  (goals/cards directly, corners via fixture-statistics's aggregation) and
+  `player_statistics` for the anytime-goalscorer markets.
 - Lineups and odds run every 15 minutes (offset from each other, `:00/:15/
   :30/:45` and `:05/:20/:35/:50`), since both are only meaningful/accurate
   close to kickoff (spec section 6: "refresh closer to kickoff") — running
   them once a day like the others would defeat the point.
 - If no data provider is configured (`FOOTBALL_DATA_PROVIDER=null`), the
-  seven sync jobs are **not scheduled at all** — one clear warning is logged
+  eight sync jobs are **not scheduled at all** — one clear warning is logged
   at startup instead of silently no-op'ing on every tick forever. The
   predictions job is still scheduled regardless, since it reads from the
   database rather than calling the provider (matching `/admin/predictions/run`,
@@ -520,7 +565,7 @@ now, and the `predictions` job didn't write one at all.
   writes an `ingestion_runs` row (`job_name: "predictions"`,
   `provider: "ml-service"` — it doesn't call the football data provider, it
   reads `team_statistics` and calls the local ML microservice), so
-  predictions show up in job history the same way the seven sync jobs do.
+  predictions show up in job history the same way the eight sync jobs do.
 - `GET /admin/jobs` and `GET /admin/jobs/summary` (`admin.ts`) read that
   table back — recent runs, and a last-run/last-succeeded-run summary per
   `job_name`. This is the concrete thing to watch during the scheduler's

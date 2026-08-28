@@ -96,6 +96,7 @@ never does.
 | `standings` | League table snapshots per season |
 | `team_statistics` | Per-team stats by scope (`overall`/`home`/`away`/`last_5`/`last_10`) — `yellow_cards`/`red_cards` and `corners` (0005) are season totals/averages, `overall` scope only |
 | `fixture_statistics` (0005) | Per-fixture, per-team box-score stats — today, only `corners` (the one field not in `/teams/statistics`'s season aggregate); aggregated into `team_statistics.corners` by `syncFixtureStatistics.ts` |
+| `player_statistics` (0006) | Per-player season stats (goals, appearances, minutes), scoped to one team — powers the anytime-goalscorer markets. `player_name` is a deliberate denormalization of `players.name` (see 0006's comment) |
 | `injuries` | Player availability, status enum (`injured`/`suspended`/`international_duty`/`doubtful`/`returned`) |
 | `lineups` | Expected vs. confirmed XI per fixture (`confirmation_status`) |
 | `odds_snapshots` | Bookmaker odds per market/selection, timestamped |
@@ -123,6 +124,16 @@ never does.
   migration in this file. Apply it and confirm `syncFixtureStatistics.ts`'s
   upserts actually behave as documented (partial column update on conflict,
   not a full-row overwrite) before relying on it.
+- `0006_player_statistics.sql` (new `player_statistics` table) — same
+  unrun-against-a-real-project caveat. Also worth confirming once a live
+  project exists: `upsertPlayer` (`referenceDataService.ts`) creates a new
+  `players` row keyed by external id but never updates `team_id` on an
+  existing row, so a player transferred mid-season will show their
+  `players.team_id` as whichever team `syncPlayerStatistics.ts` (or
+  `syncLineups.ts`) happened to see them under first — `player_statistics`
+  itself is unaffected (it's keyed by `player_id, team_id, season_id`, so a
+  transfer correctly gets its own row), but anything reading `players.team_id`
+  directly should know it can be stale.
 - Real fixtures and `overall`/`home`/`away` team statistics can now be
   synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
   run on non-synthetic fixtures once both have been run — but this hasn't

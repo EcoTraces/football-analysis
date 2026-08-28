@@ -297,6 +297,92 @@ describe("ApiFootballProvider", () => {
     expect(result.data.redCards).toBeNull();
   });
 
+  it("maps a well-formed player statistics response, picking the stint matching the requested competition", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            player: { id: 276, name: "Sample Striker" },
+            statistics: [
+              // Same team, two different competitions — the mapping must
+              // pick the one matching the requested league id (39), not
+              // just statistics[0].
+              { team: { id: 33 }, league: { id: 2 }, games: { appearences: 6, minutes: 400 }, goals: { total: 3 } },
+              { team: { id: 33 }, league: { id: 39 }, games: { appearences: 18, minutes: 1500 }, goals: { total: 12 } }
+            ]
+          },
+          {
+            player: { id: 277, name: "Bench Player" },
+            statistics: [{ team: { id: 33 }, league: { id: 39 }, games: { appearences: 2, minutes: 45 }, goals: { total: 0 } }]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getPlayerStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      { playerExternalId: "276", playerName: "Sample Striker", matchesPlayed: 18, goalsScored: 12, minutesPlayed: 1500 },
+      { playerExternalId: "277", playerName: "Bench Player", matchesPlayed: 2, goalsScored: 0, minutesPlayed: 45 }
+    ]);
+  });
+
+  it("falls back to the first stint when none matches the requested competition", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            player: { id: 276, name: "Sample Striker" },
+            statistics: [{ team: { id: 33 }, league: { id: 2 }, games: { appearences: 6, minutes: 400 }, goals: { total: 3 } }]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getPlayerStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      { playerExternalId: "276", playerName: "Sample Striker", matchesPlayed: 6, goalsScored: 3, minutesPlayed: 400 }
+    ]);
+  });
+
+  it("skips a player entry missing an id/name, or with no statistics at all, rather than guessing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          { statistics: [{ team: { id: 33 }, league: { id: 39 }, games: { appearences: 1 }, goals: { total: 0 } }] }, // no player
+          { player: { id: 278, name: "No Stats Player" }, statistics: [] }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getPlayerStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("passes team/league/season params through for player statistics", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getPlayerStatistics("33", "39", "2026");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/players");
+    expect(requestedUrl.searchParams.get("team")).toBe("33");
+    expect(requestedUrl.searchParams.get("league")).toBe("39");
+    expect(requestedUrl.searchParams.get("season")).toBe("2026");
+  });
+
   it("maps a well-formed injuries response, classifying status from free-text fields", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

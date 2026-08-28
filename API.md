@@ -120,6 +120,16 @@ from raw fixture scores. Returns `{ runId, combinationsConsidered,
 processed, skipped, failed }`. Same `409 no_provider_configured` behavior
 as `/admin/sync`. See `Data_Sources.md`.
 
+### `POST /admin/player-statistics/sync`
+Same (team, competition, season) combinations as
+`/admin/team-statistics/sync`, but calls the configured provider's
+per-player statistics endpoint instead — upserts a `players` row plus one
+`player_statistics` row per player returned. Powers the anytime-goalscorer
+markets; run alongside `/admin/team-statistics/sync`, before
+`/admin/predictions/run`. Returns `{ runId, combinationsConsidered,
+processed, skipped, failed, playersProcessed }`. Same
+`409 no_provider_configured` behavior as `/admin/sync`. See `Data_Sources.md`.
+
 ### `POST /admin/injuries/sync`
 Calls the configured provider's injuries endpoint for every distinct
 (team, season) pair implied by real fixtures (deduplicated on the external
@@ -158,12 +168,13 @@ of now (default 24, capped at 168) — like lineups, odds aren't meaningful
 further from kickoff, and there's no "closing odds" use case for finished
 fixtures yet. Only `1x2`/`btts`/`over_under_2_5` are stored; other
 markets/lines a bookmaker offers are read but dropped — this includes
-`double_chance`, `correct_score`, `total_cards`, and `total_corners`, which
-the prediction engine now produces (see `ML_Model.md`) but odds ingestion
-does not yet cover, so those four have model probabilities with no
-bookmaker price to compare against. An empty response for a fixture (no
-bookmaker has posted a covered-market price yet) is counted separately
-from failures.
+`double_chance`, `correct_score`, `total_cards`, `total_corners`,
+`first_half_result`, `second_half_result`, `half_with_most_goals`, and the
+anytime-goalscorer markets, which the prediction engine now produces (see
+`ML_Model.md`) but odds ingestion does not yet cover, so those have model
+probabilities with no bookmaker price to compare against. An empty response
+for a fixture (no bookmaker has posted a covered-market price yet) is
+counted separately from failures.
 **Deliberately not idempotent**: every successful run inserts new
 `odds_snapshots` rows rather than upserting, since this table is a genuine
 price-history time series, not a "current odds" cache — running this

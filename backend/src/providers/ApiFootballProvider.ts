@@ -8,6 +8,7 @@ import type {
   ProviderLineupPlayer,
   ProviderOdds,
   ProviderOddsSelection,
+  ProviderPlayerStatistics,
   ProviderResponse,
   ProviderStanding,
   ProviderTeamStatistics,
@@ -308,6 +309,36 @@ export class ApiFootballProvider implements FootballDataProvider {
     return { ...result, data: mapped };
   }
 
+  // api-football's /players endpoint is paginated (default 20 players per
+  // page, `paging.total` pages in the envelope) — this only ever requests
+  // the first page. A squad with more than ~20 players who've made an
+  // appearance this season will have some missing from the result; not
+  // fixed here (see Task.md) since the anytime-goalscorer market only ever
+  // surfaces a team's top scorers anyway (player_market.py's MAX_CANDIDATES),
+  // and a fringe player past the 20th slot is exceedingly unlikely to be
+  // among them.
+  async getPlayerStatistics(
+    teamExternalId: string,
+    competitionExternalId: string,
+    seasonExternalId: string
+  ): Promise<ProviderResponse<ProviderPlayerStatistics[]>> {
+    const result = await this.request<RawPlayerEntry[]>("/players", {
+      team: teamExternalId,
+      league: competitionExternalId,
+      season: seasonExternalId
+    });
+    if (!result.ok) return result;
+
+    const mapped: ProviderPlayerStatistics[] = [];
+    for (const raw of result.data) {
+      const entry = mapPlayerStatistics(raw, competitionExternalId);
+      if (entry) mapped.push(entry);
+      // A player entry missing an id/name, or with no statistics stint
+      // matching this competition, is skipped rather than guessed at.
+    }
+    return { ...result, data: mapped };
+  }
+
   async getInjuries(teamExternalId: string, seasonExternalId: string): Promise<ProviderResponse<ProviderInjury[]>> {
     const result = await this.request<RawInjury[]>("/injuries", { team: teamExternalId, season: seasonExternalId });
     if (!result.ok) return result;
@@ -486,6 +517,44 @@ function mapTeamStatistics(raw: RawTeamStatistics): ProviderTeamStatistics | nul
     failedToScore: typeof raw.failed_to_score?.total === "number" ? raw.failed_to_score.total : null,
     yellowCards: sumCardIntervals(raw.cards?.yellow),
     redCards: sumCardIntervals(raw.cards?.red)
+  };
+}
+
+// Shape per api-football v3's documented /players response — unverified
+// against a live response, same caveat as every other Raw* interface here.
+// One entry per player, each carrying a `statistics` array with one stint
+// per (team, competition) the player appeared in that season — a player
+// who played both league and cup football for the same team has two
+// entries here, which is why mapPlayerStatistics picks the one matching
+// the requested competition rather than just taking statistics[0].
+interface RawPlayerStint {
+  team?: { id?: number | null } | null;
+  league?: { id?: number | null } | null;
+  games?: { appearences?: number | null; minutes?: number | null } | null;
+  goals?: { total?: number | null } | null;
+}
+
+interface RawPlayerEntry {
+  player?: { id?: number | null; name?: string | null } | null;
+  statistics?: RawPlayerStint[] | null;
+}
+
+function mapPlayerStatistics(raw: RawPlayerEntry, competitionExternalId: string): ProviderPlayerStatistics | null {
+  const playerExternalId = raw.player?.id;
+  const playerName = raw.player?.name;
+  if (typeof playerExternalId !== "number" || !playerName) return null;
+
+  const stints = raw.statistics ?? [];
+  const stint =
+    stints.find((s) => String(s.league?.id ?? "") === competitionExternalId) ?? stints[0];
+  if (!stint) return null;
+
+  return {
+    playerExternalId: String(playerExternalId),
+    playerName,
+    matchesPlayed: typeof stint.games?.appearences === "number" ? stint.games.appearences : 0,
+    goalsScored: typeof stint.goals?.total === "number" ? stint.goals.total : null,
+    minutesPlayed: typeof stint.games?.minutes === "number" ? stint.games.minutes : null
   };
 }
 

@@ -99,6 +99,30 @@ const predictions: PredictionView[] = [
     modelVersionId: "v1",
     generatedAt: new Date().toISOString(),
     freshness: "LIVE"
+  },
+  {
+    market: "home_anytime_goalscorer",
+    selection: "de Bruyne",
+    probability: 0.35,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "home_anytime_goalscorer",
+    selection: "Haaland",
+    probability: 0.6,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
   }
 ];
 
@@ -164,6 +188,20 @@ describe("PredictionCard", () => {
 
   it("renders nothing for first-half result when the fixture has no such prediction", () => {
     const { container } = render(<PredictionCard predictions={predictions} market="first_half_result" />);
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders anytime-goalscorer player names as-is, not CSS-capitalized (would mangle a name like 'de Bruyne')", () => {
+    render(<PredictionCard predictions={predictions} market="home_anytime_goalscorer" />);
+    expect(screen.getByText("Anytime goalscorer — home team")).toBeTruthy();
+    const nameEl = screen.getByText("de Bruyne");
+    expect(nameEl).toBeTruthy();
+    expect(nameEl.className).not.toContain("capitalize");
+    expect(screen.getByText("60%")).toBeTruthy(); // Haaland, sorted first by probability
+  });
+
+  it("renders nothing for away-team goalscorers when the fixture has no such prediction", () => {
+    const { container } = render(<PredictionCard predictions={predictions} market="away_anytime_goalscorer" />);
     expect(container.innerHTML).toBe("");
   });
 });

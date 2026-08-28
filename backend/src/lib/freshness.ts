@@ -9,7 +9,8 @@ export type FreshnessDomain =
   | "predictions"
   | "odds"
   | "teamStatistics"
-  | "fixtureStatistics";
+  | "fixtureStatistics"
+  | "playerStatistics";
 
 export interface FreshnessPolicy {
   /** Age (ms) below which data counts as LIVE. */
@@ -35,7 +36,10 @@ export const FRESHNESS_POLICIES: Record<FreshnessDomain, FreshnessPolicy> = {
   teamStatistics: { liveMs: 6 * 60 * 60_000, recentMs: 48 * 60 * 60_000 },
   // Same once-daily cadence as teamStatistics, and the same reasoning —
   // syncFixtureStatistics.ts runs right before predictions in the daily chain.
-  fixtureStatistics: { liveMs: 6 * 60 * 60_000, recentMs: 48 * 60 * 60_000 }
+  fixtureStatistics: { liveMs: 6 * 60 * 60_000, recentMs: 48 * 60 * 60_000 },
+  // Same once-daily cadence as teamStatistics — syncPlayerStatistics.ts
+  // runs right after it in the daily chain.
+  playerStatistics: { liveMs: 6 * 60 * 60_000, recentMs: 48 * 60 * 60_000 }
 };
 
 export function classifyFreshness(

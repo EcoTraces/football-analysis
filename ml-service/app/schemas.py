@@ -16,6 +16,12 @@ class TeamStrengthInput(CamelModel):
     goals_conceded_avg: float = Field(ge=0)
 
 
+class PlayerCandidateInput(CamelModel):
+    name: str
+    goals_scored: float = Field(ge=0)
+    matches_played: int = Field(ge=0)
+
+
 class PoissonPredictionRequest(CamelModel):
     home_team: TeamStrengthInput
     away_team: TeamStrengthInput
@@ -31,6 +37,14 @@ class PoissonPredictionRequest(CamelModel):
     away_team_avg_yellow_cards: float | None = Field(default=None, ge=0)
     home_team_avg_corners: float | None = Field(default=None, ge=0)
     away_team_avg_corners: float | None = Field(default=None, ge=0)
+    # Optional: a team's own season goalscorers (from player_statistics —
+    # see syncPlayerStatistics.ts), for the anytime-goalscorer markets. None
+    # (not an empty list) means the backend hasn't synced player data for
+    # this team's season yet — main.py skips that side's market entirely
+    # rather than treating "no players sent" the same as "sent, but nobody
+    # qualified." See player_market.py for the ranking/eligibility rules.
+    home_team_players: list[PlayerCandidateInput] | None = None
+    away_team_players: list[PlayerCandidateInput] | None = None
 
 
 class Factor(CamelModel):

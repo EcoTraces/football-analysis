@@ -11,6 +11,7 @@ import { syncStandings } from "../jobs/syncStandings.js";
 import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
 import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
+import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
@@ -179,6 +180,16 @@ export function createAdminRouter(
     try {
       requireProvider(provider);
       const result = await syncTeamStatistics(supabase, provider, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/player-statistics/sync", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      requireProvider(provider);
+      const result = await syncPlayerStatistics(supabase, provider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);
