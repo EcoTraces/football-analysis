@@ -10,6 +10,7 @@ import {
   getDataHealth,
   getSchedulerHealth,
   runBacktest,
+  trainGradientBoosting,
   triggerSync,
   SYNC_ACTIONS,
   type SyncAction
@@ -17,6 +18,7 @@ import {
 import type {
   AdminDataHealthCounts,
   ApiFootballHealth,
+  BacktestableModel,
   BacktestEvaluation,
   DataHealth,
   IngestionRun,
@@ -80,6 +82,12 @@ type SyncActionState =
   | { status: "error"; message: string };
 
 type BacktestRunState = { status: "pending" } | { status: "error"; message: string } | null;
+type TrainRunState = { status: "pending" } | { status: "success"; sampleSize: number; trainAccuracy: number | null } | { status: "error"; message: string } | null;
+
+const MODEL_LABELS: Record<BacktestableModel, string> = {
+  "poisson-baseline": "Poisson baseline",
+  "gradient-boosting": "Gradient boosting"
+};
 
 function formatMetric(value: number | null): string {
   return value === null ? "—" : value.toFixed(3);
@@ -96,7 +104,9 @@ export function AdminDashboard() {
   const [syncState, setSyncState] = useState<Record<string, SyncActionState>>({});
   const [backtestFrom, setBacktestFrom] = useState("");
   const [backtestTo, setBacktestTo] = useState("");
+  const [backtestModel, setBacktestModel] = useState<BacktestableModel>("poisson-baseline");
   const [backtestRunState, setBacktestRunState] = useState<BacktestRunState>(null);
+  const [trainRunState, setTrainRunState] = useState<TrainRunState>(null);
 
   const refresh = useCallback(async () => {
     if (!session) return;
@@ -148,13 +158,28 @@ export function AdminDashboard() {
     try {
       // Treat the plain <input type="date"> values as UTC day boundaries —
       // simplest correct behavior for a range picker with no timezone control.
-      await runBacktest(session.access_token, `${backtestFrom}T00:00:00.000Z`, `${backtestTo}T23:59:59.999Z`);
+      await runBacktest(session.access_token, `${backtestFrom}T00:00:00.000Z`, `${backtestTo}T23:59:59.999Z`, undefined, backtestModel);
       setBacktestRunState(null);
       await refresh();
     } catch (err) {
       setBacktestRunState({
         status: "error",
         message: err instanceof ApiRequestError ? err.message : "Failed to run backtest."
+      });
+    }
+  }
+
+  async function handleTrainGradientBoosting() {
+    if (!session || !backtestFrom || !backtestTo) return;
+    setTrainRunState({ status: "pending" });
+    try {
+      const res = await trainGradientBoosting(session.access_token, `${backtestFrom}T00:00:00.000Z`, `${backtestTo}T23:59:59.999Z`);
+      setTrainRunState({ status: "success", sampleSize: res.data.sampleSize, trainAccuracy: res.data.trainAccuracy });
+      await refresh();
+    } catch (err) {
+      setTrainRunState({
+        status: "error",
+        message: err instanceof ApiRequestError ? err.message : "Failed to train gradient boosting model."
       });
     }
   }
@@ -320,13 +345,16 @@ export function AdminDashboard() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Backtest (1x2 market)</h2>
+        <h2 className="mb-3 text-lg font-semibold">Backtest &amp; models (1x2 market)</h2>
         <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
           Walk-forward evaluation: for each finished fixture in the chosen range, team strength is recomputed from only
           the matches that finished strictly before its own kickoff (never from the current team_statistics snapshot,
-          which would leak future data into a "historical" prediction). Writes one row to model_evaluations per run.
-          Only meaningful once real historical fixture results exist in this database — synthetic dev-seed fixtures are
-          always excluded.
+          which would leak future data into a "historical" prediction). "Run backtest" writes one model_evaluations
+          row for whichever model is selected — run it once per model over the same range to compare them. "Train
+          gradient boosting" fits that second model on point-in-time features from the same kind of range; it has no
+          formula of its own, so predictions from it are unavailable until it's been trained at least once. Only
+          meaningful once real historical fixture results exist in this database — synthetic dev-seed fixtures are
+          always excluded from both.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col text-xs text-slate-500 dark:text-slate-400">
@@ -347,6 +375,20 @@ export function AdminDashboard() {
               className="mt-1 rounded-md border border-slate-300 bg-transparent px-2 py-1 text-sm dark:border-slate-700"
             />
           </label>
+          <label className="flex flex-col text-xs text-slate-500 dark:text-slate-400">
+            Model
+            <select
+              value={backtestModel}
+              onChange={(e) => setBacktestModel(e.target.value as BacktestableModel)}
+              className="mt-1 rounded-md border border-slate-300 bg-transparent px-2 py-1 text-sm dark:border-slate-700"
+            >
+              {(Object.keys(MODEL_LABELS) as BacktestableModel[]).map((model) => (
+                <option key={model} value={model}>
+                  {MODEL_LABELS[model]}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             disabled={!backtestFrom || !backtestTo || backtestRunState?.status === "pending"}
@@ -355,10 +397,30 @@ export function AdminDashboard() {
           >
             {backtestRunState?.status === "pending" ? "Running backtest…" : "Run backtest"}
           </button>
+          <button
+            type="button"
+            disabled={!backtestFrom || !backtestTo || trainRunState?.status === "pending"}
+            onClick={() => void handleTrainGradientBoosting()}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+          >
+            {trainRunState?.status === "pending" ? "Training…" : "Train gradient boosting"}
+          </button>
         </div>
         {backtestRunState?.status === "error" && (
           <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
             {backtestRunState.message}
+          </p>
+        )}
+        {trainRunState?.status === "error" && (
+          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+            {trainRunState.message}
+          </p>
+        )}
+        {trainRunState?.status === "success" && (
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            Trained on {trainRunState.sampleSize} fixtures — in-sample accuracy{" "}
+            {trainRunState.trainAccuracy === null ? "—" : `${Math.round(trainRunState.trainAccuracy * 100)}%`} (not a held-out/generalization
+            metric — back-test the model above for that).
           </p>
         )}
 
@@ -376,6 +438,7 @@ export function AdminDashboard() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-2 pr-4 font-medium">Model</th>
                     <th className="py-2 pr-4 font-medium">Window</th>
                     <th className="py-2 pr-4 font-medium">Sample size</th>
                     <th className="py-2 pr-4 font-medium">Accuracy</th>
@@ -386,6 +449,7 @@ export function AdminDashboard() {
                 <tbody>
                   {data.backtestResults.map((run) => (
                     <tr key={run.id} className="border-b border-slate-100 dark:border-slate-900">
+                      <td className="py-2 pr-4">{run.modelName ?? run.model_version_id}</td>
                       <td className="py-2 pr-4 text-xs text-slate-500 dark:text-slate-400">{run.evaluation_window}</td>
                       <td className="py-2 pr-4">{run.sample_size}</td>
                       <td className="py-2 pr-4">{run.accuracy === null ? "—" : `${Math.round(run.accuracy * 100)}%`}</td>

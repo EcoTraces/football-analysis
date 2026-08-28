@@ -223,3 +223,48 @@ def test_predict_poisson_rejects_invalid_input():
         },
     )
     assert res.status_code == 422
+
+
+STRONG_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 2.5, "goalsConcededAvg": 0.5}
+WEAK_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 0.5, "goalsConcededAvg": 2.5}
+EVEN_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 1.2, "goalsConcededAvg": 1.2}
+
+
+def _training_row(home: dict, away: dict, outcome: str) -> dict:
+    return {"homeTeam": home, "awayTeam": away, "outcome": outcome}
+
+
+def test_predict_gradient_boosting_before_training_returns_409_not_a_fabricated_guess():
+    res = client.post("/predict/gradient_boosting", json={"homeTeam": STRONG_TEAM, "awayTeam": WEAK_TEAM})
+    assert res.status_code == 409
+
+
+def test_train_gradient_boosting_rejects_too_few_rows():
+    rows = [_training_row(STRONG_TEAM, WEAK_TEAM, "home")] * 5
+    res = client.post("/train/gradient_boosting", json={"rows": rows})
+    assert res.status_code == 422
+
+
+def test_train_then_predict_gradient_boosting_round_trip():
+    rows = (
+        [_training_row(STRONG_TEAM, WEAK_TEAM, "home")] * 10
+        + [_training_row(WEAK_TEAM, STRONG_TEAM, "away")] * 10
+        + [_training_row(EVEN_TEAM, EVEN_TEAM, "draw")] * 10
+    )
+    train_res = client.post("/train/gradient_boosting", json={"rows": rows})
+    assert train_res.status_code == 200
+    train_body = train_res.json()
+    assert train_body["sampleSize"] == 30
+    assert train_body["classCounts"] == {"home": 10, "draw": 10, "away": 10}
+    assert 0.0 <= train_body["trainAccuracy"] <= 1.0
+
+    predict_res = client.post("/predict/gradient_boosting", json={"homeTeam": STRONG_TEAM, "awayTeam": WEAK_TEAM})
+    assert predict_res.status_code == 200
+    body = predict_res.json()
+    assert body["modelName"] == "gradient-boosting"
+    assert body["dataQuality"] in {"insufficient", "limited", "strong"}
+
+    predictions = {p["selection"]: p["probability"] for p in body["predictions"]}
+    assert set(predictions.keys()) == {"home", "draw", "away"}
+    assert sum(predictions.values()) == pytest.approx(1.0, abs=1e-6)
+    assert predictions["home"] > predictions["away"]  # learned the separable training pattern

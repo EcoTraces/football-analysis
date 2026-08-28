@@ -143,11 +143,22 @@ never does.
   results down match-by-match, so those scopes need a future results-sync
   job instead (see `Data_Sources.md`).
 - `model_evaluations` now has a writer: `backend/src/jobs/runBacktest.ts`
-  writes one row per walk-forward backtest run of the `1x2` market (see
-  `ML_Model.md`'s "Backtesting" section). It has never actually been run
-  against real data in this environment — no live API-Football key has
-  ever been connected, so there's no real fixture history to backtest
-  against — so the table remains empty in practice; only the writer exists.
+  writes one row per walk-forward backtest run of the `1x2` market, for
+  whichever model (`poisson-baseline` or `gradient-boosting`) the run was
+  scoped to (see `ML_Model.md`'s "Backtesting" and "Gradient boosting
+  model" sections). It has never actually been run against real data in
+  this environment — no live API-Football key has ever been connected,
+  so there's no real fixture history to backtest against — so the table
+  remains empty in practice; only the writer exists.
+- `model_versions` still has no admin route to insert a row — every row
+  (`poisson-baseline`, and now `gradient-boosting`) is manually seeded
+  (`supabase/seed/dev_seed_synthetic.sql` for dev; a real deployment needs
+  the same one-time manual SQL insert, same bootstrap pattern as the first
+  admin account — see README.md). `gradient-boosting`'s seeded row is
+  deliberately left untrained (`trained_at = null`): `backend/src/jobs/
+  trainGradientBoosting.ts` is that row's real writer for
+  `trained_at`/`training_dataset_version`/`notes`, but there's no real
+  fixture history in this environment to train it on yet.
 - `teams.country_id` and `competitions.competition_type` are not correctly
   populated by fixture ingestion — see `Data_Sources.md`'s "Known
   limitation" notes.

@@ -200,29 +200,51 @@ behavior as the other sync endpoints.
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.
 
-### `POST /admin/backtest/run?from=&to=&competitionId=`
+### `POST /admin/backtest/run?from=&to=&competitionId=&model=`
 Runs a walk-forward backtest of the `1x2` market over finished,
 non-synthetic fixtures whose `kickoff_utc` falls in `[from, to]`
 (required; any string `Date` can parse; range capped at 366 days),
-optionally restricted to one `competitionId`. Team strength for each
+optionally restricted to one `competitionId`. `model` is
+`poisson-baseline` (default) or `gradient-boosting` — selects which
+registered model gets scored (see `ML_Model.md`'s "Gradient boosting
+model" section); run this twice over the same range with a different
+`model` to get two directly comparable results. Team strength for each
 fixture is recomputed point-in-time from `fixtures`' own prior results
 (never from the current `team_statistics` snapshot — see `ML_Model.md`'s
 "Backtesting" section for why). Writes one `model_evaluations` row per run.
 Same `syncTriggerLimit` rate limiting as every other sync/prediction
 trigger. `400 invalid_query` if `from`/`to` are missing, unparseable,
-`from` is after `to`, or the range exceeds 366 days. `409
-no_model_version` if no `poisson-baseline` model version exists yet.
-Returns `{ runId, modelVersionId, evaluationId, sampleSize, skipped,
-accuracy, logLoss, brierScore }` — all four metric fields are `null` when
-`sampleSize` is 0 (nothing in range had enough point-in-time history to
-predict from). Deliberately not on the scheduler — an admin picks the
-window each time.
+`from` is after `to`, the range exceeds 366 days, or `model` isn't one of
+the two above. `409 no_model_version` if the selected model's
+`model_versions` row doesn't exist yet. Returns `{ runId, modelVersionId,
+evaluationId, sampleSize, skipped, accuracy, logLoss, brierScore }` — all
+four metric fields are `null` when `sampleSize` is 0 (nothing in range had
+enough point-in-time history to predict from). Deliberately not on the
+scheduler — an admin picks the window each time.
+
+### `POST /admin/model/gradient-boosting/train?from=&to=&competitionId=`
+Trains the gradient-boosting model on point-in-time features built from
+finished, non-synthetic fixtures whose `kickoff_utc` falls in `[from, to]`
+— same required/validated params and range cap as `/admin/backtest/run`
+(minus `model`), same rate limiting. `409 no_model_version` if no
+`gradient-boosting` model version exists yet (see `ML_Model.md` for the
+manual bootstrap step). `422 training_failed` if ml-service refuses the
+training request — most commonly too few qualifying fixtures in range, or
+a range whose fixtures produced only one outcome class; the message names
+the specific reason. On success, updates the `gradient-boosting`
+`model_versions` row's `trained_at`/`training_dataset_version`/`notes` and
+returns `{ runId, modelVersionId, sampleSize, skipped, trainAccuracy,
+classCounts }` — `trainAccuracy` is in-sample only, never a generalization
+metric (backtest the model for that). Like backtesting, never on the
+scheduler — retraining is an explicit, occasional admin action.
 
 ### `GET /admin/backtest/results?limit=N`
-Past backtest runs from `model_evaluations`, newest first (`limit` default
-50, capped at 200). Returns `{ id, model_version_id, competition_id,
-market, evaluation_window, accuracy, log_loss, brier_score, sample_size,
-created_at }[]`.
+Past backtest runs from `model_evaluations` (any model), newest first
+(`limit` default 50, capped at 200). Returns `{ id, model_version_id,
+modelName, competition_id, market, evaluation_window, accuracy, log_loss,
+brier_score, sample_size, created_at }[]` — `modelName` is server-side
+enriched from `model_versions` (`null` only if that row was somehow
+deleted after the fact).
 
 ### `GET /admin/data-health`
 Counts of production fixtures, synthetic fixtures, and current predictions.

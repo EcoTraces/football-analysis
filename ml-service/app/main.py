@@ -1,6 +1,12 @@
 from fastapi import FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
+from app.models.gradient_boosting import (
+    GradientBoostingOneXTwoModel,
+    NotTrainedError,
+    TeamFeatures,
+    TrainingRow,
+)
 from app.models.half_markets import (
     build_half_matrices,
     half_result_probabilities,
@@ -21,10 +27,23 @@ from app.models.poisson import (
     score_matrix,
     top_correct_scores,
 )
-from app.schemas import Factor, MarketProbability, PlayerCandidateInput, PoissonPredictionRequest, PoissonPredictionResponse
+from app.schemas import (
+    Factor,
+    GradientBoostingPredictionResponse,
+    GradientBoostingPredictRequest,
+    GradientBoostingTrainRequest,
+    GradientBoostingTrainResponse,
+    MarketProbability,
+    PlayerCandidateInput,
+    PoissonPredictionRequest,
+    PoissonPredictionResponse,
+)
 
 MODEL_NAME = "poisson-baseline"
 MODEL_VERSION = "0.1.0"
+
+GRADIENT_BOOSTING_MODEL_NAME = "gradient-boosting"
+GRADIENT_BOOSTING_MODEL_VERSION = "0.1.0"
 
 
 def _anytime_goalscorer_predictions(
@@ -68,6 +87,15 @@ TEAM_TOTAL_GOALS_LINE = 1.5  # A single team's own goals, not the match total �
 HANDICAP_HOME_LINE = -1.5  # Half-integer so there's no push case; see poisson.py::handicap_probabilities.
 
 app = FastAPI(title="Football Analysis ML Service", version=MODEL_VERSION)
+
+# Process-local, in-memory only — see gradient_boosting.py's module
+# docstring. A restart of this service loses whatever was trained; the
+# backend must retrain (POST /admin/model/gradient-boosting/train) after
+# every ml-service redeploy/restart until this is backed by real
+# persistence. There is exactly one instance for the whole process, not
+# per-request, because training is meant to be a rare, explicit action
+# whose result should stick around for every prediction request after it.
+_gradient_boosting_model = GradientBoostingOneXTwoModel()
 
 
 @app.get("/health")
@@ -339,5 +367,79 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
         model_name=MODEL_NAME,
         model_version=MODEL_VERSION,
         data_quality=quality,
+        predictions=predictions,
+    )
+
+
+@app.post("/train/gradient_boosting", response_model=GradientBoostingTrainResponse)
+def train_gradient_boosting(payload: GradientBoostingTrainRequest) -> GradientBoostingTrainResponse:
+    rows = [
+        TrainingRow(
+            home=TeamFeatures(
+                matches_played=row.home_team.matches_played,
+                goals_scored_avg=row.home_team.goals_scored_avg,
+                goals_conceded_avg=row.home_team.goals_conceded_avg,
+            ),
+            away=TeamFeatures(
+                matches_played=row.away_team.matches_played,
+                goals_scored_avg=row.away_team.goals_scored_avg,
+                goals_conceded_avg=row.away_team.goals_conceded_avg,
+            ),
+            outcome=row.outcome,
+        )
+        for row in payload.rows
+    ]
+
+    try:
+        result = _gradient_boosting_model.train(rows)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return GradientBoostingTrainResponse(
+        sample_size=result.sample_size,
+        train_accuracy=result.train_accuracy,
+        class_counts=result.class_counts,
+    )
+
+
+@app.post("/predict/gradient_boosting", response_model=GradientBoostingPredictionResponse)
+def predict_gradient_boosting(payload: GradientBoostingPredictRequest) -> GradientBoostingPredictionResponse:
+    home = TeamStrength(
+        matches_played=payload.home_team.matches_played,
+        goals_scored_avg=payload.home_team.goals_scored_avg,
+        goals_conceded_avg=payload.home_team.goals_conceded_avg,
+    )
+    away = TeamStrength(
+        matches_played=payload.away_team.matches_played,
+        goals_scored_avg=payload.away_team.goals_scored_avg,
+        goals_conceded_avg=payload.away_team.goals_conceded_avg,
+    )
+
+    try:
+        probs = _gradient_boosting_model.predict(
+            TeamFeatures(home.matches_played, home.goals_scored_avg, home.goals_conceded_avg),
+            TeamFeatures(away.matches_played, away.goals_scored_avg, away.goals_conceded_avg),
+        )
+    except NotTrainedError as exc:
+        # 409, not 422/500 — the request itself is fine, but there's no
+        # trained model to serve yet. The caller (backend) treats this the
+        # same as any other "prediction unavailable" — never fabricates a
+        # fallback probability.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    predictions = [
+        MarketProbability(market="1x2", selection="home", probability=probs["home"], factors=[]),
+        MarketProbability(market="1x2", selection="draw", probability=probs["draw"], factors=[]),
+        MarketProbability(market="1x2", selection="away", probability=probs["away"], factors=[]),
+    ]
+
+    return GradientBoostingPredictionResponse(
+        model_name=GRADIENT_BOOSTING_MODEL_NAME,
+        model_version=GRADIENT_BOOSTING_MODEL_VERSION,
+        # Reuses the same matches-played-based proxy poisson.py uses — it's
+        # a statement about how much data described these two teams, not
+        # about this specific model's own confidence, so the same thresholds
+        # apply regardless of which model is answering.
+        data_quality=data_quality_for(home, away),
         predictions=predictions,
     )

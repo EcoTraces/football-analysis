@@ -149,6 +149,7 @@ describe("AdminDashboard", () => {
         {
           id: "eval-1",
           model_version_id: "mv-1",
+          modelName: "poisson-baseline",
           competition_id: null,
           market: "1x2",
           evaluation_window: "2024-01-01T00:00:00.000Z..2024-01-31T23:59:59.999Z",
@@ -164,6 +165,7 @@ describe("AdminDashboard", () => {
     renderDashboard();
 
     await waitFor(() => expect(screen.getByText("2024-01-01T00:00:00.000Z..2024-01-31T23:59:59.999Z")).toBeTruthy());
+    expect(screen.getByText("poisson-baseline")).toBeTruthy();
     expect(screen.getByText("50%")).toBeTruthy();
     expect(screen.getByText("0.857")).toBeTruthy();
     expect(screen.getByText("0.500")).toBeTruthy();
@@ -196,8 +198,79 @@ describe("AdminDashboard", () => {
     screen.getByText("Run backtest").click();
 
     await waitFor(() => expect(runBacktestSpy).toHaveBeenCalledTimes(1));
-    expect(runBacktestSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z");
+    // Defaults to the Poisson baseline when the model selector hasn't been touched.
+    expect(runBacktestSpy).toHaveBeenCalledWith(
+      "admin-token",
+      "2024-01-01T00:00:00.000Z",
+      "2024-01-31T23:59:59.999Z",
+      undefined,
+      "poisson-baseline"
+    );
     expect(getBacktestResults).toHaveBeenCalledTimes(2); // initial load + post-run refresh
+  });
+
+  it("running a backtest with gradient boosting selected sends that model, not the default", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const runBacktestSpy = vi.spyOn(api, "runBacktest").mockResolvedValue({
+      data: { runId: "run-1", modelVersionId: "mv-gb", evaluationId: "eval-1", sampleSize: 2, skipped: 0, accuracy: 0.5, logLoss: 0.6, brierScore: 0.4 }
+    });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Run backtest")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gradient-boosting" } });
+
+    screen.getByText("Run backtest").click();
+
+    await waitFor(() => expect(runBacktestSpy).toHaveBeenCalledTimes(1));
+    expect(runBacktestSpy).toHaveBeenCalledWith(
+      "admin-token",
+      "2024-01-01T00:00:00.000Z",
+      "2024-01-31T23:59:59.999Z",
+      undefined,
+      "gradient-boosting"
+    );
+  });
+
+  it("training the gradient boosting model shows its in-sample accuracy and refreshes results", async () => {
+    mockBaselineDashboard();
+    const getBacktestResults = vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const trainSpy = vi.spyOn(api, "trainGradientBoosting").mockResolvedValue({
+      data: { runId: "run-1", modelVersionId: "mv-gb", sampleSize: 25, skipped: 1, trainAccuracy: 0.8, classCounts: { home: 10, draw: 5, away: 10 } }
+    });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Train gradient boosting")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+
+    screen.getByText("Train gradient boosting").click();
+
+    await waitFor(() => expect(trainSpy).toHaveBeenCalledTimes(1));
+    expect(trainSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z");
+    await waitFor(() => expect(screen.getByText(/Trained on 25 fixtures/)).toBeTruthy());
+    expect(screen.getByText(/80%/)).toBeTruthy();
+    expect(getBacktestResults).toHaveBeenCalledTimes(2); // initial load + post-train refresh
+  });
+
+  it("shows an error message when training fails (e.g. too few qualifying fixtures in range)", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "trainGradientBoosting").mockRejectedValue(new api.ApiRequestError("Need at least 20 training rows, got 3.", 422));
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Train gradient boosting")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+
+    screen.getByText("Train gradient boosting").click();
+
+    await waitFor(() => expect(screen.getByText("Need at least 20 training rows, got 3.")).toBeTruthy());
   });
 
   it("shows an error message when the backtest run fails, without crashing the rest of the dashboard", async () => {

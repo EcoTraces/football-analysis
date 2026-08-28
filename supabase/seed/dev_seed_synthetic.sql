@@ -60,5 +60,15 @@ on conflict do nothing;
 
 insert into model_versions (id, name, version, algorithm, trained_at, notes) values
   ('00000000-0000-0000-0000-000000000301', 'poisson-baseline', '0.1.0-dev', 'dixon-coles-poisson',
-   now(), 'Development-only model version used for synthetic seed data.')
+   now(), 'Development-only model version used for synthetic seed data.'),
+  -- Registered but deliberately left untrained (trained_at null): this
+  -- platform's gradient-boosting model needs >= MIN_TRAINING_ROWS (20) real
+  -- point-in-time fixtures to train on (see gradient_boosting.py), and the 4
+  -- synthetic fixtures above are nowhere near that — and synthetic rows
+  -- must never be used to fabricate a "trained" model anyway (see this
+  -- file's header). A real admin still has to run
+  -- POST /admin/model/gradient-boosting/train against real fixture data
+  -- before this row's trained_at/training_dataset_version/notes are filled in.
+  ('00000000-0000-0000-0000-000000000302', 'gradient-boosting', '0.1.0-dev', 'gradient-boosted-trees',
+   null, 'Development-only model version row. Untrained — see comment above.')
 on conflict (name, version) do nothing;

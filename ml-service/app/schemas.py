@@ -64,3 +64,35 @@ class PoissonPredictionResponse(CamelModel):
     model_version: str
     data_quality: str
     predictions: list[MarketProbability]
+
+
+class GradientBoostingPredictRequest(CamelModel):
+    home_team: TeamStrengthInput
+    away_team: TeamStrengthInput
+
+
+# Same field names/shape as PoissonPredictionResponse — the backend's
+# PredictionClient reuses that one type for both models rather than
+# defining a parallel one, since a 1x2-only response is a strict subset of
+# the Poisson response shape.
+class GradientBoostingPredictionResponse(CamelModel):
+    model_name: str
+    model_version: str
+    data_quality: str
+    predictions: list[MarketProbability]
+
+
+class GradientBoostingTrainingRowInput(CamelModel):
+    home_team: TeamStrengthInput
+    away_team: TeamStrengthInput
+    outcome: str  # "home" | "draw" | "away"
+
+
+class GradientBoostingTrainRequest(CamelModel):
+    rows: list[GradientBoostingTrainingRowInput]
+
+
+class GradientBoostingTrainResponse(CamelModel):
+    sample_size: int
+    train_accuracy: float
+    class_counts: dict[str, int]

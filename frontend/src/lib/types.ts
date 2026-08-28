@@ -153,10 +153,15 @@ export interface BacktestRunResult {
   brierScore: number | null;
 }
 
-// A row from model_evaluations, as written by a backtest run.
+export type BacktestableModel = "poisson-baseline" | "gradient-boosting";
+
+// A row from model_evaluations, as written by a backtest run. modelName is
+// server-enriched (joined from model_versions) — null only if the
+// model_versions row it referenced was somehow deleted after the fact.
 export interface BacktestEvaluation {
   id: string;
   model_version_id: string;
+  modelName: string | null;
   competition_id: string | null;
   market: string;
   evaluation_window: string;
@@ -165,4 +170,15 @@ export interface BacktestEvaluation {
   brier_score: number | null;
   sample_size: number;
   created_at: string;
+}
+
+// Result of one gradient-boosting training run (see
+// backend/src/jobs/trainGradientBoosting.ts).
+export interface GradientBoostingTrainResult {
+  runId: string | null;
+  modelVersionId: string | null;
+  sampleSize: number;
+  skipped: number;
+  trainAccuracy: number | null;
+  classCounts: Record<string, number> | null;
 }

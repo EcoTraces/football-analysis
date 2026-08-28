@@ -509,8 +509,58 @@
   key has ever been connected in this environment, so there is no real
   fixture history to backtest against; see `ML_Model.md`'s "Backtesting"
   section for the full caveat.
-- [ ] Add at least one additional model (e.g. gradient boosting) and compare
-  against the Poisson baseline before calling anything an "ensemble."
+- [x] Added a second model — gradient boosting, 1x2 market only (same
+  market-scope discipline as backtesting; not ported to all ~20 markets
+  before this one is proven out). `ml-service/app/models/gradient_boosting.py`:
+  `GradientBoostingOneXTwoModel` wraps sklearn's `GradientBoostingClassifier`,
+  refuses to train on fewer than `MIN_TRAINING_ROWS` (20) rows or a
+  single-outcome dataset, and `predict()` raises `NotTrainedError` (mapped
+  to ml-service `409`, then to a `null` result by `PredictionClient` —
+  same "unavailable, never fabricated" contract `predictPoisson()` already
+  has) rather than guessing 1/3-1/3-1/3 before anyone has trained it.
+  New endpoints `POST /train/gradient_boosting` and
+  `POST /predict/gradient_boosting`. State is process-local, in-memory
+  only — a restart loses the trained model; documented, not solved, since
+  a real persistence layer is out of scope for a first cut.
+  `backend/src/jobs/trainGradientBoosting.ts` builds training rows the same
+  way `runBacktest.ts` builds backtest fixtures — reusing
+  `computePointInTimeStrength()` so training never leaks a team's future
+  results into its own historical training row (the identical lookahead-bias
+  concern that motivated backtesting in the first place) — then calls
+  ml-service and, on success, updates the `gradient-boosting`
+  `model_versions` row's `trained_at`/`training_dataset_version`/`notes`.
+  **The comparison mechanism**: `runBacktest.ts` was generalized to take a
+  `predictFn` instead of hardcoding `predictPoisson()`, and
+  `runLatestBacktestJob()` now takes a `modelName` (`poisson-baseline` or
+  `gradient-boosting`, default the former) — running a backtest over the
+  same date range once per model produces two directly comparable
+  `model_evaluations` rows, which is what "compare... before calling
+  anything an ensemble" actually requires. New admin routes:
+  `POST /admin/backtest/run` gained a `model` query param;
+  `POST /admin/model/gradient-boosting/train?from=&to=&competitionId=`;
+  `GET /admin/backtest/results` now enriches each row with its model name.
+  New `AdminDashboard.tsx` controls: a model selector next to the existing
+  backtest date range, and a "Train gradient boosting" button showing
+  in-sample accuracy (explicitly labeled as not a generalization metric).
+  `gradient-boosting` got a `model_versions` row in the dev seed, same
+  bootstrap pattern as `poisson-baseline`'s (no admin route creates these
+  rows yet) — deliberately left untrained (`trained_at = null`), since the
+  4 synthetic dev fixtures are nowhere near `MIN_TRAINING_ROWS` and
+  synthetic data must never be used to fabricate a "trained" model.
+  Test counts: ml-service 59/59 (was 49 — 7 new in `test_gradient_boosting.py`,
+  3 new in `test_api.py`), backend 194/194 (was 184 — 4 new in
+  `trainGradientBoosting.test.ts`, 5 new in `predictionClient.test.ts`, 1
+  new in `runBacktest.test.ts` for the model-lookup generalization),
+  frontend 35/35 (was 32). `tsc`/`eslint`/`npm run build` clean across all
+  three. **Like backtesting, this has never been run against real data** —
+  no live API-Football key exists in this environment, so there's no real
+  fixture history to train the model on; it stays untrained until someone
+  does. See `ML_Model.md`'s "Gradient boosting model" section for the full
+  caveat list (including: no `factors` explanation, unlike Poisson's
+  `explain_factors()` — there's no honest plain-language story for what a
+  gradient-boosted ensemble weighted).
+- [ ] Fit the Dixon-Coles `RHO` parameter from real data instead of using
+  the current fixed approximation (`ml-service/app/models/poisson.py`).
 - [ ] Fit the Dixon-Coles `RHO` parameter from real data instead of using
   the current fixed approximation (`ml-service/app/models/poisson.py`).
 - [ ] League-specific calibration once enough leagues have real data.

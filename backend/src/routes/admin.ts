@@ -4,7 +4,8 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
-import { runLatestBacktestJob } from "../jobs/runBacktest.js";
+import { runLatestBacktestJob, type BacktestableModel } from "../jobs/runBacktest.js";
+import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoosting.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
@@ -21,18 +22,34 @@ const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync
 const MAX_KICKOFF_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS; shared by lineups and odds sync.
 const MAX_JOB_HISTORY_LIMIT = 200;
 const JOB_HISTORY_SUMMARY_SAMPLE = 500; // Rows scanned client-side to compute "last run per job" — see /admin/jobs/summary.
-const MAX_BACKTEST_RANGE_DAYS = 366; // Each fixture in range costs two point-in-time queries plus one prediction call — bound the blast radius of one request.
+const MAX_DATE_RANGE_DAYS = 366; // Each fixture in range costs two point-in-time queries plus one prediction call — bound the blast radius of one request. Shared by backtest and gradient-boosting training, which walk the same kind of range.
 const MAX_BACKTEST_RESULTS_LIMIT = 200;
 
 const isoDateString = z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), { message: "must be a valid date/timestamp" });
 
-const backtestRunQuerySchema = z
-  .object({ from: isoDateString, to: isoDateString, competitionId: z.string().uuid().optional() })
-  .refine((v) => new Date(v.from).getTime() <= new Date(v.to).getTime(), { message: "from must not be after to" })
-  .refine(
-    (v) => (new Date(v.to).getTime() - new Date(v.from).getTime()) / (1000 * 60 * 60 * 24) <= MAX_BACKTEST_RANGE_DAYS,
-    { message: `Backtest range cannot exceed ${MAX_BACKTEST_RANGE_DAYS} days` }
-  );
+// Shared by both schemas below — from/to/competitionId, plus the same two
+// range guardrails (from <= to, range within MAX_DATE_RANGE_DAYS). Zod's
+// generics don't preserve an `.extend()`ed shape through a shared
+// higher-order refine helper cleanly, so this is a plain function applied
+// at each call site rather than a schema-returning generic.
+function applyDateRangeGuardrails<T extends { from: string; to: string }>(schema: z.ZodType<T>) {
+  return schema
+    .refine((v) => new Date(v.from).getTime() <= new Date(v.to).getTime(), { message: "from must not be after to" })
+    .refine(
+      (v) => (new Date(v.to).getTime() - new Date(v.from).getTime()) / (1000 * 60 * 60 * 24) <= MAX_DATE_RANGE_DAYS,
+      { message: `Date range cannot exceed ${MAX_DATE_RANGE_DAYS} days` }
+    );
+}
+
+const dateRangeSchema = z.object({ from: isoDateString, to: isoDateString, competitionId: z.string().uuid().optional() });
+
+const BACKTESTABLE_MODELS = ["poisson-baseline", "gradient-boosting"] as const;
+
+const backtestRunQuerySchema = applyDateRangeGuardrails(
+  dateRangeSchema.extend({ model: z.enum(BACKTESTABLE_MODELS).default("poisson-baseline") })
+);
+
+const trainGradientBoostingQuerySchema = applyDateRangeGuardrails(dateRangeSchema);
 
 // Every sync/prediction trigger below makes real outbound calls to a
 // rate/cost-limited third-party API once one is configured — the app-wide
@@ -287,8 +304,14 @@ export function createAdminRouter(
   });
 
   // Walk-forward backtest of the 1x2 market over a chosen date range — see
-  // runBacktest.ts. Deliberately not on the scheduler: an admin picks the
-  // window each time, so this only ever runs on explicit request.
+  // runBacktest.ts. `model` picks which registered model_versions row (and
+  // which ml-service endpoint) gets scored — defaults to poisson-baseline
+  // for compatibility with callers that don't pass it. Running this twice
+  // over the same range with a different `model` is how this platform
+  // compares a new model against the baseline (Task.md's "before calling
+  // anything an ensemble" requirement). Deliberately not on the scheduler:
+  // an admin picks the window each time, so this only ever runs on
+  // explicit request.
   router.post("/admin/backtest/run", syncTriggerLimit, async (req, res, next) => {
     try {
       const parsed = backtestRunQuerySchema.safeParse(req.query);
@@ -296,7 +319,43 @@ export function createAdminRouter(
         throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_query");
       }
 
-      const result = await runLatestBacktestJob(supabase, mlServiceUrl, logger, {
+      const result = await runLatestBacktestJob(
+        supabase,
+        mlServiceUrl,
+        logger,
+        {
+          from: new Date(parsed.data.from).toISOString(),
+          to: new Date(parsed.data.to).toISOString(),
+          competitionId: parsed.data.competitionId
+        },
+        parsed.data.model as BacktestableModel
+      );
+
+      if (!result.modelVersionId) {
+        res.status(409).json({
+          error: { code: "no_model_version", message: `No ${parsed.data.model} model_version row exists yet.` }
+        });
+        return;
+      }
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Trains the gradient-boosting model (ml-service's second model — see
+  // ML_Model.md) on point-in-time features built from real, finished,
+  // non-synthetic fixtures in the chosen range (trainGradientBoosting.ts).
+  // Same guardrails/rate-limiting as backtest; also never on the scheduler
+  // — retraining is an explicit, occasional admin action.
+  router.post("/admin/model/gradient-boosting/train", syncTriggerLimit, async (req, res, next) => {
+    try {
+      const parsed = trainGradientBoostingQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_query");
+      }
+
+      const result = await runLatestGradientBoostingTrainingJob(supabase, mlServiceUrl, logger, {
         from: new Date(parsed.data.from).toISOString(),
         to: new Date(parsed.data.to).toISOString(),
         competitionId: parsed.data.competitionId
@@ -304,7 +363,10 @@ export function createAdminRouter(
 
       if (!result.modelVersionId) {
         res.status(409).json({
-          error: { code: "no_model_version", message: "No poisson-baseline model_version row exists yet." }
+          error: {
+            code: "no_model_version",
+            message: "No gradient-boosting model_version row exists yet. See ML_Model.md for the manual bootstrap step."
+          }
         });
         return;
       }
@@ -317,6 +379,9 @@ export function createAdminRouter(
   // Reads back model_evaluations rows written by backtest runs — the
   // "did the backtest I ran actually produce anything" view, since
   // /admin/backtest/run's own response is ephemeral once the page reloads.
+  // Enriched with each row's model name (from model_versions) so results
+  // from different models are distinguishable in the UI without a second
+  // round trip per row.
   router.get("/admin/backtest/results", async (req, res, next) => {
     try {
       const limitParam = Number(req.query.limit ?? 50);
@@ -324,14 +389,21 @@ export function createAdminRouter(
         ? Math.min(Math.max(Math.trunc(limitParam), 1), MAX_BACKTEST_RESULTS_LIMIT)
         : 50;
 
-      const { data, error } = await supabase
-        .from("model_evaluations")
-        .select("id, model_version_id, competition_id, market, evaluation_window, accuracy, log_loss, brier_score, sample_size, created_at")
-        .order("created_at", { ascending: false })
-        .limit(limit);
+      const [{ data, error }, { data: modelVersions, error: modelVersionsError }] = await Promise.all([
+        supabase
+          .from("model_evaluations")
+          .select("id, model_version_id, competition_id, market, evaluation_window, accuracy, log_loss, brier_score, sample_size, created_at")
+          .order("created_at", { ascending: false })
+          .limit(limit),
+        supabase.from("model_versions").select("id, name")
+      ]);
       if (error) throw new Error(error.message);
+      if (modelVersionsError) throw new Error(modelVersionsError.message);
 
-      res.json({ data: data ?? [] });
+      const modelNameById = new Map((modelVersions ?? []).map((mv) => [mv.id as string, mv.name as string]));
+      const enriched = (data ?? []).map((row) => ({ ...row, modelName: modelNameById.get(row.model_version_id as string) ?? null }));
+
+      res.json({ data: enriched });
     } catch (err) {
       next(err);
     }

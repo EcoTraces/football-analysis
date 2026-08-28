@@ -1,5 +1,64 @@
 # Changelog
 
+## 2026-08-28 — Second model: gradient boosting (1x2 market) + baseline comparison
+
+First item off the model wishlist in Task.md: "add at least one additional
+model... and compare against the Poisson baseline before calling anything
+an ensemble." Both halves — the model and the comparison mechanism — land
+together.
+
+- `ml-service/app/models/gradient_boosting.py`: `GradientBoostingOneXTwoModel`
+  wraps sklearn's `GradientBoostingClassifier`, scoped to the `1x2` market
+  only (same discipline as backtesting — not ported to all ~20 markets
+  before this one is proven out). Refuses to train on fewer than
+  `MIN_TRAINING_ROWS` (20) rows or a single-outcome dataset. Unlike
+  `poisson.py`, this model has no closed-form fallback — `predict()` raises
+  `NotTrainedError` before training rather than fabricating a 1/3-1/3-1/3
+  guess; the ml-service endpoint maps that to `409`, and
+  `PredictionClient.predictGradientBoosting()` maps `409` to `null`, the
+  same "unavailable, never fabricated" contract `predictPoisson()` already
+  has. State is process-local, in-memory only — a restart loses whatever
+  was trained; a real persistence layer is documented as out of scope, not
+  silently assumed.
+- New ml-service endpoints: `POST /train/gradient_boosting`,
+  `POST /predict/gradient_boosting`.
+- `backend/src/jobs/trainGradientBoosting.ts`: builds training rows from
+  real, finished, non-synthetic fixtures the same way `runBacktest.ts`
+  builds backtest fixtures — reusing `computePointInTimeStrength()` so a
+  team's future results never leak into its own historical training row
+  (the identical lookahead-bias concern that motivated backtesting).
+  Updates the `gradient-boosting` `model_versions` row's
+  `trained_at`/`training_dataset_version`/`notes` on success.
+- **The comparison mechanism**: `runBacktest.ts` was generalized to accept
+  a `predictFn` instead of hardcoding `predictPoisson()` — it never knows
+  or cares which model it's scoring. `runLatestBacktestJob()` now takes a
+  `modelName` (`poisson-baseline` default, or `gradient-boosting`), so
+  running a backtest over the same date range once per model produces two
+  directly comparable `model_evaluations` rows.
+- New admin routes: `POST /admin/backtest/run` gained a `model` query
+  param; new `POST /admin/model/gradient-boosting/train?from=&to=&competitionId=`;
+  `GET /admin/backtest/results` now enriches each row with its model name.
+- New `AdminDashboard.tsx` controls: a model selector next to the existing
+  backtest date range, and a "Train gradient boosting" button showing
+  in-sample accuracy — explicitly labeled as not a held-out/generalization
+  metric, with a pointer to backtesting for that.
+- `gradient-boosting` got a `model_versions` row in the dev seed (same
+  manual-bootstrap pattern as `poisson-baseline`'s — there's still no
+  admin route that inserts these), deliberately left untrained
+  (`trained_at = null`): the 4 synthetic dev fixtures are nowhere near
+  `MIN_TRAINING_ROWS`, and synthetic data must never be used to fabricate
+  a "trained" model.
+- Test counts: ml-service 59/59 (was 49), backend 194/194 (was 184),
+  frontend 35/35 (was 32). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Like backtesting, this has never been run against real data.** No live
+  API-Football key has ever been connected in this environment, so there's
+  no real fixture history to train the model on — it stays untrained until
+  someone does. No `factors` explanation either, unlike Poisson's
+  `explain_factors()` — there's no honest plain-language story for what a
+  gradient-boosted ensemble weighted; that's real future work, not an
+  oversight. See `ML_Model.md`'s "Gradient boosting model" section.
+
 ## 2026-08-28 — Backtesting pipeline (walk-forward, 1x2 market)
 
 `model_evaluations` has had a schema since the very first migration and no

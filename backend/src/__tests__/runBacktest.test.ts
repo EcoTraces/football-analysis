@@ -3,8 +3,8 @@ import pino from "pino";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FakeSupabase } from "./testSupabaseFake.js";
 import type { FakeRow } from "./testSupabaseFake.js";
-import { computePointInTimeStrength, runBacktest, runLatestBacktestJob } from "../jobs/runBacktest.js";
-import type { PoissonPredictionResponse, PredictionClient } from "../services/predictionClient.js";
+import { computePointInTimeStrength, runBacktest, runLatestBacktestJob, type BacktestPredictFn } from "../jobs/runBacktest.js";
+import type { PoissonPredictionResponse } from "../services/predictionClient.js";
 
 const silentLogger = pino({ level: "silent" });
 
@@ -114,15 +114,14 @@ describe("runBacktest", () => {
         { market: "1x2", selection: "away", probability: 0.4, factors: [] }
       ]
     };
-    const predictPoisson = vi.fn().mockResolvedValueOnce(responseA).mockResolvedValueOnce(responseB);
-    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+    const predictFn: BacktestPredictFn = vi.fn().mockResolvedValueOnce(responseA).mockResolvedValueOnce(responseB);
 
-    const result = await runBacktest(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger, {
+    const result = await runBacktest(fakeClient(fake), predictFn, "mv-1", silentLogger, {
       from: "2024-03-01T00:00:00.000Z",
       to: "2024-03-31T23:59:59.000Z"
     });
 
-    expect(predictPoisson).toHaveBeenCalledTimes(2);
+    expect(predictFn).toHaveBeenCalledTimes(2);
     expect(result.sampleSize).toBe(2);
     expect(result.skipped).toBe(0);
     expect(result.accuracy).toBeCloseTo(0.5); // 1 hit out of 2
@@ -149,15 +148,14 @@ describe("runBacktest", () => {
       finishedFixture({ id: "fx-1", home_team_id: "team-home", away_team_id: "team-away", kickoff_utc: kickoff, home_score: 1, away_score: 0 })
     ]);
 
-    const predictPoisson = vi.fn();
-    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+    const predictFn: BacktestPredictFn = vi.fn();
 
-    const result = await runBacktest(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger, {
+    const result = await runBacktest(fakeClient(fake), predictFn, "mv-1", silentLogger, {
       from: "2024-03-01T00:00:00.000Z",
       to: "2024-03-31T23:59:59.000Z"
     });
 
-    expect(predictPoisson).not.toHaveBeenCalled();
+    expect(predictFn).not.toHaveBeenCalled();
     expect(result).toEqual({ evaluationId: null, sampleSize: 0, skipped: 1, accuracy: null, logLoss: null, brierScore: null });
     expect(fake.rows("model_evaluations")).toHaveLength(0);
   });
@@ -174,5 +172,30 @@ describe("runLatestBacktestJob", () => {
     expect(result.modelVersionId).toBeNull();
     expect(result.runId).toBeNull();
     expect(fake.rows("ingestion_runs")).toHaveLength(0);
+  });
+
+  it("looks up the gradient-boosting model_version, not poisson-baseline, when passed that modelName", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("model_versions", [
+      { id: "mv-poisson", name: "poisson-baseline", version: "0.1.0" },
+      { id: "mv-gb", name: "gradient-boosting", version: "0.1.0" }
+    ]);
+
+    const result = await runLatestBacktestJob(
+      fakeClient(fake),
+      "http://ml-service.invalid",
+      silentLogger,
+      { from: "2024-03-01T00:00:00.000Z", to: "2024-03-31T23:59:59.000Z" },
+      "gradient-boosting"
+    );
+
+    // No fixtures were seeded, so there's nothing to score (sampleSize 0) —
+    // this test is only about proving the *right model* got selected and
+    // recorded, which is the part a wrong modelName->id lookup would break.
+    expect(result.modelVersionId).toBe("mv-gb");
+    expect(result.sampleSize).toBe(0);
+    const runs = fake.rows("ingestion_runs");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ job_name: "backtest:gradient-boosting" });
   });
 });

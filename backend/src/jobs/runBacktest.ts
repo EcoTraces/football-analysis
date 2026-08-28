@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
-import { PredictionClient } from "../services/predictionClient.js";
+import { PredictionClient, type PoissonPredictionResponse } from "../services/predictionClient.js";
 import { LEAGUE_AVG_AWAY_GOALS, LEAGUE_AVG_HOME_GOALS, MIN_MATCHES_FOR_PREDICTION } from "./generatePredictions.js";
+
+// Every model this pipeline knows how to backtest, keyed by its
+// model_versions.name. Adding a model here (and to buildPredictFn below) is
+// the only change runLatestBacktestJob needs — runBacktest itself is
+// model-agnostic, scoring whatever predictFn it's given.
+export type BacktestableModel = "poisson-baseline" | "gradient-boosting";
 
 export interface PointInTimeStrength {
   matchesPlayed: number;
@@ -85,16 +91,29 @@ interface BacktestFixtureRow {
   away_score: number;
 }
 
+// Abstracts over which model actually produces the 1x2 forecast — see
+// buildPredictFn below. runBacktest itself never knows or cares whether
+// it's scoring the Poisson baseline or the gradient-boosting model; that's
+// the whole point of pulling this out, so the same walk-forward/scoring
+// logic can compare either one on identical fixtures.
+export type BacktestPredictFn = (
+  homeStrength: PointInTimeStrength,
+  awayStrength: PointInTimeStrength
+) => Promise<PoissonPredictionResponse | null>;
+
 // Walk-forward backtest of the 1x2 market only (the other ~19 markets this
 // platform predicts are not yet backtested — see ML_Model.md). For every
 // finished, non-synthetic fixture in [from, to], recomputes both teams'
-// strength from strictly-prior finished fixtures, asks the *real*
-// prediction service for a 1x2 forecast, and scores it against what
-// actually happened. Writes exactly one model_evaluations row per run
-// (or none, if zero fixtures qualified).
+// strength from strictly-prior finished fixtures, asks `predictFn` for a
+// 1x2 forecast, and scores it against what actually happened. Writes
+// exactly one model_evaluations row per run (or none, if zero fixtures
+// qualified) — tagged with whichever `modelVersionId` the caller passes in,
+// so the same function backtests the Poisson baseline and the gradient
+// boosting model identically, just with a different predictFn/modelVersionId
+// pair (see runLatestBacktestJob).
 export async function runBacktest(
   supabase: SupabaseClient,
-  predictionClient: PredictionClient,
+  predictFn: BacktestPredictFn,
   modelVersionId: string,
   logger: Logger,
   options: BacktestOptions
@@ -135,12 +154,7 @@ export async function runBacktest(
         continue;
       }
 
-      const result = await predictionClient.predictPoisson({
-        homeTeam: homeStrength,
-        awayTeam: awayStrength,
-        leagueAvgHomeGoals: LEAGUE_AVG_HOME_GOALS,
-        leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS
-      });
+      const result = await predictFn(homeStrength, awayStrength);
 
       if (!result) {
         skipped += 1;
@@ -217,25 +231,48 @@ export interface RunLatestBacktestResult {
   brierScore: number | null;
 }
 
+// The only place a model's identity (name -> which predictFn to call) is
+// decided. Both build the same PoissonPredictionResponse shape — see
+// PredictionClient's two predict* methods — so runBacktest never has to
+// know which one it's holding.
+function buildPredictFn(client: PredictionClient, modelName: BacktestableModel): BacktestPredictFn {
+  if (modelName === "poisson-baseline") {
+    return (homeStrength, awayStrength) =>
+      client.predictPoisson({
+        homeTeam: homeStrength,
+        awayTeam: awayStrength,
+        leagueAvgHomeGoals: LEAGUE_AVG_HOME_GOALS,
+        leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS
+      });
+  }
+  return (homeStrength, awayStrength) => client.predictGradientBoosting({ homeTeam: homeStrength, awayTeam: awayStrength });
+}
+
 // Mirrors runLatestPoissonPredictionsJob's ingestion_runs bookkeeping so
 // backtest runs show up in the same admin job-history view as every sync
 // job — but is never wired into the scheduler (scheduler.ts): backtesting
 // is an occasional evaluation an admin chooses to run over a chosen date
-// range, not ongoing ingestion.
+// range, not ongoing ingestion. `modelName` selects which registered
+// model_versions row (and which ml-service endpoint) this run scores —
+// this is the mechanism the wishlist's "compare against the Poisson
+// baseline before calling anything an ensemble" requirement leans on:
+// running this twice with the same [from, to] and a different modelName
+// produces two directly comparable model_evaluations rows.
 export async function runLatestBacktestJob(
   supabase: SupabaseClient,
   mlServiceUrl: string,
   logger: Logger,
-  options: BacktestOptions
+  options: BacktestOptions,
+  modelName: BacktestableModel = "poisson-baseline"
 ): Promise<RunLatestBacktestResult> {
   const { data: modelVersion, error } = await supabase
     .from("model_versions")
     .select("id")
-    .eq("name", "poisson-baseline")
+    .eq("name", modelName)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error) throw new Error(`Failed to load poisson-baseline model_version: ${error.message}`);
+  if (error) throw new Error(`Failed to load ${modelName} model_version: ${error.message}`);
   if (!modelVersion) {
     return {
       runId: null,
@@ -251,14 +288,15 @@ export async function runLatestBacktestJob(
 
   const { data: run, error: runError } = await supabase
     .from("ingestion_runs")
-    .insert({ job_name: "backtest", provider: "ml-service", status: "running" })
+    .insert({ job_name: `backtest:${modelName}`, provider: "ml-service", status: "running" })
     .select("id")
     .single();
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
   const client = new PredictionClient(mlServiceUrl);
-  const result = await runBacktest(supabase, client, modelVersion.id as string, logger, options);
+  const predictFn = buildPredictFn(client, modelName);
+  const result = await runBacktest(supabase, predictFn, modelVersion.id as string, logger, options);
 
   const status = result.sampleSize === 0 ? "failed" : result.skipped > 0 ? "partial" : "succeeded";
 

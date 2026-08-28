@@ -3,10 +3,12 @@ import type {
   AdminUserSummary,
   ApiEnvelope,
   ApiFootballHealth,
+  BacktestableModel,
   BacktestEvaluation,
   BacktestRunResult,
   DataHealth,
   FixtureSummary,
+  GradientBoostingTrainResult,
   IngestionRun,
   JobsSummary,
   MatchDetail,
@@ -131,19 +133,46 @@ export function triggerSync(accessToken: string, path: string): Promise<ApiEnvel
 // admin-chosen date range, not a fixed default window, so it gets its own
 // request builder rather than a fire-with-defaults SyncAction entry.
 
-/** Runs a walk-forward 1x2 backtest over [from, to] (ISO date/timestamp strings) and writes one model_evaluations row. */
+/**
+ * Runs a walk-forward 1x2 backtest over [from, to] (ISO date/timestamp
+ * strings) and writes one model_evaluations row. `model` picks which
+ * registered model gets scored (defaults to the Poisson baseline) — running
+ * this twice with a different model over the same range is how the two
+ * become comparable.
+ */
 export function runBacktest(
   accessToken: string,
   from: string,
   to: string,
-  competitionId?: string
+  competitionId?: string,
+  model?: BacktestableModel
 ): Promise<ApiEnvelope<BacktestRunResult>> {
   const params = new URLSearchParams({ from, to });
   if (competitionId) params.set("competitionId", competitionId);
+  if (model) params.set("model", model);
   return authedRequest<ApiEnvelope<BacktestRunResult>>(`/admin/backtest/run?${params.toString()}`, accessToken, { method: "POST" });
 }
 
-/** Past backtest runs, newest first. */
+/** Past backtest runs (any model), newest first. */
 export function getBacktestResults(accessToken: string, limit = 20): Promise<ApiEnvelope<BacktestEvaluation[]>> {
   return authedRequest<ApiEnvelope<BacktestEvaluation[]>>(`/admin/backtest/results?limit=${limit}`, accessToken);
+}
+
+/**
+ * Trains the gradient-boosting model on point-in-time features built from
+ * real, finished fixtures in [from, to]. A rare, explicit action — never
+ * scheduled. Throws (via ApiRequestError) with ml-service's own validation
+ * message when the range doesn't have enough qualifying fixtures.
+ */
+export function trainGradientBoosting(
+  accessToken: string,
+  from: string,
+  to: string,
+  competitionId?: string
+): Promise<ApiEnvelope<GradientBoostingTrainResult>> {
+  const params = new URLSearchParams({ from, to });
+  if (competitionId) params.set("competitionId", competitionId);
+  return authedRequest<ApiEnvelope<GradientBoostingTrainResult>>(`/admin/model/gradient-boosting/train?${params.toString()}`, accessToken, {
+    method: "POST"
+  });
 }

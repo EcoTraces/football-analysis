@@ -279,9 +279,11 @@ that range, the job:
    fixtures' own results avoids that entirely.
 2. Skips the fixture (like live predictions) if either team has fewer than
    `MIN_MATCHES_FOR_PREDICTION` (3) prior matches at that point in time.
-3. Calls the real `PredictionClient.predictPoisson()` — the same code path
-   live predictions use, not a shortcut — with those point-in-time
-   strengths.
+3. Calls a `predictFn` — the real `PredictionClient.predictPoisson()` or
+   `.predictGradientBoosting()` depending on which `model` the caller asked
+   for (see "Gradient boosting model" below), the same code path live
+   predictions/that model's own endpoint uses, not a shortcut — with those
+   point-in-time strengths.
 4. Scores the returned `1x2` probabilities against what actually happened:
    **accuracy** (did the highest-probability selection match the result),
    **log loss** (`-ln(p_actual)`, clamped away from exactly 0 so one
@@ -298,11 +300,12 @@ job history), but **is deliberately not wired into the scheduler**
 (`scheduler.ts`) — backtesting is an occasional evaluation an admin
 triggers over a chosen window, not ongoing ingestion.
 
-Admin routes: `POST /admin/backtest/run?from=&to=&competitionId=` (rate
-limited like every other sync/prediction trigger) and
-`GET /admin/backtest/results?limit=` to read back past runs — see `API.md`.
-A small panel on the admin dashboard (`AdminDashboard.tsx`) exposes both,
-so this is never a curl-only capability.
+Admin routes: `POST /admin/backtest/run?from=&to=&competitionId=&model=`
+(rate limited like every other sync/prediction trigger; `model` defaults to
+`poisson-baseline`) and `GET /admin/backtest/results?limit=` to read back
+past runs, enriched with each row's model name — see `API.md`. A panel on
+the admin dashboard (`AdminDashboard.tsx`) exposes both, plus a model
+selector, so this is never a curl-only capability.
 
 **What this does and doesn't prove.** The pipeline itself is real and unit
 tested — in particular, a dedicated test proves
@@ -316,11 +319,97 @@ Running it for real, and using the resulting `model_evaluations` rows to
 decide whether `RHO = -0.1` or any other fixed constant in this model is
 actually any good, is future work.
 
+## Gradient boosting model
+
+`ml-service/app/models/gradient_boosting.py` is the platform's second
+model — the first item worked off Task.md's wishlist ("add at least one
+additional model... and compare against the Poisson baseline before
+calling anything an ensemble"). Scoped to the **1x2 market only**, the same
+market-scope discipline the backtesting pipeline established, rather than
+porting all ~20 markets to a new model family before this one is proven
+out.
+
+**Why it's a genuinely different shape from `poisson.py`.** The Poisson
+model has a closed-form formula — it can always produce a probability,
+calibrated or not. Gradient boosting has no formula at all; it is only
+ever as good as what it was fit on, and produces nothing before that.
+`GradientBoostingOneXTwoModel.predict()` raises `NotTrainedError` rather
+than fabricating a fallback guess (e.g. an even 1/3-1/3-1/3 split) when
+nobody has trained it yet — the ml-service endpoint turns that into a
+`409`, and `PredictionClient.predictGradientBoosting()` maps that to
+`null`, the same "unavailable, never fabricated" contract
+`predictPoisson()` already has.
+
+**Training.** `backend/src/jobs/trainGradientBoosting.ts`'s
+`buildTrainingRows()` reuses `runBacktest.ts`'s
+`computePointInTimeStrength()` to build one training row per finished,
+non-synthetic fixture in an admin-chosen `[from, to]` range (same
+`MIN_MATCHES_FOR_PREDICTION` gate as live predictions and backtesting) —
+this is not incidental reuse: training on a team's full-season aggregate to
+predict one of that season's own matches would leak future results into
+the training set, the identical lookahead-bias concern that motivated the
+backtesting pipeline in the first place. `runLatestGradientBoostingTrainingJob()`
+POSTs the rows to `POST /train/gradient_boosting`, which refuses (`422`) to
+fit on fewer than `MIN_TRAINING_ROWS` (20) rows or on data with only one
+outcome class — a model trained on too little or too narrow a sample is
+worse than no model. On success, it updates the `gradient-boosting`
+`model_versions` row's `trained_at`/`training_dataset_version`/`notes`
+(the same columns `poisson-baseline`'s manually-seeded row already has,
+now with a real writer). Like backtesting, training is **never wired into
+the scheduler** — retraining is an explicit, occasional admin action, not
+ongoing ingestion.
+
+**State is process-local and in-memory only.** `main.py` keeps exactly one
+`GradientBoostingOneXTwoModel` instance for the life of the ml-service
+process; a restart loses whatever was trained, and the backend must
+retrain after every ml-service redeploy/restart. A real deployment would
+persist the fitted model (disk or object storage) and reload it at boot —
+that persistence layer does not exist yet. Deliberate simplification, not
+an oversight.
+
+**Comparing against the baseline.** `runBacktest.ts` was generalized to
+take a `predictFn` instead of hardcoding `predictPoisson()` — it never
+knows or cares which model it's scoring. `runLatestBacktestJob()` now
+takes a `modelName: "poisson-baseline" | "gradient-boosting"` (default
+`poisson-baseline`) and looks up that model's own `model_versions` row and
+predict endpoint. Running a backtest over the same `[from, to]` range once
+per model produces two directly comparable `model_evaluations` rows (same
+market, same evaluation window, different `model_version_id`) — this is
+the mechanism the wishlist's "compare... before calling anything an
+ensemble" requirement leans on. No comparison has actually been run in
+this environment; see the caveat below.
+
+**No `factors`.** Unlike Poisson's `explain_factors()`, gradient boosting
+predictions carry an empty `factors` list — there's no hand-derived,
+plain-language explanation for what hundreds of decision trees weighted,
+and fabricating one would misrepresent how the prediction was actually
+produced. A real explainability story for this model (e.g. SHAP values) is
+future work.
+
+**Caveats — same discipline as everything else in this file.** In-sample
+`trainAccuracy` reported by `/train/gradient_boosting` is a training-set
+diagnostic, not a generalization estimate — never present it as
+performance; use a backtest over fixtures the model was never trained on
+for that. And, as with the backtesting pipeline itself: this model has
+never actually been trained or backtested against real data. No live
+API-Football key has ever been connected in this environment, so there is
+no real fixture history to train on — the `gradient-boosting`
+`model_versions` row exists (dev-seeded, like `poisson-baseline`'s) but is
+deliberately left untrained (`trained_at = null`), because there isn't
+remotely enough real data here to train it honestly, and synthetic seed
+data must never be used to fabricate a "trained" model.
+
 ## Adding a new model
 
-1. Implement it in `ml-service/app/models/`.
-2. Add a `model_versions` row (name/version/algorithm).
+1. Implement it in `ml-service/app/models/` — see `gradient_boosting.py`
+   for a worked example of a model with no closed-form fallback.
+2. Add a `model_versions` row (name/version/algorithm) — manually seeded
+   for now, same as `poisson-baseline`'s; see "Gradient boosting model"
+   above for why there's no admin route for this yet.
 3. Extend `PredictionClient`/`generatePredictionsForUpcomingFixtures` (or add
    a parallel path) to call it and compare against the baseline before
    treating any ensemble as an improvement — never swap the baseline out
    without a `model_evaluations` comparison backing the decision.
+4. If it should be backtestable, add it to `runBacktest.ts`'s
+   `BacktestableModel` union and `buildPredictFn()` — the walk-forward
+   scoring logic itself never needs to change.
