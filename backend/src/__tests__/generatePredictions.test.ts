@@ -1,0 +1,117 @@
+import { describe, expect, it, vi } from "vitest";
+import pino from "pino";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { FakeSupabase } from "./testSupabaseFake.js";
+import { generatePredictionsForUpcomingFixtures } from "../jobs/generatePredictions.js";
+import type { PoissonPredictionRequest, PoissonPredictionResponse, PredictionClient } from "../services/predictionClient.js";
+
+const silentLogger = pino({ level: "silent" });
+
+function fakeClient(fake: FakeSupabase): SupabaseClient {
+  return fake as unknown as SupabaseClient;
+}
+
+function samplePredictionResponse(): PoissonPredictionResponse {
+  return {
+    modelName: "poisson-baseline",
+    modelVersion: "0.1.0",
+    dataQuality: "strong",
+    predictions: [{ market: "1x2", selection: "home", probability: 0.5, factors: [] }]
+  };
+}
+
+describe("generatePredictionsForUpcomingFixtures", () => {
+  it("forwards each team's own cards/corners averages, omitting a team's when its team_statistics value is null", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      {
+        id: "ts-home",
+        team_id: "team-home",
+        season_id: "season-1",
+        scope: "overall",
+        matches_played: 10,
+        goals_scored: 15,
+        goals_conceded: 8,
+        yellow_cards: 20,
+        corners: 55
+      },
+      {
+        id: "ts-away",
+        team_id: "team-away",
+        season_id: "season-1",
+        scope: "overall",
+        matches_played: 10,
+        goals_scored: 12,
+        goals_conceded: 10,
+        yellow_cards: null, // not populated yet for this team
+        corners: 48
+      }
+    ]);
+
+    const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    const result = await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    expect(result).toEqual({ processed: 1, skipped: 0, failed: 0 });
+    expect(predictPoisson).toHaveBeenCalledTimes(1);
+
+    const payload = predictPoisson.mock.calls[0]?.[0] as PoissonPredictionRequest;
+    expect(payload.homeTeamAvgYellowCards).toBe(2); // 20 / 10
+    expect(payload.homeTeamAvgCorners).toBe(5.5); // 55 / 10
+    expect(payload.awayTeamAvgYellowCards).toBeUndefined(); // null in the row — never sent as 0
+    expect(payload.awayTeamAvgCorners).toBeCloseTo(4.8); // 48 / 10
+
+    const predictions = fake.rows("predictions");
+    expect(predictions).toHaveLength(1);
+    expect(predictions[0]).toMatchObject({ fixture_id: "fx-1", market: "1x2", selection: "home" });
+  });
+
+  it("skips a fixture when either team has fewer than 3 matches of stats, without calling the prediction client", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      {
+        id: "ts-home",
+        team_id: "team-home",
+        season_id: "season-1",
+        scope: "overall",
+        matches_played: 2,
+        goals_scored: 3,
+        goals_conceded: 2,
+        yellow_cards: 4,
+        corners: 10
+      }
+      // away team has no team_statistics row at all
+    ]);
+
+    const predictPoisson = vi.fn();
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    const result = await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    expect(result).toEqual({ processed: 0, skipped: 1, failed: 0 });
+    expect(predictPoisson).not.toHaveBeenCalled();
+  });
+});

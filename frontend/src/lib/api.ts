@@ -114,6 +114,7 @@ export const SYNC_ACTIONS: SyncAction[] = [
   { key: "sync_standings", label: "Standings", path: "/admin/standings/sync" },
   { key: "sync_lineups", label: "Lineups", path: "/admin/lineups/sync" },
   { key: "sync_odds", label: "Odds", path: "/admin/odds/sync" },
+  { key: "sync_fixture_statistics", label: "Fixture statistics (corners)", path: "/admin/fixture-statistics/sync" },
   { key: "predictions", label: "Predictions", path: "/admin/predictions/run" }
 ];
 

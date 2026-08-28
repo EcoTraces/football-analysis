@@ -9,6 +9,7 @@ import { syncInjuries } from "../jobs/syncInjuries.js";
 import { syncStandings } from "../jobs/syncStandings.js";
 import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
+import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 
 export interface SchedulerDeps {
@@ -32,12 +33,14 @@ export const FIXTURES_SYNC_CRON = "0 2 * * *";
 export const TEAM_STATISTICS_SYNC_CRON = "30 2 * * *";
 export const INJURIES_SYNC_CRON = "45 2 * * *";
 export const STANDINGS_SYNC_CRON = "0 3 * * *";
+export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions — a finished match's corners don't change once posted, so once a day is enough (unlike lineups/odds, nothing about it needs to be "closer to kickoff").
 export const PREDICTIONS_CRON = "15 3 * * *";
 export const LINEUPS_SYNC_CRON = "0,15,30,45 * * * *";
 export const ODDS_SYNC_CRON = "5,20,35,50 * * * *";
 
 const FIXTURES_SYNC_DAYS = 3; // Today + 2 days ahead — enough runway between daily runs without an expensive wide sync.
 const KICKOFF_WINDOW_HOURS = 24; // Same default as the admin endpoints; frequency (every 15m), not window width, is what "closer to kickoff" buys here.
+const FIXTURE_STATISTICS_WINDOW_HOURS = 72; // Matches the admin endpoint's own default — 3 days back is enough to catch a finished match the vendor was slow to finalize stats for.
 const PREDICTIONS_WINDOW_HOURS = 72; // Matches generatePredictions.ts's own default.
 
 function isProviderConfigured(provider: FootballDataProvider): boolean {
@@ -82,6 +85,11 @@ export async function runLineupsSync(deps: SchedulerDeps): Promise<void> {
 export async function runOddsSync(deps: SchedulerDeps): Promise<void> {
   const result = await syncOdds(deps.supabase, deps.provider, deps.logger, KICKOFF_WINDOW_HOURS);
   deps.logger.info({ job: "sync_odds", result }, "Scheduled sync finished");
+}
+
+export async function runFixtureStatisticsSync(deps: SchedulerDeps): Promise<void> {
+  const result = await syncFixtureStatistics(deps.supabase, deps.provider, deps.logger, FIXTURE_STATISTICS_WINDOW_HOURS);
+  deps.logger.info({ job: "sync_fixture_statistics", result }, "Scheduled sync finished");
 }
 
 export async function runPredictions(deps: SchedulerDeps): Promise<void> {
@@ -142,14 +150,15 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     add("sync_standings", STANDINGS_SYNC_CRON, () => runStandingsSync(deps));
     add("sync_lineups", LINEUPS_SYNC_CRON, () => runLineupsSync(deps));
     add("sync_odds", ODDS_SYNC_CRON, () => runOddsSync(deps));
+    add("sync_fixture_statistics", FIXTURE_STATISTICS_SYNC_CRON, () => runFixtureStatisticsSync(deps));
   } else {
     // No fabricated syncing against an unconfigured provider — skip
     // scheduling these entirely (rather than scheduling them to silently
     // no-op every tick) and say why, once, at startup.
     deps.logger.warn(
       "Scheduler starting with no football data provider configured (FOOTBALL_DATA_PROVIDER=null) — " +
-        "fixture/team-statistics/injuries/standings/lineups/odds sync jobs will NOT be scheduled. " +
-        "The predictions job still runs; it reads from the database, not the provider."
+        "fixture/team-statistics/injuries/standings/lineups/odds/fixture-statistics sync jobs will NOT be " +
+        "scheduled. The predictions job still runs; it reads from the database, not the provider."
     );
   }
 

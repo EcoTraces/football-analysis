@@ -9,6 +9,13 @@ export interface PoissonPredictionRequest {
   awayTeam: TeamStrengthInput;
   leagueAvgHomeGoals: number;
   leagueAvgAwayGoals: number;
+  // Optional — the ml-service only predicts total_cards/total_corners when
+  // both of a pair are present (see main.py). Omitted, not sent as 0, when
+  // this team's team_statistics row doesn't have the underlying data yet.
+  homeTeamAvgYellowCards?: number;
+  awayTeamAvgYellowCards?: number;
+  homeTeamAvgCorners?: number;
+  awayTeamAvgCorners?: number;
 }
 
 export interface MarketProbability {

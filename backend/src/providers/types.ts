@@ -35,6 +35,11 @@ export interface ProviderTeamStatistics {
   goalsAgainstAway: number;
   cleanSheets: number | null;
   failedToScore: number | null;
+  // Season totals, not split by home/away — the vendor's /teams/statistics
+  // cards breakdown isn't split that way (see ApiFootballProvider.ts's
+  // mapTeamStatistics).
+  yellowCards: number | null;
+  redCards: number | null;
 }
 
 export interface ProviderInjury {
@@ -97,6 +102,17 @@ export interface ProviderOdds {
   selections: ProviderOddsSelection[];
 }
 
+// One call returns one entry per team (home + away), like getLineup/getOdds
+// — not scoped to one team at a time. `corners: null` means the vendor's
+// response for this fixture didn't include a parseable corners value (not
+// yet played, or the field genuinely missing) — never coerced to 0, since
+// 0 corners is a real possible result and shouldn't be indistinguishable
+// from "no data."
+export interface ProviderFixtureStatistics {
+  teamExternalId: string;
+  corners: number | null;
+}
+
 export interface ProviderResult {
   ok: true;
   data: unknown;
@@ -154,6 +170,14 @@ export interface OddsProvider {
   getOdds(fixtureExternalId: string): Promise<ProviderResponse<ProviderOdds[]>>;
 }
 
+export interface FixtureStatisticsProvider {
+  // Post-match box-score stats, one call per fixture (both teams). Unlike
+  // TeamStatsProvider's season aggregates, this is the only source for
+  // corners — api-football doesn't include corners in /teams/statistics at
+  // all (see ApiFootballProvider.ts's module comment on getFixtureStatistics).
+  getFixtureStatistics(fixtureExternalId: string): Promise<ProviderResponse<ProviderFixtureStatistics[]>>;
+}
+
 export interface FootballDataProvider
   extends FixtureProvider,
     ResultsProvider,
@@ -161,6 +185,7 @@ export interface FootballDataProvider
     InjuryProvider,
     LineupProvider,
     StandingsProvider,
-    OddsProvider {
+    OddsProvider,
+    FixtureStatisticsProvider {
   readonly name: string;
 }

@@ -279,6 +279,45 @@
   `"league"` for every synced competition — API-Football's league payload
   doesn't distinguish league/cup in the fixtures endpoint response used
   here; needs its own `/leagues` sync to get this right).
+- [x] Cards (bookings) and corners data, for the `total_cards`/`total_corners`
+  markets (see "Model" below). Two very different-sized pieces of work:
+  - Cards: `ProviderTeamStatistics` gained `yellowCards`/`redCards`,
+    `team_statistics` gained matching columns (migration 0005) —
+    `ApiFootballProvider.ts::mapTeamStatistics` now also sums the vendor's
+    per-minute-interval `cards.yellow`/`cards.red` breakdown from the
+    **same** `/teams/statistics` response `syncTeamStatistics.ts` was
+    already fetching. No new provider call, no new sync job.
+  - Corners: api-football simply doesn't expose corners in
+    `/teams/statistics` at any level, so this needed real new
+    infrastructure — a new `fixture_statistics` table (migration 0005, one
+    row per fixture+team), a new `FixtureStatisticsProvider`/
+    `getFixtureStatistics` (`/fixtures/statistics`, one call per **finished**
+    fixture, windowed to the last 72h by default like lineups/odds are
+    windowed around kickoff), a new `syncFixtureStatistics.ts` job wired
+    into the scheduler (daily, before predictions) and
+    `POST /admin/fixture-statistics/sync?hours=N`, and an aggregation step
+    (`refreshTeamCornersAverage`) that averages a team's per-fixture corners
+    into the (previously unpopulated) `team_statistics.corners` column via a
+    column-scoped upsert that can't clobber the goals/cards fields the
+    team-statistics job writes to the same row.
+  - Extended `GET /health/data`'s freshness domains with `fixtureStatistics`
+    (same once-daily-cadence policy as `teamStatistics`).
+  - 20 new backend tests (provider mapping, the new sync job including its
+    aggregation function, freshness/health wiring, `FootballDataProvider`'s
+    now-eight-method interface satisfied by every fake provider in the test
+    suite), plus fixing two real gaps this surfaced in the shared
+    `FakeSupabase` test double that nothing had exercised before: `.insert()`
+    only ever handled a single row, not an array (`generatePredictions.ts`
+    inserts one row per market in one call), and `.update()` executed on the
+    first `.eq()` instead of supporting a full filter chain
+    (`generatePredictions.ts`'s `.eq("fixture_id", …).is("superseded_at",
+    null)`) — see `testSupabaseFake.ts`'s comments on both.
+  - **Not yet verified against a live API-Football key** — same caveat as
+    the rest of `Data_Sources.md`. In particular, `"Corner Kicks"` as the
+    vendor's exact `type` string for corner kicks in `/fixtures/statistics`
+    is unconfirmed; if it differs, `mapFixtureStatistics` silently returns
+    `corners: null` for every fixture rather than erroring, which would be
+    easy to miss without checking a real response.
 
 ## Model
 
@@ -310,6 +349,26 @@
   either against a real price. Confirm the exact bet-name/value strings
   against a live API-Football response first; nothing in this environment
   has done that yet for any market.
+- [x] Added `total_cards` and `total_corners` markets — a genuinely
+  different, much simpler model from the goals one above, not a derivation
+  of it (`ml-service/app/models/count_markets.py`). Each side's own
+  historical average (cards or corners per match) is summed into one
+  combined rate and modeled as a single Poisson variable against a fixed
+  line (3.5 cards, 9.5 corners — `CARDS_LINE`/`CORNERS_LINE` in `main.py`,
+  same "plausible, not calibrated" caveat as `over_under_2_5`). Reasoning:
+  unlike goals, there's no attack-vs-opposing-defense relationship this
+  platform has data to support for cards/corners — a card is mostly about a
+  team's own discipline and the referee, not the opponent. Each market is
+  only produced when **both** teams' averages are present in the request
+  (`generatePredictions.ts` sends `undefined`, never `0`, for a team whose
+  `team_statistics` row lacks the field) — so `total_corners` in particular
+  will be silently absent from every fixture until
+  `syncFixtureStatistics.ts` (see "Data" above) has actually populated
+  `team_statistics.corners` for both teams. 8 new ml-service tests (21/21
+  total), 2 new backend tests for the `generatePredictions.ts` wiring, 4 new
+  frontend tests (22/22 total). **Not yet verified against a live
+  Supabase/API-Football setup**, and the fixed lines are a starting point,
+  not researched — see `ML_Model.md`.
 - [ ] Backtesting pipeline: load historical results, walk-forward
   train/validation/test split, write to `model_evaluations`.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 
+from app.models.count_markets import total_over_under
 from app.models.poisson import (
     TeamStrength,
     data_quality_for,
@@ -13,6 +14,13 @@ from app.schemas import Factor, MarketProbability, PoissonPredictionRequest, Poi
 
 MODEL_NAME = "poisson-baseline"
 MODEL_VERSION = "0.1.0"
+
+# Fixed lines, not fitted or configurable — same simplification as goals'
+# over_under_2_5. 3.5 total cards and 9.5 total corners are commonly offered
+# lines for a competitive match, chosen for plausibility, not calibrated
+# against this platform's own data (there is none yet — see Task.md).
+CARDS_LINE = 3.5
+CORNERS_LINE = 9.5
 
 app = FastAPI(title="Football Analysis ML Service", version=MODEL_VERSION)
 
@@ -108,6 +116,25 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
     predictions.append(
         MarketProbability(market="correct_score", selection="other", probability=other_probability, factors=[])
     )
+
+    # Cards and corners are only predicted when the backend actually sent
+    # both teams' own averages — no fabricated market when the underlying
+    # data isn't there yet (matches this platform's "no data, no guess"
+    # policy everywhere else). See count_markets.py for why these are a
+    # simple additive Poisson model rather than goals' score-matrix approach.
+    if payload.home_team_avg_yellow_cards is not None and payload.away_team_avg_yellow_cards is not None:
+        cards_lambda = payload.home_team_avg_yellow_cards + payload.away_team_avg_yellow_cards
+        if cards_lambda > 0:
+            cards_over, cards_under = total_over_under(cards_lambda, CARDS_LINE)
+            predictions.append(MarketProbability(market="total_cards", selection="over", probability=cards_over, factors=[]))
+            predictions.append(MarketProbability(market="total_cards", selection="under", probability=cards_under, factors=[]))
+
+    if payload.home_team_avg_corners is not None and payload.away_team_avg_corners is not None:
+        corners_lambda = payload.home_team_avg_corners + payload.away_team_avg_corners
+        if corners_lambda > 0:
+            corners_over, corners_under = total_over_under(corners_lambda, CORNERS_LINE)
+            predictions.append(MarketProbability(market="total_corners", selection="over", probability=corners_over, factors=[]))
+            predictions.append(MarketProbability(market="total_corners", selection="under", probability=corners_under, factors=[]))
 
     return PoissonPredictionResponse(
         model_name=MODEL_NAME,

@@ -21,6 +21,16 @@ class PoissonPredictionRequest(CamelModel):
     away_team: TeamStrengthInput
     league_avg_home_goals: float = Field(gt=0)
     league_avg_away_goals: float = Field(gt=0)
+    # Optional: each team's own average yellow cards / corners per match.
+    # Unlike goals, the backend only has these once fixture-statistics data
+    # (corners) or cards-parsing (see syncTeamStatistics.ts) has actually
+    # been synced for both teams — when either is missing, the caller omits
+    # both of a pair rather than sending a guessed value, and main.py skips
+    # that market entirely (see its "no data -> no prediction" handling).
+    home_team_avg_yellow_cards: float | None = Field(default=None, ge=0)
+    away_team_avg_yellow_cards: float | None = Field(default=None, ge=0)
+    home_team_avg_corners: float | None = Field(default=None, ge=0)
+    away_team_avg_corners: float | None = Field(default=None, ge=0)
 
 
 class Factor(CamelModel):

@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type {
   FootballDataProvider,
   ProviderFixture,
+  ProviderFixtureStatistics,
   ProviderInjury,
   ProviderLineup,
   ProviderLineupPlayer,
@@ -334,6 +335,21 @@ export class ApiFootballProvider implements FootballDataProvider {
     return { ...result, data: mapStandings(result.data) };
   }
 
+  // /fixtures/statistics is the ONLY api-football endpoint that includes
+  // corner kicks — /teams/statistics (already used for team_statistics)
+  // never does, at any level of detail. This is per-fixture (both teams in
+  // one call, like getLineup/getOdds), not a team/season aggregate — see
+  // syncFixtureStatistics.ts for how per-fixture rows get turned into a
+  // team-season average.
+  async getFixtureStatistics(fixtureExternalId: string): Promise<ProviderResponse<ProviderFixtureStatistics[]>> {
+    const result = await this.request<RawFixtureStatisticsEntry[]>("/fixtures/statistics", { fixture: fixtureExternalId });
+    if (!result.ok) return result;
+    return {
+      ...result,
+      data: result.data.map(mapFixtureStatistics).filter((s): s is ProviderFixtureStatistics => s !== null)
+    };
+  }
+
   async getOdds(fixtureExternalId: string): Promise<ProviderResponse<ProviderOdds[]>> {
     const result = await this.request<RawOddsEnvelope[]>("/odds", { fixture: fixtureExternalId });
     if (!result.ok) return result;
@@ -414,6 +430,29 @@ interface RawTeamStatistics {
   };
   clean_sheet?: { total?: number | null };
   failed_to_score?: { total?: number | null };
+  // Keyed by minute interval (e.g. "0-15", "76-90"), each with a `total`
+  // count for that interval — not split by home/away, unlike goals. Summed
+  // across every interval in mapTeamStatistics to get a season total.
+  cards?: {
+    yellow?: Record<string, { total?: number | null } | null> | null;
+    red?: Record<string, { total?: number | null } | null> | null;
+  };
+}
+
+function sumCardIntervals(intervals: Record<string, { total?: number | null } | null> | null | undefined): number | null {
+  if (!intervals) return null;
+  let sum = 0;
+  let sawAny = false;
+  for (const bucket of Object.values(intervals)) {
+    if (typeof bucket?.total === "number") {
+      sum += bucket.total;
+      sawAny = true;
+    }
+  }
+  // No usable interval at all (every bucket null/missing) is "no data," not
+  // zero cards — a team that's genuinely never been booked is rare enough
+  // that conflating it with a missing/malformed response would be worse.
+  return sawAny ? sum : null;
 }
 
 function mapTeamStatistics(raw: RawTeamStatistics): ProviderTeamStatistics | null {
@@ -441,7 +480,9 @@ function mapTeamStatistics(raw: RawTeamStatistics): ProviderTeamStatistics | nul
     goalsAgainstHome: goalsAgainstHome as number,
     goalsAgainstAway: goalsAgainstAway as number,
     cleanSheets: typeof raw.clean_sheet?.total === "number" ? raw.clean_sheet.total : null,
-    failedToScore: typeof raw.failed_to_score?.total === "number" ? raw.failed_to_score.total : null
+    failedToScore: typeof raw.failed_to_score?.total === "number" ? raw.failed_to_score.total : null,
+    yellowCards: sumCardIntervals(raw.cards?.yellow),
+    redCards: sumCardIntervals(raw.cards?.red)
   };
 }
 
@@ -591,6 +632,41 @@ function mapLineup(raw: RawLineupEntry): ProviderLineup | null {
     formation: raw.formation ?? null,
     startingPlayers: mapLineupPlayers(raw.startXI),
     substitutePlayers: mapLineupPlayers(raw.substitutes)
+  };
+}
+
+// Shape per api-football v3's documented /fixtures/statistics response —
+// unverified against a live response, same caveat as the other Raw*
+// interfaces above. One call returns an array with (up to) one entry per
+// team, each carrying a flat list of {type, value} pairs covering many
+// stat types (shots, possession, cards, corners, ...) — only "Corner
+// Kicks" is parsed today; the rest are read but discarded until another
+// market needs them (matches this file's existing "map only what's used"
+// policy — see mapOdds's comment on the same tradeoff for bookmaker markets).
+interface RawFixtureStatisticEntry {
+  type?: string | null;
+  value?: number | string | null;
+}
+
+interface RawFixtureStatisticsEntry {
+  team?: { id?: number | null };
+  statistics?: RawFixtureStatisticEntry[] | null;
+}
+
+function findStatisticValue(entries: RawFixtureStatisticEntry[] | null | undefined, type: string): number | null {
+  const entry = entries?.find((e) => e.type === type);
+  if (entry === undefined || entry.value === null || entry.value === undefined) return null;
+  const value = typeof entry.value === "string" ? Number(entry.value) : entry.value;
+  return Number.isFinite(value) ? value : null;
+}
+
+function mapFixtureStatistics(raw: RawFixtureStatisticsEntry): ProviderFixtureStatistics | null {
+  const teamExternalId = raw.team?.id;
+  if (typeof teamExternalId !== "number") return null;
+
+  return {
+    teamExternalId: String(teamExternalId),
+    corners: findStatisticValue(raw.statistics, "Corner Kicks")
   };
 }
 

@@ -1,6 +1,7 @@
 import type {
   FootballDataProvider,
   ProviderFixture,
+  ProviderFixtureStatistics,
   ProviderInjury,
   ProviderLineup,
   ProviderOdds,
@@ -60,6 +61,10 @@ export class NullProvider implements FootballDataProvider {
   }
 
   async getOdds(_fixtureExternalId: string): Promise<ProviderResponse<ProviderOdds[]>> {
+    return this.unavailable();
+  }
+
+  async getFixtureStatistics(_fixtureExternalId: string): Promise<ProviderResponse<ProviderFixtureStatistics[]>> {
     return this.unavailable();
   }
 }

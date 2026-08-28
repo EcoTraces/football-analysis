@@ -56,7 +56,9 @@ function statisticsRows(
       goals_scored: stats.goalsFor,
       goals_conceded: stats.goalsAgainst,
       clean_sheets: stats.cleanSheets,
-      failed_to_score: stats.failedToScore
+      failed_to_score: stats.failedToScore,
+      yellow_cards: stats.yellowCards,
+      red_cards: stats.redCards
     },
     {
       ...base,
@@ -65,7 +67,9 @@ function statisticsRows(
       goals_scored: stats.goalsForHome,
       goals_conceded: stats.goalsAgainstHome,
       clean_sheets: null,
-      failed_to_score: null
+      failed_to_score: null,
+      yellow_cards: null,
+      red_cards: null
     },
     {
       ...base,
@@ -74,7 +78,9 @@ function statisticsRows(
       goals_scored: stats.goalsForAway,
       goals_conceded: stats.goalsAgainstAway,
       clean_sheets: null,
-      failed_to_score: null
+      failed_to_score: null,
+      yellow_cards: null,
+      red_cards: null
     }
   ];
 }

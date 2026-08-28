@@ -1,5 +1,83 @@
 # Changelog
 
+## 2026-08-28 — Corners and cards (bookings) prediction markets
+
+Continues down the market wishlist from the double-chance/correct-score
+entry below — corners and cards this time. Unlike those two, neither is
+derivable from the existing Poisson goals model, and the two turned out to
+be very differently sized pieces of work.
+
+- **Cards (`total_cards`), the cheap one:** api-football's
+  `/teams/statistics` response — already fetched by `syncTeamStatistics.ts`
+  — includes a `cards.yellow`/`cards.red` breakdown by minute interval that
+  nothing had ever parsed. `ApiFootballProvider.ts::mapTeamStatistics` now
+  sums it into a season total (`ProviderTeamStatistics.yellowCards`/
+  `redCards`); `team_statistics` gained matching columns (migration 0005,
+  `overall` scope only — the vendor doesn't split cards by home/away like
+  it does goals). No new provider call, no new sync job.
+- **Corners (`total_corners`), the real build:** api-football simply
+  doesn't expose corners in `/teams/statistics` at any level — the only
+  source is `/fixtures/statistics`, per finished fixture. Added: a new
+  `fixture_statistics` table (migration 0005); `FixtureStatisticsProvider`/
+  `ApiFootballProvider.getFixtureStatistics`, mapping only `"Corner Kicks"`
+  out of the vendor's much larger per-fixture stat list (same "map only
+  what's used" policy as odds); a new `syncFixtureStatistics.ts` job
+  (windowed to the last 72h of finished fixtures, like lineups/odds are
+  windowed around kickoff, to bound provider-call growth) wired into the
+  scheduler (daily, right before predictions) and
+  `POST /admin/fixture-statistics/sync?hours=N`; and an aggregation step,
+  `refreshTeamCornersAverage`, that averages a team's per-fixture corners
+  into `team_statistics.corners` (present in the schema since day one,
+  unpopulated until now) via a column-scoped upsert that can't clobber the
+  goals/cards fields the team-statistics job writes to the same row.
+- `ml-service/app/models/count_markets.py` (new file, not an extension of
+  `poisson.py`): both markets are modeled the same simple way — each side's
+  own average (cards or corners per match) summed into one combined rate,
+  treated as a single Poisson variable against a fixed line (3.5 cards, 9.5
+  corners). Deliberately simpler than the goals model — there's no
+  attack-vs-opposing-defense relationship this platform has data to support
+  for cards/corners the way there is for goals. `/predict/poisson` only
+  includes either market when **both** teams' averages are present in the
+  request; `generatePredictions.ts` sends `undefined`, never `0`, when a
+  team's `team_statistics` row doesn't have the field yet — so
+  `total_corners` will be silently absent from every fixture's predictions
+  until `syncFixtureStatistics.ts` has actually run.
+- Backend/DB layer needed no schema change for the *predictions* themselves
+  (same free-text `market`/`selection` columns as every other market) — all
+  the new schema surface here is for the underlying cards/corners *data*,
+  not the predictions built from it.
+- `GET /health/data` gained a `fixtureStatistics` freshness domain (same
+  once-daily-cadence policy as `teamStatistics`), so corners data shows up
+  in the admin dashboard's freshness view like everything else.
+- Frontend: `MatchDetail.tsx` renders two more `PredictionCard`s (both
+  render nothing when a fixture has no such prediction yet, same as any
+  other market); `PredictionCard.tsx`'s market-label map got both.
+- Fixed two real gaps in the shared `FakeSupabase` test double that nothing
+  had exercised until this work needed them:
+  `.insert()` only ever handled a single row, never an array
+  (`generatePredictions.ts` inserts one row per market in a single call —
+  this had apparently never been unit-tested before; see below);
+  `.update()` executed as soon as the first `.eq()` was chained instead of
+  accumulating a full filter chain, breaking
+  `generatePredictions.ts`'s `.eq("fixture_id", …).is("superseded_at",
+  null)`. Both are now deferred/thenable builders, matching `select()`'s
+  existing pattern.
+- Added the first-ever direct test coverage for `generatePredictions.ts`
+  (`generatePredictions.test.ts`, 2 tests) as a natural consequence of
+  wiring the new fields through it and hitting the `FakeSupabase` gaps
+  above — it had only ever been exercised indirectly, and only along an
+  empty-fixtures path, via `scheduler.test.ts`.
+- Test counts: backend 165/165 (was 145), ml-service 21/21 (was 15),
+  frontend 22/22 (was 20). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Not yet verified against a live Supabase or API-Football setup** — same
+  caveat as everything else in this project. Specifically unverified:
+  whether `"Corner Kicks"` is actually the vendor's exact `type` string in
+  `/fixtures/statistics` (if it's wrong, `mapFixtureStatistics` silently
+  returns `corners: null` for every fixture rather than erroring — easy to
+  miss without checking a real response), and the 3.5/9.5 lines are chosen
+  for plausibility, not fitted to any real data.
+
 ## 2026-08-28 — Double chance and correct score prediction markets
 
 Adds two of the markets requested for the prediction engine (out of a

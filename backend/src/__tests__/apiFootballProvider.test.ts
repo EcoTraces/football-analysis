@@ -19,7 +19,11 @@ const RAW_TEAM_STATS = {
     against: { total: { home: 8, away: 10, total: 18 } }
   },
   clean_sheet: { total: 7 },
-  failed_to_score: { total: 3 }
+  failed_to_score: { total: 3 },
+  cards: {
+    yellow: { "0-15": { total: 5 }, "16-30": { total: 8 }, "76-90": { total: 12 } },
+    red: { "0-15": { total: 0 }, "76-90": { total: 2 } }
+  }
 };
 
 describe("ApiFootballProvider", () => {
@@ -244,7 +248,9 @@ describe("ApiFootballProvider", () => {
       goalsAgainstHome: 8,
       goalsAgainstAway: 10,
       cleanSheets: 7,
-      failedToScore: 3
+      failedToScore: 3,
+      yellowCards: 25,
+      redCards: 2
     });
   });
 
@@ -257,6 +263,20 @@ describe("ApiFootballProvider", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("upstream_error");
+  });
+
+  it("treats a team statistics response missing cards as yellowCards/redCards: null, not a failure of the whole response", async () => {
+    const withoutCards: Record<string, unknown> = { ...RAW_TEAM_STATS };
+    delete withoutCards.cards;
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: withoutCards }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getTeamStatistics("33", "39", "2026");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.yellowCards).toBeNull();
+    expect(result.data.redCards).toBeNull();
   });
 
   it("maps a well-formed injuries response, classifying status from free-text fields", async () => {
@@ -549,6 +569,82 @@ describe("ApiFootballProvider", () => {
 
     const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
     expect(requestedUrl.pathname).toBe("/fixtures/lineups");
+    expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
+  });
+
+  it("maps a well-formed fixture statistics response, extracting only corner kicks", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          {
+            team: { id: 33, name: "Sample United" },
+            statistics: [
+              { type: "Shots on Goal", value: 5 },
+              { type: "Corner Kicks", value: 7 },
+              { type: "Ball Possession", value: "55%" }
+            ]
+          },
+          {
+            team: { id: 34, name: "Sample City" },
+            statistics: [{ type: "Corner Kicks", value: 3 }]
+          }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixtureStatistics("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      { teamExternalId: "33", corners: 7 },
+      { teamExternalId: "34", corners: 3 }
+    ]);
+  });
+
+  it("maps a missing or non-numeric corners value to null rather than 0 or a crash", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        response: [
+          { team: { id: 33 }, statistics: [{ type: "Shots on Goal", value: 5 }] }, // no Corner Kicks entry at all
+          { team: { id: 34 }, statistics: [{ type: "Corner Kicks", value: null }] }
+        ]
+      })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixtureStatistics("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([
+      { teamExternalId: "33", corners: null },
+      { teamExternalId: "34", corners: null }
+    ]);
+  });
+
+  it("skips a fixture statistics entry missing a team id rather than guessing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ response: [{ statistics: [{ type: "Corner Kicks", value: 7 }] }] })
+    );
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixtureStatistics("12345");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data).toEqual([]);
+  });
+
+  it("passes the fixture param through for fixture statistics", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    await provider.getFixtureStatistics("12345");
+
+    const requestedUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+    expect(requestedUrl.pathname).toBe("/fixtures/statistics");
     expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
   });
 

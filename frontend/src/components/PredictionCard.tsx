@@ -6,7 +6,9 @@ const MARKET_LABELS: Record<string, string> = {
   btts: "Both teams to score",
   over_under_2_5: "Over/under 2.5 goals",
   double_chance: "Double chance",
-  correct_score: "Correct score"
+  correct_score: "Correct score",
+  total_cards: "Total cards (O/U 3.5)",
+  total_corners: "Total corners (O/U 9.5)"
 };
 
 // Selections not listed here (home/draw/away/yes/no/over/under, and

@@ -68,6 +68,12 @@ export function MatchDetail() {
           <PredictionCard predictions={match.predictions} market="over_under_2_5" />
           <PredictionCard predictions={match.predictions} market="double_chance" />
           <PredictionCard predictions={match.predictions} market="correct_score" />
+          {/* Both render nothing (PredictionCard returns null) when a fixture
+              has no total_cards/total_corners prediction — these two markets
+              are only produced once both teams have cards/corners data
+              synced, unlike the always-present goals-based markets above. */}
+          <PredictionCard predictions={match.predictions} market="total_cards" />
+          <PredictionCard predictions={match.predictions} market="total_corners" />
         </div>
       )}
     </div>

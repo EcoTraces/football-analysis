@@ -76,8 +76,9 @@ depends on:
 - `LineupProvider` — `getLineup(fixture)`
 - `StandingsProvider` — `getStandings(competition, season)`
 - `OddsProvider` — `getOdds(fixture)`
+- `FixtureStatisticsProvider` — `getFixtureStatistics(fixture)`
 
-`FootballDataProvider` composes all seven. Every method returns a
+`FootballDataProvider` composes all eight. Every method returns a
 `ProviderResponse<T>` — either `{ ok: true, data, sourceTimestamp,
 provider }` or `{ ok: false, reason, message, provider }` with `reason` one
 of `not_configured | rate_limited | upstream_error | timeout |
@@ -95,7 +96,14 @@ the vendor provides them) rather than `unknown` — `ApiFootballProvider`
 maps the vendor's raw shape and returns `{ ok: false, reason:
 "upstream_error" }` if the response is missing fields the mapping needs,
 rather than writing zeros that would be indistinguishable from a team that
-actually has a blank record.
+actually has a blank record. `ProviderTeamStatistics` also carries
+`yellowCards`/`redCards` — a season total summed across the vendor's
+per-minute-interval `cards.yellow`/`cards.red` breakdown
+(`ApiFootballProvider.ts::sumCardIntervals`), not split by home/away since
+the vendor's cards breakdown isn't structured that way (unlike goals).
+Missing/unparseable cards data doesn't fail the whole response the way a
+missing core field does — `yellowCards`/`redCards` are simply `null`, since
+they're not among the required fields the mapping insists on.
 
 `ProviderFixture` carries denormalized names (`competitionName`,
 `countryName`, `homeTeamName`, etc.) alongside external ids — real
@@ -134,11 +142,26 @@ carrying a list of `{ market, selection, decimalOdds }` selections.
 classifying each vendor "bet" by its name (`mapBet`) and dropping any
 bookmaker left with zero covered-market selections after filtering —
 unverified against a live response, like every other mapping in this file.
-The prediction engine also now produces `double_chance` and `correct_score`
-(see `ML_Model.md`), but `mapOdds` doesn't cover either yet — those two
-markets have model probabilities only, with no bookmaker odds ingested to
-compare against (no value-analysis for them until this mapping is
-extended, per `ProviderOddsSelection`'s comment in `providers/types.ts`).
+The prediction engine also now produces `double_chance`, `correct_score`,
+`total_cards`, and `total_corners` (see `ML_Model.md`), but `mapOdds`
+doesn't cover any of them yet — all four have model probabilities only,
+with no bookmaker odds ingested to compare against (no value-analysis for
+them until this mapping is extended, per `ProviderOddsSelection`'s comment
+in `providers/types.ts`).
+
+`getFixtureStatistics` returns a typed `ProviderFixtureStatistics[]` — one
+entry per team, like `getLineup`/`getOdds`. This is the **only** provider
+method that returns corner kicks — api-football's `/teams/statistics`
+(used by `getTeamStatistics` above) never includes corners at any level of
+detail, so there was no way to add corners the cheap way (parsing more
+fields off an endpoint already being called), unlike cards. The vendor's
+`/fixtures/statistics` response carries a flat `{type, value}` list per
+team covering many stat types (shots, possession, cards, corners, fouls,
+...); `ApiFootballProvider.ts::mapFixtureStatistics` only extracts
+`"Corner Kicks"` today — everything else in that list is read and
+discarded (same "map only what's used" policy as `mapOdds`'s restriction
+to covered markets). See "Fixture-statistics ingestion" below for how
+per-fixture rows become a team-season corners average.
 
 **Shared helper extraction:** once a third sync job needed the same
 "batch-lookup a table's rows by internal id, then read each one's provider
@@ -385,6 +408,48 @@ changed (see `Task.md`). Also unverified against a live response, like
 every mapping in this file — `mapBet`'s market classification is a
 best-effort guess at the vendor's bet-name strings, not a documented enum.
 
+## Fixture-statistics ingestion: `syncFixtureStatistics.ts`
+
+`backend/src/jobs/syncFixtureStatistics.ts::syncFixtureStatistics` exists
+for exactly one reason: corners aren't in `/teams/statistics`'s season
+aggregate at all, so there was no way to get them the way goals/cards were
+added (parsing more fields off a call already being made). This job:
+
+1. Reads real (non-synthetic) fixtures with `status = 'finished'` whose
+   `kickoff_utc` falls within the last `windowHours` (default 72) — a
+   look-back-only window, unlike lineups/odds's look-both-ways one, since a
+   fixture's corners only exist to fetch once it's actually over.
+2. For each fixture with a known external id, calls
+   `provider.getFixtureStatistics(fixture)`, then matches each returned
+   entry's `teamExternalId` against the fixture's own two participants
+   (resolved via `loadExternalRefs`, like `syncTeamStatistics.ts` does) — an
+   entry for a team that isn't one of the two participants is rejected and
+   counted, not silently accepted.
+3. Upserts one `fixture_statistics` row per (fixture, team) — genuinely
+   idempotent (a real plain-column `unique (fixture_id, team_id)`
+   constraint, same category as `lineups`/`team_statistics`), unlike
+   `odds_snapshots`'s deliberate append-only design above.
+4. After processing, re-aggregates every (team, season) pair touched by
+   this run: averages that team's non-null `fixture_statistics.corners`
+   values for the season and upserts the result into
+   `team_statistics.corners` (`refreshTeamCornersAverage`, exported for
+   direct testing). This upsert only supplies
+   `team_id`/`season_id`/`scope`/`corners`/`source`/`source_timestamp` —
+   Postgres's `ON CONFLICT DO UPDATE` only sets the columns present in the
+   payload, so it can't clobber the goals/cards fields
+   `syncTeamStatistics.ts` wrote to the same row (verified against both the
+   real schema's documented upsert semantics and this repo's `FakeSupabase`
+   test double, which mirrors that column-scoped merge — see its `update()`
+   and `upsert()` comments).
+5. Writes one `ingestion_runs` row per invocation, same as the other jobs.
+
+Trigger it via `POST /api/admin/fixture-statistics/sync?hours=N` (default
+72, capped at 168 — see `admin.ts`). **Known limitation:** if a match's
+stats aren't finalized by the vendor within the window, they're missed
+until backfilled some other way — there's no unbounded "catch every
+finished fixture eventually" pass, matching the same quota-conscious
+windowing tradeoff lineups/odds already make.
+
 ## Scheduler: `backend/src/scheduler/scheduler.ts`
 
 Every sync/prediction job above exists as a plain async function callable
@@ -393,18 +458,22 @@ themselves don't know or care which. `startScheduler()` wires the latter,
 using [`node-cron`](https://www.npmjs.com/package/node-cron), when
 `SCHEDULER_ENABLED=true` (`backend/.env.example`, off by default):
 
-- Fixtures, team-statistics, injuries, and standings run once daily,
-  staggered 15–30 minutes apart in that order (`02:00`, `02:30`, `02:45`,
-  `03:00` UTC) so each starts after the one it depends on has had time to
-  finish — team-statistics/injuries/standings all read fixtures that
-  `syncFixtures` just wrote. Predictions run once daily after that, at
-  `03:15` UTC, reading the `team_statistics` those jobs just wrote.
+- Fixtures, team-statistics, injuries, standings, and fixture-statistics
+  run once daily, staggered 10–30 minutes apart in that order (`02:00`,
+  `02:30`, `02:45`, `03:00`, `03:10` UTC) so each starts after the one it
+  depends on has had time to finish — team-statistics/injuries/standings
+  all read fixtures that `syncFixtures` just wrote, and fixture-statistics
+  runs last (before predictions) since nothing about corners needs to be
+  "closer to kickoff" the way lineups/odds do — a finished match's corners
+  don't change once posted. Predictions run once daily after that, at
+  `03:15` UTC, reading the `team_statistics` those jobs just wrote
+  (goals/cards directly, corners via fixture-statistics's aggregation).
 - Lineups and odds run every 15 minutes (offset from each other, `:00/:15/
   :30/:45` and `:05/:20/:35/:50`), since both are only meaningful/accurate
   close to kickoff (spec section 6: "refresh closer to kickoff") — running
   them once a day like the others would defeat the point.
 - If no data provider is configured (`FOOTBALL_DATA_PROVIDER=null`), the
-  six sync jobs are **not scheduled at all** — one clear warning is logged
+  seven sync jobs are **not scheduled at all** — one clear warning is logged
   at startup instead of silently no-op'ing on every tick forever. The
   predictions job is still scheduled regardless, since it reads from the
   database rather than calling the provider (matching `/admin/predictions/run`,
@@ -444,7 +513,7 @@ now, and the `predictions` job didn't write one at all.
   writes an `ingestion_runs` row (`job_name: "predictions"`,
   `provider: "ml-service"` — it doesn't call the football data provider, it
   reads `team_statistics` and calls the local ML microservice), so
-  predictions show up in job history the same way the six sync jobs do.
+  predictions show up in job history the same way the seven sync jobs do.
 - `GET /admin/jobs` and `GET /admin/jobs/summary` (`admin.ts`) read that
   table back — recent runs, and a last-run/last-succeeded-run summary per
   `job_name`. This is the concrete thing to watch during the scheduler's

@@ -10,18 +10,27 @@ interface TeamStatsRow {
   matches_played: number;
   goals_scored: number | null;
   goals_conceded: number | null;
+  yellow_cards: number | null;
+  corners: number | null;
 }
 
 async function loadOverallStats(supabase: SupabaseClient, teamId: string, seasonId: string) {
   const { data, error } = await supabase
     .from("team_statistics")
-    .select("matches_played, goals_scored, goals_conceded")
+    .select("matches_played, goals_scored, goals_conceded, yellow_cards, corners")
     .eq("team_id", teamId)
     .eq("season_id", seasonId)
     .eq("scope", "overall")
     .maybeSingle<TeamStatsRow>();
   if (error) throw new Error(`Failed to load team_statistics: ${error.message}`);
   return data;
+}
+
+// undefined (not sent), not 0, when this specific team's cards/corners
+// aren't populated yet — ml-service only predicts total_cards/total_corners
+// when both teams' averages are present (see predictionClient.ts).
+function avgOrUndefined(total: number | null, matchesPlayed: number): number | undefined {
+  return total !== null ? total / matchesPlayed : undefined;
 }
 
 // Idempotent by design: recomputing simply supersedes the previous current
@@ -80,7 +89,11 @@ export async function generatePredictionsForUpcomingFixtures(
           goalsConcededAvg: (awayStats.goals_conceded ?? 0) / awayStats.matches_played
         },
         leagueAvgHomeGoals: LEAGUE_AVG_HOME_GOALS,
-        leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS
+        leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS,
+        homeTeamAvgYellowCards: avgOrUndefined(homeStats.yellow_cards, homeStats.matches_played),
+        awayTeamAvgYellowCards: avgOrUndefined(awayStats.yellow_cards, awayStats.matches_played),
+        homeTeamAvgCorners: avgOrUndefined(homeStats.corners, homeStats.matches_played),
+        awayTeamAvgCorners: avgOrUndefined(awayStats.corners, awayStats.matches_played)
       });
 
       if (!result) {

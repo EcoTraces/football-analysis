@@ -156,16 +156,24 @@ export class FakeSupabase {
         };
         return builder;
       },
-      insert(payload: Record<string, unknown>) {
-        const row: FakeRow = { id: `${table}-${self.nextId++}`, ...payload };
+      insert(payload: Record<string, unknown> | Record<string, unknown>[]) {
+        // supabase-js accepts either a single row or an array of rows (e.g.
+        // generatePredictions.ts inserting every market's row in one call)
+        // — .select().single() only makes sense for the single-row form
+        // (matching the real client, which also only supports .single()
+        // when exactly one row was inserted).
+        const rows: FakeRow[] = (Array.isArray(payload) ? payload : [payload]).map((p) => ({
+          id: `${table}-${self.nextId++}`,
+          ...p
+        }));
         const shouldFail = self.consumeInsertFailure(table);
         return {
           select(_columns: string) {
             return {
               async single() {
                 if (shouldFail) return { data: null, error: { message: `simulated insert failure on ${table}` } };
-                self.tables.get(table)!.push(row);
-                return { data: row, error: null };
+                self.tables.get(table)!.push(...rows);
+                return { data: rows[0] ?? null, error: null };
               }
             };
           },
@@ -174,7 +182,7 @@ export class FakeSupabase {
               resolve({ data: null, error: { message: `simulated insert failure on ${table}` } });
               return;
             }
-            self.tables.get(table)!.push(row);
+            self.tables.get(table)!.push(...rows);
             resolve({ data: null, error: null });
           }
         };
@@ -200,14 +208,30 @@ export class FakeSupabase {
         };
       },
       update(payload: Record<string, unknown>) {
+        // Deferred/chainable like select()'s builder (not "execute on the
+        // first .eq()") so callers can combine multiple conditions — e.g.
+        // generatePredictions.ts's .eq("fixture_id", id).is("superseded_at",
+        // null) — before the update actually runs. Updates every row
+        // matching all accumulated filters, matching real UPDATE semantics
+        // (every existing caller filters on a unique id anyway, so this is
+        // behaviorally identical to the old "first match only" version for
+        // them).
         const filters: Array<(row: FakeRow) => boolean> = [];
         const builder = {
           eq(column: string, value: unknown) {
             filters.push((row) => resolvePath(row, column) === value);
+            return builder;
+          },
+          is(column: string, value: unknown) {
+            filters.push((row) => resolvePath(row, column) === value);
+            return builder;
+          },
+          async then(resolve: (v: { data: null; error: null }) => void) {
             const rows = self.tables.get(table)!;
-            const target = rows.find((row) => filters.every((f) => f(row)));
-            if (target) Object.assign(target, payload);
-            return Promise.resolve({ data: null, error: null });
+            for (const row of rows) {
+              if (filters.every((f) => f(row))) Object.assign(row, payload);
+            }
+            resolve({ data: null, error: null });
           }
         };
         return builder;

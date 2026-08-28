@@ -158,11 +158,12 @@ of now (default 24, capped at 168) — like lineups, odds aren't meaningful
 further from kickoff, and there's no "closing odds" use case for finished
 fixtures yet. Only `1x2`/`btts`/`over_under_2_5` are stored; other
 markets/lines a bookmaker offers are read but dropped — this includes
-`double_chance` and `correct_score`, which the prediction engine now
-produces (see `ML_Model.md`) but odds ingestion does not yet cover, so
-those two have model probabilities with no bookmaker price to compare
-against. An empty response for a fixture (no bookmaker has posted a
-covered-market price yet) is counted separately from failures.
+`double_chance`, `correct_score`, `total_cards`, and `total_corners`, which
+the prediction engine now produces (see `ML_Model.md`) but odds ingestion
+does not yet cover, so those four have model probabilities with no
+bookmaker price to compare against. An empty response for a fixture (no
+bookmaker has posted a covered-market price yet) is counted separately
+from failures.
 **Deliberately not idempotent**: every successful run inserts new
 `odds_snapshots` rows rather than upserting, since this table is a genuine
 price-history time series, not a "current odds" cache — running this
@@ -171,6 +172,18 @@ for the unimplemented de-duplication optimization). Returns `{ runId,
 fixturesConsidered, fixturesSkipped, fixturesFailed,
 fixturesNotYetAvailable, snapshotsProcessed, snapshotsRejected }`. Same
 `409 no_provider_configured` behavior as the other sync endpoints.
+
+### `POST /admin/fixture-statistics/sync?hours=N`
+Calls the configured provider's per-fixture statistics endpoint for every
+real (non-synthetic), **finished** fixture whose kickoff falls within the
+last `N` hours (default 72, capped at 168) — the only source for corner
+kicks, which api-football's team-season aggregate never includes (see
+`Data_Sources.md`). Upserts one `fixture_statistics` row per (fixture,
+team), then re-aggregates each touched team's average corners for the
+season into `team_statistics.corners`. Returns `{ runId,
+fixturesConsidered, fixturesSkipped, fixturesFailed, statisticsProcessed,
+statisticsRejected, teamsAggregated }`. Same `409 no_provider_configured`
+behavior as the other sync endpoints.
 
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest

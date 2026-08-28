@@ -10,6 +10,7 @@ import { syncInjuries } from "../jobs/syncInjuries.js";
 import { syncStandings } from "../jobs/syncStandings.js";
 import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
+import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
@@ -226,6 +227,20 @@ export function createAdminRouter(
       const hours = Number.isFinite(hoursParam) ? Math.min(Math.max(Math.trunc(hoursParam), 1), MAX_KICKOFF_WINDOW_HOURS) : 24;
 
       const result = await syncOdds(supabase, provider, logger, hours);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/fixture-statistics/sync", syncTriggerLimit, async (req, res, next) => {
+    try {
+      requireProvider(provider);
+
+      const hoursParam = Number(req.query.hours ?? 72);
+      const hours = Number.isFinite(hoursParam) ? Math.min(Math.max(Math.trunc(hoursParam), 1), MAX_KICKOFF_WINDOW_HOURS) : 72;
+
+      const result = await syncFixtureStatistics(supabase, provider, logger, hours);
       res.json({ data: result });
     } catch (err) {
       next(err);

@@ -63,6 +63,18 @@ const predictions: PredictionView[] = [
     modelVersionId: "v1",
     generatedAt: new Date().toISOString(),
     freshness: "LIVE"
+  },
+  {
+    market: "total_cards",
+    selection: "over",
+    probability: 0.62,
+    confidence: "low",
+    dataQuality: "limited",
+    riskClassification: "moderate",
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
   }
 ];
 
@@ -102,5 +114,18 @@ describe("PredictionCard", () => {
     const rowLabels = screen.getAllByText(/^(2-1|Other scoreline)$/).map((el) => el.textContent);
     // "other" has the higher probability (0.4 vs 0.12) but must still sort last.
     expect(rowLabels).toEqual(["2-1", "Other scoreline"]);
+  });
+
+  it("renders total cards with its over/under line in the market label", () => {
+    render(<PredictionCard predictions={predictions} market="total_cards" />);
+    expect(screen.getByText("Total cards (O/U 3.5)")).toBeTruthy();
+    expect(screen.getByText("62%")).toBeTruthy();
+  });
+
+  it("renders nothing for total corners when the fixture has no such prediction yet", () => {
+    // Matches how the real data looks before both teams have corners
+    // synced — the market simply doesn't appear in the fixture's predictions.
+    const { container } = render(<PredictionCard predictions={predictions} market="total_corners" />);
+    expect(container.innerHTML).toBe("");
   });
 });

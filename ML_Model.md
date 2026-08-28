@@ -40,6 +40,40 @@ model with the Dixon & Coles (1997) low-score correlation adjustment.
    league-agnostic caveats below apply to them exactly as much as they do
    to 1X2/BTTS/O-U 2.5.
 
+## Count markets: `total_cards`, `total_corners`
+
+Location: `ml-service/app/models/count_markets.py`. A genuinely different,
+much simpler model from the goals one above — not a derivation of it.
+
+- **Why not the Poisson goals model:** there's no meaningful "attack vs.
+  opposing defense" relationship for cards or corners the way there is for
+  goals — a card is mostly a function of a team's own discipline plus the
+  referee, not directly the opponent's. So each side's own historical
+  average (`homeTeamAvgYellowCards`/`awayTeamAvgYellowCards`,
+  `homeTeamAvgCorners`/`awayTeamAvgCorners` in the request) is simply summed
+  into one combined rate, and the match total is modeled as a single Poisson
+  variable (`total_over_under()`) against a **fixed line** — 3.5 cards, 9.5
+  corners (`CARDS_LINE`/`CORNERS_LINE` in `main.py`), chosen for plausibility
+  as commonly-offered lines, not calibrated against this platform's own
+  data. Same simplification as goals' `over_under_2_5`.
+- **No data, no market — literally, per pair:** `/predict/poisson` only
+  includes `total_cards` when *both* `homeTeamAvgYellowCards` and
+  `awayTeamAvgYellowCards` are present in the request, and the same for
+  `total_corners`/corners. The backend (`generatePredictions.ts`) sends
+  `undefined`, not `0`, for a team whose `team_statistics` row doesn't have
+  that field populated yet — so a fixture can have `total_cards` but not
+  `total_corners`, or neither, depending on what's actually been synced for
+  both teams.
+- **Corners' data pipeline is the newest and least exercised in this
+  project.** Unlike every other market's inputs, `team_statistics.corners`
+  isn't written by the same sync job that populates goals — it's aggregated
+  from a brand new `fixture_statistics` table via
+  `syncFixtureStatistics.ts`/`refreshTeamCornersAverage()` (see
+  `Database.md`, `Data_Sources.md`). Until that job has actually run against
+  live fixtures, `total_corners` will simply never appear for any fixture —
+  which is the intended fail-safe (no data → no market), not a bug, but
+  worth knowing when a fixture's prediction cards are missing it.
+
 ### Known limitations (be honest about these)
 
 - **`RHO` is not fitted.** -0.1 is a commonly cited starting value in the

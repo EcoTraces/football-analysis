@@ -18,7 +18,9 @@ const SAMPLE_STATS: ProviderTeamStatistics = {
   goalsAgainstHome: 8,
   goalsAgainstAway: 10,
   cleanSheets: 7,
-  failedToScore: 3
+  failedToScore: 3,
+  yellowCards: 45,
+  redCards: 2
 };
 
 class FakeProvider implements FootballDataProvider {
@@ -56,6 +58,9 @@ class FakeProvider implements FootballDataProvider {
     return { ok: false as const, reason: "not_configured" as const, message: "unused", provider: this.name };
   }
   async getOdds() {
+    return { ok: false as const, reason: "not_configured" as const, message: "unused", provider: this.name };
+  }
+  async getFixtureStatistics() {
     return { ok: false as const, reason: "not_configured" as const, message: "unused", provider: this.name };
   }
 }
@@ -97,6 +102,24 @@ describe("syncTeamStatistics", () => {
 
     const homeHomeScope = stats.find((r) => r.team_id === "team-home" && r.scope === "home");
     expect(homeHomeScope).toMatchObject({ matches_played: 10, goals_scored: 20, goals_conceded: 8 });
+  });
+
+  it("writes yellow/red cards on the overall-scope row only, since the vendor doesn't split cards by home/away", async () => {
+    const fake = new FakeSupabase();
+    seedFixtureGraph(fake);
+    fake.seed("fixtures", [
+      { id: "fx-1", home_team_id: "team-home", away_team_id: "team-away", competition_id: "comp-1", season_id: "season-1", is_synthetic: false }
+    ]);
+    const provider = new FakeProvider();
+
+    await syncTeamStatistics(fakeClient(fake), provider, silentLogger);
+
+    const stats = fake.rows("team_statistics");
+    const homeOverall = stats.find((r) => r.team_id === "team-home" && r.scope === "overall");
+    expect(homeOverall).toMatchObject({ yellow_cards: 45, red_cards: 2 });
+
+    const homeHomeScope = stats.find((r) => r.team_id === "team-home" && r.scope === "home");
+    expect(homeHomeScope?.yellow_cards).toBeNull();
   });
 
   it("calls the provider with the correct external ids, not internal UUIDs", async () => {

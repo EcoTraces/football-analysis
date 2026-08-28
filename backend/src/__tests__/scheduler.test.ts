@@ -9,6 +9,7 @@ import {
   runFixturesSync,
   runLineupsSync,
   runOddsSync,
+  runFixtureStatisticsSync,
   runPredictions,
   guarded,
   FIXTURES_SYNC_CRON,
@@ -17,6 +18,7 @@ import {
   STANDINGS_SYNC_CRON,
   LINEUPS_SYNC_CRON,
   ODDS_SYNC_CRON,
+  FIXTURE_STATISTICS_SYNC_CRON,
   PREDICTIONS_CRON
 } from "../scheduler/scheduler.js";
 
@@ -33,6 +35,7 @@ class StubProvider implements FootballDataProvider {
   getLineup: FootballDataProvider["getLineup"] = () => notConfigured(this.name);
   getStandings: FootballDataProvider["getStandings"] = () => notConfigured(this.name);
   getOdds: FootballDataProvider["getOdds"] = () => notConfigured(this.name);
+  getFixtureStatistics: FootballDataProvider["getFixtureStatistics"] = () => notConfigured(this.name);
 }
 
 function fakeLogger(): Logger {
@@ -52,13 +55,14 @@ describe("scheduler", () => {
       STANDINGS_SYNC_CRON,
       LINEUPS_SYNC_CRON,
       ODDS_SYNC_CRON,
+      FIXTURE_STATISTICS_SYNC_CRON,
       PREDICTIONS_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
   });
 
-  it("schedules all six sync jobs plus predictions when a real provider is configured", () => {
+  it("schedules all seven sync jobs plus predictions when a real provider is configured", () => {
     const logger = fakeLogger();
     const scheduler = startScheduler({
       supabase: fakeClient(new FakeSupabase()),
@@ -75,6 +79,7 @@ describe("scheduler", () => {
         "sync_standings",
         "sync_lineups",
         "sync_odds",
+        "sync_fixture_statistics",
         "predictions"
       ].sort()
     );
@@ -186,6 +191,44 @@ describe("scheduler", () => {
     };
 
     await runOddsSync({ supabase: fakeClient(fake), provider, mlServiceUrl: "http://localhost:8000", logger: fakeLogger() });
+
+    expect(calls).toEqual(["1"]);
+  });
+
+  it("runFixtureStatisticsSync uses the 72h window, excluding a finished fixture 100h in the past", async () => {
+    const fake = new FakeSupabase();
+    const now = Date.now();
+    fake.seed("teams", [{ id: "team-home", external_ref: { api_football: "33" } }, { id: "team-away", external_ref: { api_football: "34" } }]);
+    fake.seed("fixtures", [
+      {
+        id: "fx-recent",
+        season_id: "season-1",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        external_ref: { api_football: "1" },
+        is_synthetic: false,
+        status: "finished",
+        kickoff_utc: new Date(now - 10 * 3600_000).toISOString()
+      },
+      {
+        id: "fx-old",
+        season_id: "season-1",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        external_ref: { api_football: "2" },
+        is_synthetic: false,
+        status: "finished",
+        kickoff_utc: new Date(now - 100 * 3600_000).toISOString()
+      }
+    ]);
+    const provider = new StubProvider("fake-provider");
+    const calls: string[] = [];
+    provider.getFixtureStatistics = (fixtureExternalId: string) => {
+      calls.push(fixtureExternalId);
+      return Promise.resolve({ ok: true as const, data: [], sourceTimestamp: new Date().toISOString(), provider: provider.name });
+    };
+
+    await runFixtureStatisticsSync({ supabase: fakeClient(fake), provider, mlServiceUrl: "http://localhost:8000", logger: fakeLogger() });
 
     expect(calls).toEqual(["1"]);
   });

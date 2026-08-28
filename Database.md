@@ -94,7 +94,8 @@ never does.
 | `venues`, `teams`, `managers`, `team_managers`, `players`, `referees` | Football entities |
 | `fixtures` | Matches — scheduled through finished, with scores and importance tags |
 | `standings` | League table snapshots per season |
-| `team_statistics` | Per-team stats by scope (`overall`/`home`/`away`/`last_5`/`last_10`) |
+| `team_statistics` | Per-team stats by scope (`overall`/`home`/`away`/`last_5`/`last_10`) — `yellow_cards`/`red_cards` and `corners` (0005) are season totals/averages, `overall` scope only |
+| `fixture_statistics` (0005) | Per-fixture, per-team box-score stats — today, only `corners` (the one field not in `/teams/statistics`'s season aggregate); aggregated into `team_statistics.corners` by `syncFixtureStatistics.ts` |
 | `injuries` | Player availability, status enum (`injured`/`suspended`/`international_duty`/`doubtful`/`returned`) |
 | `lineups` | Expected vs. confirmed XI per fixture (`confirmation_status`) |
 | `odds_snapshots` | Bookmaker odds per market/selection, timestamped |
@@ -116,6 +117,12 @@ never does.
   it (sign up a user, confirm they can't PATCH their own `role` via the
   Supabase client, confirm `POST /admin/users/:id/role` still works) before
   relying on it in production.
+- `0005_fixture_statistics_and_cards.sql` (new `fixture_statistics` table,
+  new `team_statistics.yellow_cards`/`red_cards` columns) has not been run
+  against a real Postgres/Supabase project either — same caveat as every
+  migration in this file. Apply it and confirm `syncFixtureStatistics.ts`'s
+  upserts actually behave as documented (partial column update on conflict,
+  not a full-row overwrite) before relying on it.
 - Real fixtures and `overall`/`home`/`away` team statistics can now be
   synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
   run on non-synthetic fixtures once both have been run — but this hasn't

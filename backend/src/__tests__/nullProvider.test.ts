@@ -11,7 +11,9 @@ describe("NullProvider", () => {
       provider.getTeamStatistics("1", "39", "2026"),
       provider.getInjuries("1", "2026"),
       provider.getLineup("1"),
-      provider.getStandings("1", "2026")
+      provider.getStandings("1", "2026"),
+      provider.getOdds("1"),
+      provider.getFixtureStatistics("1")
     ]);
 
     for (const result of results) {
