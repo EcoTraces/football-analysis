@@ -472,8 +472,43 @@
   against a live API-Football key** — same caveat as every fixed line in
   `ML_Model.md` (`TEAM_TOTAL_GOALS_LINE = 1.5`, `HANDICAP_HOME_LINE =
   -1.5` chosen for plausibility, not fitted).
-- [ ] Backtesting pipeline: load historical results, walk-forward
-  train/validation/test split, write to `model_evaluations`.
+- [x] Backtesting pipeline (`backend/src/jobs/runBacktest.ts`): walk-forward
+  evaluation of the `1x2` market only (the other ~20 markets aren't
+  backtested yet). The core design problem: `team_statistics` is a single
+  current snapshot, not a time series, so using it to predict a historical
+  fixture would leak future-season data into that "historical" prediction
+  (lookahead bias) and make the backtest lie about how good the model
+  actually is. Solved by `computePointInTimeStrength()`, which recomputes
+  each team's strength directly from `fixtures`' own finished, non-synthetic
+  match history strictly **before** the fixture being backtested — never
+  from `team_statistics`. For each qualifying fixture (same
+  `MIN_MATCHES_FOR_PREDICTION = 3` threshold as live predictions, now
+  exported from `generatePredictions.ts` for reuse), calls the real
+  `PredictionClient.predictPoisson()` and scores the result against what
+  actually happened: accuracy (argmax match), log loss (clamped away from
+  probability 0 so one bad forecast can't make a run's average infinite),
+  and Brier score (standard multi-class form — summed over the three
+  outcomes per fixture, averaged over fixtures). Writes one
+  `model_evaluations` row per run — the first writer that table has ever
+  had. `runLatestBacktestJob()` gets the same `ingestion_runs` bookkeeping
+  every sync job has, but is **deliberately not wired into the scheduler**
+  — this is an occasional, admin-triggered evaluation over a chosen date
+  range, not ongoing ingestion. New admin routes: `POST
+  /admin/backtest/run?from=&to=&competitionId=` (rate limited like every
+  other trigger; 366-day range cap) and `GET /admin/backtest/results`. New
+  `AdminDashboard.tsx` panel (from/to date pickers, "Run backtest" button,
+  a results table) so this is never a curl-only capability. 5 new backend
+  tests (184/184 total, was 179) — most importantly, a direct test proving
+  `computePointInTimeStrength()` excludes a fixture at or after the target
+  kickoff (a simultaneous result isn't "prior" data either), plus a test
+  proving the accuracy/log-loss/Brier-score math against known synthetic
+  predictions, and one proving fixtures below the match-count threshold are
+  skipped and write no row. 3 new frontend tests (32/32 total, was 29).
+  **The pipeline is real and tested against synthetic/fake data, but has
+  never been run against real historical results** — no live API-Football
+  key has ever been connected in this environment, so there is no real
+  fixture history to backtest against; see `ML_Model.md`'s "Backtesting"
+  section for the full caveat.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare
   against the Poisson baseline before calling anything an "ensemble."
 - [ ] Fit the Dixon-Coles `RHO` parameter from real data instead of using

@@ -3,6 +3,8 @@ import type {
   AdminUserSummary,
   ApiEnvelope,
   ApiFootballHealth,
+  BacktestEvaluation,
+  BacktestRunResult,
   DataHealth,
   FixtureSummary,
   IngestionRun,
@@ -122,4 +124,26 @@ export const SYNC_ACTIONS: SyncAction[] = [
 /** Triggers one sync/prediction job with the backend's own defaults. Response shape varies by job — see API.md. */
 export function triggerSync(accessToken: string, path: string): Promise<ApiEnvelope<Record<string, unknown>>> {
   return authedRequest<ApiEnvelope<Record<string, unknown>>>(path, accessToken, { method: "POST" });
+}
+
+// --- Admin: backtesting ---
+// Separate from SYNC_ACTIONS/triggerSync above — a backtest run needs an
+// admin-chosen date range, not a fixed default window, so it gets its own
+// request builder rather than a fire-with-defaults SyncAction entry.
+
+/** Runs a walk-forward 1x2 backtest over [from, to] (ISO date/timestamp strings) and writes one model_evaluations row. */
+export function runBacktest(
+  accessToken: string,
+  from: string,
+  to: string,
+  competitionId?: string
+): Promise<ApiEnvelope<BacktestRunResult>> {
+  const params = new URLSearchParams({ from, to });
+  if (competitionId) params.set("competitionId", competitionId);
+  return authedRequest<ApiEnvelope<BacktestRunResult>>(`/admin/backtest/run?${params.toString()}`, accessToken, { method: "POST" });
+}
+
+/** Past backtest runs, newest first. */
+export function getBacktestResults(accessToken: string, limit = 20): Promise<ApiEnvelope<BacktestEvaluation[]>> {
+  return authedRequest<ApiEnvelope<BacktestEvaluation[]>>(`/admin/backtest/results?limit=${limit}`, accessToken);
 }

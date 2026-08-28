@@ -3,9 +3,11 @@ import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
 import type { PlayerCandidateInput } from "../services/predictionClient.js";
 
-const LEAGUE_AVG_HOME_GOALS = 1.5; // conservative cross-league default; see ML_Model.md
-const LEAGUE_AVG_AWAY_GOALS = 1.1;
-const MIN_MATCHES_FOR_PREDICTION = 3;
+// Exported for reuse by runBacktest.ts, which needs the same thresholds to
+// stay comparable with live predictions rather than silently drifting.
+export const LEAGUE_AVG_HOME_GOALS = 1.5; // conservative cross-league default; see ML_Model.md
+export const LEAGUE_AVG_AWAY_GOALS = 1.1;
+export const MIN_MATCHES_FOR_PREDICTION = 3;
 
 interface TeamStatsRow {
   matches_played: number;

@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-08-28 — Backtesting pipeline (walk-forward, 1x2 market)
+
+`model_evaluations` has had a schema since the very first migration and no
+writer until now. `backend/src/jobs/runBacktest.ts` adds one, scoped
+deliberately to the `1x2` market only.
+
+- The core design problem this pipeline exists to solve: `team_statistics`
+  is a single current snapshot, not a time series, so predicting a
+  historical fixture from it would leak future-season data into that
+  "historical" prediction (lookahead bias) and make the backtest lie about
+  how good the model actually is. Solved with `computePointInTimeStrength()`
+  — recomputes a team's strength directly from `fixtures`' own finished,
+  non-synthetic match history strictly **before** the fixture being
+  backtested, never from `team_statistics`.
+- For each qualifying fixture in an admin-chosen `[from, to]` range (same
+  `MIN_MATCHES_FOR_PREDICTION = 3` gate as live predictions, now exported
+  from `generatePredictions.ts`), calls the real
+  `PredictionClient.predictPoisson()` — the live-prediction code path, not
+  a shortcut — and scores the `1x2` result against what actually happened:
+  accuracy (argmax match), log loss (clamped away from probability 0),
+  and Brier score (standard multi-class form, summed over the three
+  outcomes per fixture, averaged over fixtures). Writes one
+  `model_evaluations` row per run.
+- `runLatestBacktestJob()` gets the same `ingestion_runs` bookkeeping every
+  sync job has, but is **deliberately not on the scheduler** — this is an
+  occasional, admin-triggered evaluation over a chosen window, not ongoing
+  ingestion.
+- New admin routes: `POST /admin/backtest/run?from=&to=&competitionId=`
+  (rate limited, 366-day range cap) and `GET /admin/backtest/results`.
+- New `AdminDashboard.tsx` panel: from/to date pickers, a "Run backtest"
+  button, and a results table — so this is never a curl-only capability.
+- `testSupabaseFake.ts` gained `.lt()` (strict less-than), needed for the
+  point-in-time query — a fixture at exactly the target's kickoff isn't
+  "prior" data either, so `.lte()` would have been wrong here.
+- Test counts: backend 184/184 (was 179) — most importantly, a direct test
+  proving `computePointInTimeStrength()` excludes a fixture at or after the
+  target kickoff, and a test proving the accuracy/log-loss/Brier-score math
+  against known synthetic predictions; frontend 32/32 (was 29). ml-service
+  untouched (no changes needed — this is entirely a backend job reusing the
+  existing `/predict/poisson` endpoint). `tsc`/`eslint`/`npm run build`
+  clean on both.
+- **The pipeline is real and tested against synthetic/fake data, but has
+  never been run against real historical results.** No live API-Football
+  key has ever been connected in this environment, so there is no real
+  fixture history to backtest against — `model_evaluations` remains empty
+  in practice. See `ML_Model.md`'s "Backtesting" section.
+
 ## 2026-08-28 — 8 more markets: clean sheet, odd/even, DNB, team totals, two joint markets, handicap, win-a-half
 
 Requested by name, all in one round. Unlike the last three entries, every

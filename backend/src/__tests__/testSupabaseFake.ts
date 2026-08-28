@@ -132,6 +132,14 @@ export class FakeSupabase {
             filters.push((row) => (resolvePath(row, column) as string | number) <= (value as string | number));
             return builder;
           },
+          // Strict less-than — needed by backtestService.ts's point-in-time
+          // query (a fixture strictly before the one being backtested, not
+          // on-or-before, since a simultaneous kickoff's result isn't
+          // "prior" data either).
+          lt(column: string, value: unknown) {
+            filters.push((row) => (resolvePath(row, column) as string | number) < (value as string | number));
+            return builder;
+          },
           order(column: string, options?: { ascending?: boolean }) {
             orderColumn = column;
             orderAscending = options?.ascending !== false;

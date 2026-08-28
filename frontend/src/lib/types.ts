@@ -140,3 +140,29 @@ export interface AdminDataHealthCounts {
   syntheticFixtures: number;
   currentPredictions: number;
 }
+
+// One walk-forward backtest run's aggregate result (see backend/src/jobs/runBacktest.ts).
+export interface BacktestRunResult {
+  runId: string | null;
+  modelVersionId: string | null;
+  evaluationId: string | null;
+  sampleSize: number;
+  skipped: number;
+  accuracy: number | null;
+  logLoss: number | null;
+  brierScore: number | null;
+}
+
+// A row from model_evaluations, as written by a backtest run.
+export interface BacktestEvaluation {
+  id: string;
+  model_version_id: string;
+  competition_id: string | null;
+  market: string;
+  evaluation_window: string;
+  accuracy: number | null;
+  log_loss: number | null;
+  brier_score: number | null;
+  sample_size: number;
+  created_at: string;
+}

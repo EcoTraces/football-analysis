@@ -219,9 +219,12 @@ data, which required a brand-new ingestion pipeline — `player_statistics`,
 ### Known limitations (be honest about these)
 
 - **`RHO` is not fitted.** -0.1 is a commonly cited starting value in the
-  literature, not a value calibrated against this platform's own data. Until
-  a backtesting pipeline exists (`Task.md`), treat this model's calibration
-  as unverified.
+  literature, not a value calibrated against this platform's own data. A
+  backtesting pipeline now exists (see "Backtesting" below), but it has
+  never actually been run against real historical results in this
+  environment — no live API-Football key has ever been connected here, so
+  there is no real fixture history to backtest against. Treat this model's
+  calibration as unverified until someone runs it against real data.
 - **League-agnostic.** The same `RHO` and the caller-supplied league
   averages are the only place league identity enters the model. No
   league-specific home-advantage effect is modeled yet (spec section 16).
@@ -232,9 +235,11 @@ data, which required a brand-new ingestion pipeline — `player_statistics`,
 - **Single model, not an ensemble.** Spec section 19 calls for comparing
   multiple algorithms (logistic regression, gradient boosting, etc.) and
   using an ensemble where it outperforms. Only the Poisson baseline exists.
-- **No backtesting.** `model_evaluations` (accuracy, log loss, Brier score,
-  calibration) has no writer. Nothing in this repo currently proves this
-  model is any good — it's mathematically consistent, not validated.
+- **Backtesting exists but is unrun.** `model_evaluations` now has a writer
+  (see "Backtesting" below), but it has never been executed against real
+  data — there is no real fixture history in this environment to backtest
+  against. Nothing in this repo currently proves this model is any good;
+  it's mathematically consistent, not validated.
 
 ### Data quality and confidence
 
@@ -252,6 +257,64 @@ inputs the model actually used (expected-goals gap, conceding rate,
 sample size) — never claims about tactics, injuries, or anything outside
 this model's inputs. Directional factors are polarity-flipped for the away
 selection; sample-size caveats are not (see code comments).
+
+## Backtesting
+
+`backend/src/jobs/runBacktest.ts` implements a genuine walk-forward
+backtest of the **1x2 market only** (none of the other ~20 markets this
+platform predicts are backtested yet). An admin picks a `[from, to]` date
+range; for every finished, non-synthetic fixture whose kickoff falls in
+that range, the job:
+
+1. Recomputes both teams' strength (`goals_scored_avg`, `goals_conceded_avg`,
+   `matches_played`) via `computePointInTimeStrength()` — aggregated
+   directly from `fixtures` rows that are `status = 'finished'`,
+   `is_synthetic = false`, and have `kickoff_utc` **strictly before** the
+   fixture being backtested. This is the one detail the whole pipeline
+   exists to get right: `team_statistics` is a single current snapshot, not
+   a time series, so using it for a historical fixture would leak
+   knowledge of matches that hadn't happened yet at that fixture's kickoff
+   (lookahead bias) — silently making the backtest look better than any
+   real prediction could have been. Point-in-time computation from
+   fixtures' own results avoids that entirely.
+2. Skips the fixture (like live predictions) if either team has fewer than
+   `MIN_MATCHES_FOR_PREDICTION` (3) prior matches at that point in time.
+3. Calls the real `PredictionClient.predictPoisson()` — the same code path
+   live predictions use, not a shortcut — with those point-in-time
+   strengths.
+4. Scores the returned `1x2` probabilities against what actually happened:
+   **accuracy** (did the highest-probability selection match the result),
+   **log loss** (`-ln(p_actual)`, clamped away from exactly 0 so one
+   zero-probability forecast can't make the run's average infinite), and
+   **Brier score** (the standard multi-class form: sum of
+   `(forecast - indicator)^2` over the three outcomes per fixture, averaged
+   over fixtures — not further divided by the outcome count).
+5. Writes exactly one `model_evaluations` row per run (`market: "1x2"`,
+   `evaluation_window: "<from>..<to>"`), or none if zero fixtures qualified.
+
+`runLatestBacktestJob()` wraps this with the same `ingestion_runs`
+bookkeeping every sync job gets (so a backtest run shows up in the admin
+job history), but **is deliberately not wired into the scheduler**
+(`scheduler.ts`) — backtesting is an occasional evaluation an admin
+triggers over a chosen window, not ongoing ingestion.
+
+Admin routes: `POST /admin/backtest/run?from=&to=&competitionId=` (rate
+limited like every other sync/prediction trigger) and
+`GET /admin/backtest/results?limit=` to read back past runs — see `API.md`.
+A small panel on the admin dashboard (`AdminDashboard.tsx`) exposes both,
+so this is never a curl-only capability.
+
+**What this does and doesn't prove.** The pipeline itself is real and unit
+tested — in particular, a dedicated test proves
+`computePointInTimeStrength()` genuinely excludes a fixture at or after the
+target kickoff (a simultaneous result is not "prior" data either), and
+another proves the accuracy/log-loss/Brier-score math against known
+synthetic predictions. What it has **not** done is run against real
+historical results: no live API-Football key has ever been connected in
+this environment, so there is no real fixture history to backtest against.
+Running it for real, and using the resulting `model_evaluations` rows to
+decide whether `RHO = -0.1` or any other fixed constant in this model is
+actually any good, is future work.
 
 ## Adding a new model
 

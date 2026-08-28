@@ -142,8 +142,12 @@ never does.
   current job — the vendor's aggregated stats endpoint doesn't break
   results down match-by-match, so those scopes need a future results-sync
   job instead (see `Data_Sources.md`).
-- `model_evaluations` has no writer yet — no backtesting job exists (see
-  `ML_Model.md`, `Task.md`).
+- `model_evaluations` now has a writer: `backend/src/jobs/runBacktest.ts`
+  writes one row per walk-forward backtest run of the `1x2` market (see
+  `ML_Model.md`'s "Backtesting" section). It has never actually been run
+  against real data in this environment — no live API-Football key has
+  ever been connected, so there's no real fixture history to backtest
+  against — so the table remains empty in practice; only the writer exists.
 - `teams.country_id` and `competitions.competition_type` are not correctly
   populated by fixture ingestion — see `Data_Sources.md`'s "Known
   limitation" notes.

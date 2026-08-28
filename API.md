@@ -200,6 +200,30 @@ behavior as the other sync endpoints.
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.
 
+### `POST /admin/backtest/run?from=&to=&competitionId=`
+Runs a walk-forward backtest of the `1x2` market over finished,
+non-synthetic fixtures whose `kickoff_utc` falls in `[from, to]`
+(required; any string `Date` can parse; range capped at 366 days),
+optionally restricted to one `competitionId`. Team strength for each
+fixture is recomputed point-in-time from `fixtures`' own prior results
+(never from the current `team_statistics` snapshot — see `ML_Model.md`'s
+"Backtesting" section for why). Writes one `model_evaluations` row per run.
+Same `syncTriggerLimit` rate limiting as every other sync/prediction
+trigger. `400 invalid_query` if `from`/`to` are missing, unparseable,
+`from` is after `to`, or the range exceeds 366 days. `409
+no_model_version` if no `poisson-baseline` model version exists yet.
+Returns `{ runId, modelVersionId, evaluationId, sampleSize, skipped,
+accuracy, logLoss, brierScore }` — all four metric fields are `null` when
+`sampleSize` is 0 (nothing in range had enough point-in-time history to
+predict from). Deliberately not on the scheduler — an admin picks the
+window each time.
+
+### `GET /admin/backtest/results?limit=N`
+Past backtest runs from `model_evaluations`, newest first (`limit` default
+50, capped at 200). Returns `{ id, model_version_id, competition_id,
+market, evaluation_window, accuracy, log_loss, brier_score, sample_size,
+created_at }[]`.
+
 ### `GET /admin/data-health`
 Counts of production fixtures, synthetic fixtures, and current predictions.
 

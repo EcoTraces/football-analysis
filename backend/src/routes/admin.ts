@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
+import { runLatestBacktestJob } from "../jobs/runBacktest.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
@@ -20,6 +21,18 @@ const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync
 const MAX_KICKOFF_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS; shared by lineups and odds sync.
 const MAX_JOB_HISTORY_LIMIT = 200;
 const JOB_HISTORY_SUMMARY_SAMPLE = 500; // Rows scanned client-side to compute "last run per job" — see /admin/jobs/summary.
+const MAX_BACKTEST_RANGE_DAYS = 366; // Each fixture in range costs two point-in-time queries plus one prediction call — bound the blast radius of one request.
+const MAX_BACKTEST_RESULTS_LIMIT = 200;
+
+const isoDateString = z.string().refine((v) => !Number.isNaN(new Date(v).getTime()), { message: "must be a valid date/timestamp" });
+
+const backtestRunQuerySchema = z
+  .object({ from: isoDateString, to: isoDateString, competitionId: z.string().uuid().optional() })
+  .refine((v) => new Date(v.from).getTime() <= new Date(v.to).getTime(), { message: "from must not be after to" })
+  .refine(
+    (v) => (new Date(v.to).getTime() - new Date(v.from).getTime()) / (1000 * 60 * 60 * 24) <= MAX_BACKTEST_RANGE_DAYS,
+    { message: `Backtest range cannot exceed ${MAX_BACKTEST_RANGE_DAYS} days` }
+  );
 
 // Every sync/prediction trigger below makes real outbound calls to a
 // rate/cost-limited third-party API once one is configured — the app-wide
@@ -268,6 +281,57 @@ export function createAdminRouter(
         return;
       }
       res.json({ data: { runId: result.runId, processed: result.processed, skipped: result.skipped, failed: result.failed } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Walk-forward backtest of the 1x2 market over a chosen date range — see
+  // runBacktest.ts. Deliberately not on the scheduler: an admin picks the
+  // window each time, so this only ever runs on explicit request.
+  router.post("/admin/backtest/run", syncTriggerLimit, async (req, res, next) => {
+    try {
+      const parsed = backtestRunQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_query");
+      }
+
+      const result = await runLatestBacktestJob(supabase, mlServiceUrl, logger, {
+        from: new Date(parsed.data.from).toISOString(),
+        to: new Date(parsed.data.to).toISOString(),
+        competitionId: parsed.data.competitionId
+      });
+
+      if (!result.modelVersionId) {
+        res.status(409).json({
+          error: { code: "no_model_version", message: "No poisson-baseline model_version row exists yet." }
+        });
+        return;
+      }
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Reads back model_evaluations rows written by backtest runs — the
+  // "did the backtest I ran actually produce anything" view, since
+  // /admin/backtest/run's own response is ephemeral once the page reloads.
+  router.get("/admin/backtest/results", async (req, res, next) => {
+    try {
+      const limitParam = Number(req.query.limit ?? 50);
+      const limit = Number.isFinite(limitParam)
+        ? Math.min(Math.max(Math.trunc(limitParam), 1), MAX_BACKTEST_RESULTS_LIMIT)
+        : 50;
+
+      const { data, error } = await supabase
+        .from("model_evaluations")
+        .select("id, model_version_id, competition_id, market, evaluation_window, accuracy, log_loss, brier_score, sample_size, created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (error) throw new Error(error.message);
+
+      res.json({ data: data ?? [] });
     } catch (err) {
       next(err);
     }
