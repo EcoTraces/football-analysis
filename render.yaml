@@ -1,17 +1,19 @@
-# Render Blueprint for the backend API — https://render.com/docs/blueprint-spec
+# Render Blueprint for the backend API and ML service — https://render.com/docs/blueprint-spec
 #
-# Deploys backend/Dockerfile as a web service. Nothing else in this repo is
-# deployed here: the ML service (predictions) and the frontend are separate
-# pieces with their own deploy targets — see Deployment.md. Fields marked
-# `sync: false` are secrets/environment-specific values Render will prompt
-# for when you create the Blueprint (or that you set later in the
-# service's Environment tab) rather than values baked into this file —
-# never put a real key/secret directly in this file, since it's committed
-# to the repo.
+# Deploys backend/Dockerfile and ml-service/Dockerfile as two web services.
+# The frontend is a separate deploy target (a static build — see
+# Deployment.md and its Vercel section) so it isn't in this Blueprint.
+# Fields marked `sync: false` are secrets/environment-specific values
+# Render will prompt for when you create the Blueprint (or that you set
+# later in the service's Environment tab) rather than values baked into
+# this file — never put a real key/secret directly in this file, since
+# it's committed to the repo.
 #
-# PORT is deliberately not set here: Render injects its own PORT into the
-# container, and backend/src/config/env.ts already reads process.env.PORT
-# with no hardcoded default that would conflict.
+# PORT is deliberately not set on either service: Render injects its own
+# PORT into the container, and both backend/src/config/env.ts and
+# ml-service/Dockerfile's CMD read it (process.env.PORT /
+# ${PORT:-8000} respectively) with no hardcoded default that would
+# conflict.
 
 services:
   - type: web
@@ -43,3 +45,16 @@ services:
         value: "120"
       - key: SCHEDULER_ENABLED
         value: "false"
+
+  # Stateless — no database, no external calls, no env vars of its own to
+  # configure. Once deployed, copy its public URL into the backend
+  # service's own ML_SERVICE_URL (Environment tab) so
+  # POST /admin/predictions/run can actually reach it.
+  - type: web
+    name: football-analysis-ml-service
+    runtime: docker
+    dockerfilePath: ./ml-service/Dockerfile
+    dockerContext: ./ml-service
+    plan: free
+    region: oregon
+    healthCheckPath: /health

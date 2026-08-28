@@ -125,6 +125,41 @@ Static build (`npm run build` → `dist/`) servable from any static host
 `frontend/Dockerfile` nginx image). Set `VITE_API_BASE_URL` to the deployed
 backend's public URL at build time.
 
+### Deploying the frontend to Vercel
+
+No `vercel.json` exists in this repo — Vercel's own framework detection
+(it auto-detects Vite from `frontend/package.json`) is enough, given one
+setting below that isn't a default.
+
+1. In the Vercel dashboard: **Add New → Project**, import the
+   `EcoTraces/football-analysis` repo (Vercel prompts to connect GitHub
+   the first time).
+2. **Root Directory must be set to `frontend`** — this is a monorepo with
+   three services at the repo root, and Vercel builds from the repo root
+   by default, which would fail (no `package.json` there). This is the
+   one setting to change; everything else Vercel infers correctly once
+   Root Directory is right (Framework Preset: Vite, Build Command:
+   `npm run build`, Output Directory: `dist`).
+3. Under **Environment Variables**, add the three the frontend needs (see
+   `frontend/.env.example`):
+   - `VITE_API_BASE_URL` — the deployed backend's public URL plus `/api`,
+     e.g. `https://football-analysis-backend.onrender.com/api`
+   - `VITE_SUPABASE_URL` — same value as `backend/.env`'s `SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY` — the anon/publishable key, **not** the
+     service role key
+4. Deploy. Vercel builds and gives you a `*.vercel.app` URL.
+5. **Update the backend's `ALLOWED_ORIGINS`** (Render → the backend
+   service → Environment tab) to include this Vercel URL — the backend's
+   CORS check (`backend/src/index.ts`) rejects requests from any origin
+   not in that comma-separated list, so sign-in/API calls from the
+   deployed frontend will otherwise fail silently in the browser console
+   with a CORS error, not a clear "misconfigured" message. Redeploy the
+   backend (or it may pick up the env change on its own, depending on
+   Render's settings) after changing it.
+6. Confirm end-to-end: open the Vercel URL, sign up, and check the
+   Network tab for `200`s against the Render backend rather than CORS
+   failures.
+
 ## docker-compose (local/staging only)
 
 `docker-compose.yml` at the repo root runs all three services together.
