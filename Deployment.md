@@ -84,6 +84,24 @@ configure).
    once the service is live, using its real public URL instead of
    `localhost:8080`.
 
+**Node version note (found via an actual Render deploy):** the backend
+requires **Node 22+** at runtime, not just build time — `backend/Dockerfile`
+and `frontend/Dockerfile` are pinned to `node:22-slim` and
+`backend/package.json`'s `engines.node` is `>=22`. This isn't an arbitrary
+preference: `@supabase/supabase-js`'s `realtime-js` dependency constructs a
+`RealtimeClient` (unconditionally, as part of `createClient()`) that
+requires the runtime's native `WebSocket` global, which only exists
+built-in from Node 22 onward — on Node 20 it throws `Error: Node.js
+detected but native WebSocket not found` the instant the app tries to
+create its Supabase client, crashing on boot before serving a single
+request. This was invisible in every unit test in this repo (they use
+`FakeSupabase`, never a real `createClient()` call) and in this
+environment's own dev/CI setup (both defaulted to Node 20 without ever
+actually booting `dist/index.js` for real) — it only surfaced the first
+time this project was actually deployed to a real host. `.github/workflows/ci.yml`
+and `README.md`'s stated requirement were updated to Node 22 alongside the
+Dockerfiles once this was found, so this doesn't regress silently again.
+
 Render's free-tier web services spin down after a period of inactivity
 and take a few seconds to wake back up on the next request — expect a
 slow first request after idling, not a real outage. This also interacts

@@ -154,7 +154,7 @@ supabase/
 
 ## Running locally
 
-Requires Node 20+, Python 3.12+, and a Supabase project (or local Supabase
+Requires Node 22+, Python 3.12+, and a Supabase project (or local Supabase
 via the Supabase CLI).
 
 ```bash
