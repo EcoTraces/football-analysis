@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
@@ -17,6 +18,23 @@ const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync
 const MAX_KICKOFF_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS; shared by lineups and odds sync.
 const MAX_JOB_HISTORY_LIMIT = 200;
 const JOB_HISTORY_SUMMARY_SAMPLE = 500; // Rows scanned client-side to compute "last run per job" — see /admin/jobs/summary.
+
+// Every sync/prediction trigger below makes real outbound calls to a
+// rate/cost-limited third-party API once one is configured — the app-wide
+// rate limiter in index.ts (120 req/60s) is far too generous for these
+// specifically, since nothing about normal operation (an occasional manual
+// trigger, or the scheduler's own much slower cadence) needs anywhere near
+// that. Keyed by the authenticated admin's user id (set by requireAdmin,
+// which always runs first via router.use() below) rather than IP, so
+// multiple admins behind the same office/NAT IP don't share one budget.
+const syncTriggerLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.authUser?.id ?? req.ip ?? "unknown",
+  message: { error: { code: "rate_limited", message: "Too many sync triggers — wait a few minutes before retrying." } }
+});
 
 export interface IngestionRunRow {
   id: string;
@@ -137,7 +155,7 @@ export function createAdminRouter(
   const router = Router();
   router.use(createRequireAdmin(supabase));
 
-  router.post("/admin/sync", async (req, res, next) => {
+  router.post("/admin/sync", syncTriggerLimit, async (req, res, next) => {
     try {
       requireProvider(provider);
 
@@ -156,7 +174,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/team-statistics/sync", async (_req, res, next) => {
+  router.post("/admin/team-statistics/sync", syncTriggerLimit, async (_req, res, next) => {
     try {
       requireProvider(provider);
       const result = await syncTeamStatistics(supabase, provider, logger);
@@ -166,7 +184,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/injuries/sync", async (_req, res, next) => {
+  router.post("/admin/injuries/sync", syncTriggerLimit, async (_req, res, next) => {
     try {
       requireProvider(provider);
       const result = await syncInjuries(supabase, provider, logger);
@@ -176,7 +194,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/standings/sync", async (_req, res, next) => {
+  router.post("/admin/standings/sync", syncTriggerLimit, async (_req, res, next) => {
     try {
       requireProvider(provider);
       const result = await syncStandings(supabase, provider, logger);
@@ -186,7 +204,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/lineups/sync", async (req, res, next) => {
+  router.post("/admin/lineups/sync", syncTriggerLimit, async (req, res, next) => {
     try {
       requireProvider(provider);
 
@@ -200,7 +218,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/odds/sync", async (req, res, next) => {
+  router.post("/admin/odds/sync", syncTriggerLimit, async (req, res, next) => {
     try {
       requireProvider(provider);
 
@@ -214,7 +232,7 @@ export function createAdminRouter(
     }
   });
 
-  router.post("/admin/predictions/run", async (_req, res, next) => {
+  router.post("/admin/predictions/run", syncTriggerLimit, async (_req, res, next) => {
     try {
       const result = await runLatestPoissonPredictionsJob(supabase, mlServiceUrl, logger);
       if (!result.modelVersionId) {

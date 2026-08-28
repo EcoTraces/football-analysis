@@ -31,10 +31,14 @@ export async function getOrCreateProfile(supabase: SupabaseClient, userId: strin
 
 // Any signed-in user (not admin-gated) — used by the frontend right after
 // sign-in to find out who it's talking to and whether to show admin UI.
+// Applied via router.use() (not inline on the one route below), matching
+// every other router in this codebase, so a future second route added
+// here can't accidentally ship unauthenticated by omission.
 export function createMeRouter(supabase: SupabaseClient): Router {
   const router = Router();
+  router.use(createRequireAuth(supabase));
 
-  router.get("/me", createRequireAuth(supabase), async (req, res, next) => {
+  router.get("/me", async (req, res, next) => {
     try {
       const profile = await getOrCreateProfile(supabase, req.authUser!.id);
       res.json({

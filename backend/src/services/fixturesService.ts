@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyFreshness, type Freshness } from "../lib/freshness.js";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface FixtureFilters {
   from?: string;
   to?: string;
@@ -44,7 +46,20 @@ export async function listFixtures(
   if (filters.from) query = query.gte("kickoff_utc", filters.from);
   if (filters.to) query = query.lte("kickoff_utc", filters.to);
   if (filters.competitionId) query = query.eq("competition_id", filters.competitionId);
-  if (filters.teamId) query = query.or(`home_team_id.eq.${filters.teamId},away_team_id.eq.${filters.teamId}`);
+  if (filters.teamId) {
+    // Supabase's .or() takes a raw PostgREST filter string, not a
+    // parameterized value like .eq() does — interpolating an unvalidated
+    // teamId here would let a value containing filter syntax (commas,
+    // dots, operators) inject additional conditions into the query. The
+    // one current caller (GET /fixtures) already validates this as a UUID
+    // via zod before it reaches here, but that's an invariant this
+    // function can't see or enforce on its own, so it's checked again,
+    // defensively, right at the point the string gets built.
+    if (!UUID_PATTERN.test(filters.teamId)) {
+      throw new Error(`Invalid teamId filter: expected a UUID, got ${JSON.stringify(filters.teamId)}`);
+    }
+    query = query.or(`home_team_id.eq.${filters.teamId},away_team_id.eq.${filters.teamId}`);
+  }
   if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error } = await query;

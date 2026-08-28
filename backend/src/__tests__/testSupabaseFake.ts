@@ -107,6 +107,19 @@ export class FakeSupabase {
             filters.push((row) => resolvePath(row, column) === value);
             return builder;
           },
+          // Minimal support for the one .or() shape this codebase actually
+          // uses: a comma-separated list of "column.eq.value" conditions,
+          // OR'd together (see fixturesService.ts's teamId filter).
+          or(filterString: string) {
+            const conditions = filterString.split(",").map((cond) => {
+              const [column, op, value] = cond.split(".");
+              return { column: column!, op: op!, value: value! };
+            });
+            filters.push((row) =>
+              conditions.some((c) => (c.op === "eq" ? String(resolvePath(row, c.column)) === c.value : false))
+            );
+            return builder;
+          },
           in(column: string, values: unknown[]) {
             filters.push((row) => values.includes(resolvePath(row, column)));
             return builder;

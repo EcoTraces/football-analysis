@@ -42,6 +42,47 @@
   real browser, `/` and `/matches/:id` redirect to `/sign-in` when signed
   out. **Not yet verified against a real Supabase project's JWTs** — same
   caveat as the rest of this file.
+- [x] Manual security review (the `/security-review` automated skill could
+  not run in this environment — its git-diff hook is fixed to a different,
+  unrelated repo's working directory and cannot be redirected — so this was
+  a manual read-through of the changes made since the last review instead).
+  Found and fixed 3 issues, none critical/high:
+  - `POST /admin/sync` and the 6 other admin sync/predictions-run routes
+    (`team-statistics`, `injuries`, `standings`, `lineups`, `odds`,
+    `predictions/run`) had no rate limit beyond the app-wide global one —
+    a compromised or careless admin token could burn the API-Football
+    quota for the whole app by hammering these. Added a stricter
+    per-route limiter (`syncTriggerLimit` in `admin.ts`, 10 requests per
+    15 minutes, keyed by authenticated user id rather than IP) to exactly
+    those 7 routes. Deliberately not applied to `POST
+    /admin/users/:id/role`, which doesn't call a third-party API.
+  - `me.ts` applied `createRequireAuth` inline on its one route instead of
+    via `router.use()`, unlike every other router in this codebase — not
+    exploitable today (there was only ever the one route), but an
+    inconsistency that would silently ship a second route unauthenticated
+    if one were ever added without noticing the pattern. Changed to
+    `router.use()` to match `admin.ts`/`fixtures.ts`/etc.
+  - `fixturesService.ts`'s `teamId` filter built a raw PostgREST `.or()`
+    filter string by interpolating `filters.teamId` directly. `.eq()`
+    calls elsewhere are safely parameterized by supabase-js regardless of
+    content, but `.or()` takes a raw string — an unvalidated value
+    containing filter syntax (commas, `.`, operators) could inject
+    additional OR conditions into the query. The one caller (`GET
+    /fixtures`) already validates `teamId` as a UUID via zod before this
+    function is reached, but that's an invariant this function couldn't
+    see or enforce on its own. Added a defensive UUID-format check
+    directly in `fixturesService.ts` at the point the string is built, so
+    the function is safe even if called from somewhere that skips the
+    caller-side validation. First-ever test coverage for this file: 4 new
+    tests (`fixturesService.test.ts`), including one asserting a
+    filter-syntax `teamId` is rejected rather than silently accepted.
+    Required adding `.or()` support to the shared `FakeSupabase` test
+    double.
+  Verified: `tsc --noEmit`, `eslint`, `npm run build` all clean; full test
+  suite passes, 145/145 across 19 files (up from 141/18). **Not a
+  substitute for a real automated/third-party security audit** — this was
+  one person(+AI) reading the diff, not a tool-driven scan or a
+  professional pen test.
 - [ ] Add request logging/audit trail for admin actions (who ran
   `/admin/sync`, when, with what result; who promoted/demoted whom via the
   new `/admin/users/:id/role`) — `requireAdmin`/`requireAuth` know the

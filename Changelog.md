@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-08-28 — Manual security review + fixes
+
+The `/security-review` automated skill could not be run in this environment
+— its git-diff hook is fixed to a different, unrelated repository's working
+directory and this could not be redirected from within the session — so
+this was a manual read-through of the changes made since the last review,
+using `grep`/direct file reads and the same rigor, reported via the same
+findings format. No critical or high-severity issues found. 3 fixed:
+
+- Added a stricter per-route rate limiter (`syncTriggerLimit` in
+  `backend/src/routes/admin.ts`: 10 requests / 15 minutes, keyed by
+  authenticated user id) to all 7 admin routes that call a third-party API
+  or run predictions (`/admin/sync`, `/admin/team-statistics/sync`,
+  `/admin/injuries/sync`, `/admin/standings/sync`, `/admin/lineups/sync`,
+  `/admin/odds/sync`, `/admin/predictions/run`) — previously only the
+  app-wide global rate limit covered these, so a compromised or careless
+  admin token could burn the API-Football quota by hammering them.
+  `/admin/users/:id/role` deliberately left at just the global limit — it
+  doesn't call a third-party API.
+- `backend/src/routes/me.ts` now applies `createRequireAuth` via
+  `router.use()` instead of inline on its single route, matching every
+  other router in this codebase. Not exploitable today (there was only one
+  route), but a future second route could otherwise ship unauthenticated
+  without the pattern making that obvious.
+- `backend/src/services/fixturesService.ts`'s `teamId` filter added a
+  defensive UUID-format check before building the raw PostgREST `.or()`
+  filter string it passes to supabase-js. `.eq()` calls are always safely
+  parameterized regardless of value, but `.or()` takes a raw string —
+  interpolating an unvalidated `teamId` into it could inject additional OR
+  conditions via commas/dots/operators in the value. The only current
+  caller (`GET /fixtures`) already validates `teamId` as a UUID with zod,
+  but `fixturesService.ts` couldn't see or rely on that from its own
+  function boundary, so it checks again itself. Added first-ever test
+  coverage for this file (`fixturesService.test.ts`, 4 tests, including one
+  asserting a filter-syntax `teamId` throws instead of being accepted),
+  which required adding `.or()` support to the shared `FakeSupabase` test
+  double.
+- Verified: `tsc --noEmit`, `eslint src`, and `npm run build` all clean;
+  full backend test suite passes, 145/145 across 19 files (up from
+  141/18). **Not a substitute for a real automated or third-party security
+  audit** — this was one person(+AI) reading the diff, not a tool-driven
+  scan or a professional pen test.
+
 ## 2026-08-27 — Render deployment config for the backend
 
 - Added `render.yaml` (Render Blueprint spec, repo root): a Docker web
