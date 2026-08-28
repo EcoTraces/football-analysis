@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-08-28 — League-specific calibration (real per-competition goal averages)
+
+Fourth and final item off the original model wishlist in Task.md. The
+fixed `LEAGUE_AVG_HOME_GOALS = 1.5` / `LEAGUE_AVG_AWAY_GOALS = 1.1`
+constants were used for every fixture regardless of league — directly the
+"no league-specific home-advantage effect is modeled" gap ML_Model.md's
+known limitations already called out, since those two inputs are where a
+league's scoring rate and home advantage enter `expected_goals()`.
+
+- New migration `0007_league_calibration.sql`: one row per competition.
+- `backend/src/jobs/calibrateLeagues.ts`: `runLeagueCalibration()` fetches
+  every real, finished fixture's `(competition_id, home_score,
+  away_score)` in one pass and groups by competition in application code
+  — same "fetch raw rows, aggregate in JS" style
+  `computePointInTimeStrength()`/`refreshTeamCornersAverage()` already
+  use (`FakeSupabase` has no database-side aggregation support). A
+  competition needs `MIN_FIXTURES_FOR_LEAGUE_CALIBRATION` (20) real
+  fixtures before it gets a row; `getLeagueAverages()` — the new read path
+  live predictions go through — falls back to the fixed cross-league
+  default below that.
+- **Wired into live predictions, deliberately not into
+  backtesting/training/rho-fitting.** Those three already do a genuine
+  point-in-time walk-forward for team strength; reading
+  `league_calibration`'s *current* value for a historical fixture would
+  reintroduce a lookahead-bias risk of the same kind that motivated that
+  point-in-time computation (smaller in magnitude — a whole competition's
+  average drifts far more slowly than one team's form — but real). A
+  genuinely point-in-time per-competition average is a stated,
+  unimplemented follow-up, not glossed over.
+- **Runs daily on the scheduler**, unlike backtesting/training/rho-fitting
+  — this job is DB-only (no ml-service call, no admin-chosen date range),
+  cheap enough to treat like a regular sync job rather than gating it
+  behind an admin's explicit trigger. A manual-trigger admin route still
+  exists for an out-of-cycle recalibration.
+- New admin routes: `POST /admin/league-calibration/run`,
+  `GET /admin/league-calibration/results`. New `AdminDashboard.tsx`
+  "League calibration" panel.
+- Test counts: backend 212/212 (was 202), frontend 42/42 (was 39).
+  ml-service untouched — this is a plain average, not a model fit, so no
+  math needed there. `tsc`/`eslint`/`npm run build` clean across the
+  touched services.
+- **Like every real-data-dependent pipeline in this project, never run
+  against real data.** No live API-Football key has ever been connected
+  in this environment, so no competition has anywhere near 20 real
+  fixtures — every live prediction still uses the fixed cross-league
+  default in practice, and `league_calibration` stays empty. See
+  `ML_Model.md`'s "League-specific calibration" section.
+
 ## 2026-08-28 — Fit the Dixon-Coles rho parameter from real data
 
 Third wishlist item off Task.md: `RHO` (the Dixon-Coles low-score

@@ -196,6 +196,25 @@ fixturesConsidered, fixturesSkipped, fixturesFailed, statisticsProcessed,
 statisticsRejected, teamsAggregated }`. Same `409 no_provider_configured`
 behavior as the other sync endpoints.
 
+### `POST /admin/league-calibration/run`
+Recomputes every competition's real per-league goal averages from its own
+finished, non-synthetic fixtures (`calibrateLeagues.ts` — see
+`ML_Model.md`'s "League-specific calibration" section). No provider call,
+so no `409 no_provider_configured` (same as `/admin/predictions/run`). No
+params — always the competition's full real fixture history, not a
+date-windowed sync. Also runs daily on the scheduler
+(`calibrate_leagues`); this route is for an out-of-cycle manual trigger.
+Returns `{ runId, competitionsCalibrated, competitionsSkipped }` —
+`competitionsSkipped` counts competitions with fewer than
+`MIN_FIXTURES_FOR_LEAGUE_CALIBRATION` (20) real fixtures, which keep using
+the fixed cross-league default instead.
+
+### `GET /admin/league-calibration/results`
+Every competition's current calibration, enriched with its name (joined
+from `competitions`). Returns `{ id, competition_id, competitionName,
+league_avg_home_goals, league_avg_away_goals, sample_size, computed_at }[]`
+— empty until at least one competition has enough real fixtures.
+
 ### `POST /admin/predictions/run`
 Runs `generatePredictionsForUpcomingFixtures` against the latest
 `poisson-baseline` model version. Returns `{ processed, skipped, failed }`.

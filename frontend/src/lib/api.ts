@@ -12,6 +12,7 @@ import type {
   GradientBoostingTrainResult,
   IngestionRun,
   JobsSummary,
+  LeagueCalibrationRow,
   MatchDetail,
   MeProfile,
   RhoStatus,
@@ -122,6 +123,7 @@ export const SYNC_ACTIONS: SyncAction[] = [
   { key: "sync_lineups", label: "Lineups", path: "/admin/lineups/sync" },
   { key: "sync_odds", label: "Odds", path: "/admin/odds/sync" },
   { key: "sync_fixture_statistics", label: "Fixture statistics (corners)", path: "/admin/fixture-statistics/sync" },
+  { key: "calibrate_leagues", label: "League calibration", path: "/admin/league-calibration/run" },
   { key: "predictions", label: "Predictions", path: "/admin/predictions/run" }
 ];
 
@@ -205,4 +207,9 @@ export function fitDixonColesRho(
 /** Whether a fitted rho is currently in effect for /predict/poisson, or predictions are still using the fixed default. */
 export function getRhoStatus(accessToken: string): Promise<ApiEnvelope<RhoStatus>> {
   return authedRequest<ApiEnvelope<RhoStatus>>("/admin/model/poisson/rho-status", accessToken);
+}
+
+/** Every competition's current real per-league goal averages (see ML_Model.md's "League-specific calibration" section). */
+export function getLeagueCalibrationResults(accessToken: string): Promise<ApiEnvelope<LeagueCalibrationRow[]>> {
+  return authedRequest<ApiEnvelope<LeagueCalibrationRow[]>>("/admin/league-calibration/results", accessToken);
 }

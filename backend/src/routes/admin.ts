@@ -7,6 +7,7 @@ import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { runLatestBacktestJob, type BacktestableModel } from "../jobs/runBacktest.js";
 import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoosting.js";
 import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
+import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { PredictionClient } from "../services/predictionClient.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
@@ -286,6 +287,45 @@ export function createAdminRouter(
 
       const result = await syncFixtureStatistics(supabase, provider, logger, hours);
       res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Recomputes every competition's real per-league goal averages from its
+  // own finished, non-synthetic fixtures (calibrateLeagues.ts) — no
+  // provider call, so no requireProvider() guard, same as
+  // /admin/predictions/run. Also runs daily on the scheduler
+  // (calibrate_leagues, right before predictions); this route is for an
+  // out-of-cycle manual trigger, e.g. right after a fixtures backfill.
+  router.post("/admin/league-calibration/run", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      const result = await runLeagueCalibration(supabase, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Reads back every competition's current calibration, joined with its
+  // name for readability — small enough (one row per real competition)
+  // that no pagination/limit param is needed yet.
+  router.get("/admin/league-calibration/results", async (_req, res, next) => {
+    try {
+      const [{ data: calibrations, error }, { data: competitions, error: competitionsError }] = await Promise.all([
+        supabase.from("league_calibration").select("id, competition_id, league_avg_home_goals, league_avg_away_goals, sample_size, computed_at"),
+        supabase.from("competitions").select("id, name")
+      ]);
+      if (error) throw new Error(error.message);
+      if (competitionsError) throw new Error(competitionsError.message);
+
+      const competitionNameById = new Map((competitions ?? []).map((c) => [c.id as string, c.name as string]));
+      const enriched = (calibrations ?? []).map((row) => ({
+        ...row,
+        competitionName: competitionNameById.get(row.competition_id as string) ?? null
+      }));
+
+      res.json({ data: enriched });
     } catch (err) {
       next(err);
     }

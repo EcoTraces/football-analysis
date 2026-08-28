@@ -203,3 +203,16 @@ export interface RhoStatus {
   fittedRho: number | null;
   defaultRho: number;
 }
+
+// One competition's current real calibration (see
+// backend/src/jobs/calibrateLeagues.ts). competitionName is server-side
+// enriched from the competitions table.
+export interface LeagueCalibrationRow {
+  id: string;
+  competition_id: string;
+  competitionName: string | null;
+  league_avg_home_goals: number;
+  league_avg_away_goals: number;
+  sample_size: number;
+  computed_at: string;
+}

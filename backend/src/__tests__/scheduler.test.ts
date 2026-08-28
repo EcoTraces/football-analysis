@@ -10,6 +10,7 @@ import {
   runLineupsSync,
   runOddsSync,
   runFixtureStatisticsSync,
+  runLeagueCalibrationSync,
   runPredictions,
   guarded,
   FIXTURES_SYNC_CRON,
@@ -20,6 +21,7 @@ import {
   LINEUPS_SYNC_CRON,
   ODDS_SYNC_CRON,
   FIXTURE_STATISTICS_SYNC_CRON,
+  LEAGUE_CALIBRATION_CRON,
   PREDICTIONS_CRON
 } from "../scheduler/scheduler.js";
 
@@ -59,13 +61,14 @@ describe("scheduler", () => {
       LINEUPS_SYNC_CRON,
       ODDS_SYNC_CRON,
       FIXTURE_STATISTICS_SYNC_CRON,
+      LEAGUE_CALIBRATION_CRON,
       PREDICTIONS_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
   });
 
-  it("schedules all eight sync jobs plus predictions when a real provider is configured", () => {
+  it("schedules all eight sync jobs plus league calibration and predictions when a real provider is configured", () => {
     const logger = fakeLogger();
     const scheduler = startScheduler({
       supabase: fakeClient(new FakeSupabase()),
@@ -84,6 +87,7 @@ describe("scheduler", () => {
         "sync_lineups",
         "sync_odds",
         "sync_fixture_statistics",
+        "calibrate_leagues",
         "predictions"
       ].sort()
     );
@@ -92,7 +96,7 @@ describe("scheduler", () => {
     scheduler.stop();
   });
 
-  it("schedules only the predictions job, and logs a warning, when no provider is configured", () => {
+  it("schedules only league calibration and predictions, and logs a warning, when no provider is configured", () => {
     const logger = fakeLogger();
     const scheduler = startScheduler({
       supabase: fakeClient(new FakeSupabase()),
@@ -101,7 +105,7 @@ describe("scheduler", () => {
       logger
     });
 
-    expect(scheduler.jobs).toEqual(["predictions"]);
+    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions"].sort());
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no football data provider configured"));
 
     scheduler.stop();
@@ -265,6 +269,20 @@ describe("scheduler", () => {
       "Scheduled predictions run finished"
     );
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("runLeagueCalibrationSync runs the real job and logs its result", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+
+    await runLeagueCalibrationSync({ supabase: fakeClient(fake), provider: new StubProvider("fake-provider"), mlServiceUrl: "http://localhost:8000", logger });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "calibrate_leagues" }),
+      "Scheduled sync finished"
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "calibrate_leagues" });
   });
 
   it("guarded() catches a thrown error and logs it instead of propagating", async () => {

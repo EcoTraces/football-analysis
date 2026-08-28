@@ -2,11 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
 import type { PlayerCandidateInput } from "../services/predictionClient.js";
+import { getLeagueAverages } from "./calibrateLeagues.js";
 
-// Exported for reuse by runBacktest.ts, which needs the same thresholds to
-// stay comparable with live predictions rather than silently drifting.
-export const LEAGUE_AVG_HOME_GOALS = 1.5; // conservative cross-league default; see ML_Model.md
-export const LEAGUE_AVG_AWAY_GOALS = 1.1;
+// Exported for reuse by runBacktest.ts/trainGradientBoosting.ts/
+// fitDixonColesRho.ts, which need the same threshold to stay comparable
+// with live predictions rather than silently drifting. (LEAGUE_AVG_HOME_
+// GOALS/AWAY_GOALS moved to calibrateLeagues.ts — see that module.)
 export const MIN_MATCHES_FOR_PREDICTION = 3;
 
 interface TeamStatsRow {
@@ -78,7 +79,7 @@ export async function generatePredictionsForUpcomingFixtures(
 
   const { data: fixtures, error } = await supabase
     .from("fixtures")
-    .select("id, season_id, home_team_id, away_team_id")
+    .select("id, season_id, competition_id, home_team_id, away_team_id")
     .eq("status", "scheduled")
     .eq("is_synthetic", false)
     .gte("kickoff_utc", now.toISOString())
@@ -92,11 +93,12 @@ export async function generatePredictionsForUpcomingFixtures(
 
   for (const fixture of fixtures ?? []) {
     try {
-      const [homeStats, awayStats, homePlayers, awayPlayers] = await Promise.all([
+      const [homeStats, awayStats, homePlayers, awayPlayers, leagueAverages] = await Promise.all([
         loadOverallStats(supabase, fixture.home_team_id as string, fixture.season_id as string),
         loadOverallStats(supabase, fixture.away_team_id as string, fixture.season_id as string),
         loadPlayerCandidates(supabase, fixture.home_team_id as string, fixture.season_id as string),
-        loadPlayerCandidates(supabase, fixture.away_team_id as string, fixture.season_id as string)
+        loadPlayerCandidates(supabase, fixture.away_team_id as string, fixture.season_id as string),
+        getLeagueAverages(supabase, fixture.competition_id as string)
       ]);
 
       if (
@@ -120,8 +122,8 @@ export async function generatePredictionsForUpcomingFixtures(
           goalsScoredAvg: (awayStats.goals_scored ?? 0) / awayStats.matches_played,
           goalsConcededAvg: (awayStats.goals_conceded ?? 0) / awayStats.matches_played
         },
-        leagueAvgHomeGoals: LEAGUE_AVG_HOME_GOALS,
-        leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS,
+        leagueAvgHomeGoals: leagueAverages.leagueAvgHomeGoals,
+        leagueAvgAwayGoals: leagueAverages.leagueAvgAwayGoals,
         homeTeamAvgYellowCards: avgOrUndefined(homeStats.yellow_cards, homeStats.matches_played),
         awayTeamAvgYellowCards: avgOrUndefined(awayStats.yellow_cards, awayStats.matches_played),
         homeTeamAvgCorners: avgOrUndefined(homeStats.corners, homeStats.matches_played),

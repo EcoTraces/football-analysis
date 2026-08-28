@@ -606,7 +606,54 @@
   1-1 results to fit against; `poisson-baseline`'s `model_versions` row
   stays at its dev-seeded, unfit state in practice. See `ML_Model.md`'s
   "Rho fitting" section.
-- [ ] League-specific calibration once enough leagues have real data.
+- [x] League-specific calibration. The fixed, cross-league
+  `LEAGUE_AVG_HOME_GOALS`/`LEAGUE_AVG_AWAY_GOALS` constants (`1.5`/`1.1`,
+  used for every fixture regardless of league) directly addressed the
+  "no league-specific home-advantage effect is modeled" gap in
+  `ML_Model.md`'s known limitations — those two inputs are where a
+  league's scoring rate and home advantage actually enter
+  `expected_goals()`. New migration `0007_league_calibration.sql`:
+  `league_calibration` table, one row per competition.
+  `backend/src/jobs/calibrateLeagues.ts`: `runLeagueCalibration()` fetches
+  every real, finished fixture's `(competition_id, home_score,
+  away_score)` in one pass and groups by competition in JS (same
+  "fetch raw rows, aggregate in application code" style
+  `computePointInTimeStrength()`/`refreshTeamCornersAverage()` already
+  use — `FakeSupabase` has no database-side aggregation). A competition
+  needs `MIN_FIXTURES_FOR_LEAGUE_CALIBRATION` (20) real fixtures before
+  it gets a row; below that, `getLeagueAverages()` — the read path
+  `generatePredictionsForUpcomingFixtures` now goes through instead of
+  reading the fixed constants directly — falls back to the cross-league
+  default, same "no data, no market" discipline as everywhere else in
+  this codebase, applied to a model input rather than a market.
+  Unlike backtesting/training/rho-fitting, this job reads only from the
+  database (no ml-service call, no admin-chosen date range — always a
+  competition's full real history) and is cheap enough to run daily on
+  the scheduler (`calibrate_leagues`, right before `predictions`) rather
+  than being gated behind an admin's explicit trigger; a manual-trigger
+  admin route still exists for an out-of-cycle recalibration. **Deliberately
+  NOT wired into `runBacktest.ts`/`trainGradientBoosting.ts`/
+  `fitDixonColesRho.ts`** — those already do a genuine point-in-time walk
+  forward for team strength, and reading `league_calibration`'s *current*
+  value for a historical fixture would reintroduce a (much smaller, but
+  real) lookahead-bias risk of the same kind that motivated that
+  point-in-time computation; a genuinely point-in-time per-competition
+  average is a stated, unimplemented follow-up, not silently glossed
+  over. New admin routes: `POST /admin/league-calibration/run`,
+  `GET /admin/league-calibration/results`. New `AdminDashboard.tsx`
+  "League calibration" panel (results table + the trigger button, via
+  the existing manual-sync mechanism). Test counts: backend 212/212 (was
+  202 — 7 new in `calibrateLeagues.test.ts`, 2 new in
+  `generatePredictions.test.ts`, 1 new in `scheduler.test.ts`), frontend
+  42/42 (was 39). ml-service untouched (this is entirely backend/DB —
+  league averages are a plain average, not a model fit, so no math needed
+  in ml-service). `tsc`/`eslint`/`npm run build` clean across the touched
+  services. **Like every real-data-dependent pipeline in this file, never
+  run against real data** — no live API-Football key has ever been
+  connected in this environment, so no competition has anywhere near 20
+  real fixtures; every live prediction still uses the fixed cross-league
+  default in practice, and `league_calibration` stays empty. See
+  `ML_Model.md`'s "League-specific calibration" section.
 
 ## Frontend
 

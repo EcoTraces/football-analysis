@@ -102,6 +102,7 @@ never does.
 | `odds_snapshots` | Bookmaker odds per market/selection, timestamped |
 | `weather_observations` | Match-day weather |
 | `model_versions`, `model_evaluations` | Model registry and backtest metrics |
+| `league_calibration` (0007) | One row per competition — real average home/away goals computed from that competition's own finished fixtures, replacing the fixed cross-league default for live predictions (see `ML_Model.md`'s "League-specific calibration" section) |
 | `predictions` | Market probabilities per fixture, with confidence/data_quality/factors |
 | `user_profiles`, `notifications` | User-owned data, RLS-protected |
 | `ingestion_runs`, `data_quality_flags` | Observability for sync jobs and data validation |
@@ -134,6 +135,13 @@ never does.
   itself is unaffected (it's keyed by `player_id, team_id, season_id`, so a
   transfer correctly gets its own row), but anything reading `players.team_id`
   directly should know it can be stale.
+- `0007_league_calibration.sql` (new `league_calibration` table) — same
+  unrun-against-a-real-project caveat as every migration in this file. Its
+  writer (`calibrateLeagues.ts`) and reader (`getLeagueAverages()`) are
+  both unit-tested against `FakeSupabase`, but the real
+  `upsert(..., { onConflict: "competition_id" })` behavior — updating the
+  existing row in place on a rerun, not inserting a duplicate — has only
+  been exercised against the fake, not a live Postgres unique constraint.
 - Real fixtures and `overall`/`home`/`away` team statistics can now be
   synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
   run on non-synthetic fixtures once both have been run — but this hasn't

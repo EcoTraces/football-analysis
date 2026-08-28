@@ -33,6 +33,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminDataHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getBacktestResults").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getRhoStatus").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getLeagueCalibrationResults").mockReturnValue(new Promise(() => {}));
 
     renderDashboard();
 
@@ -64,6 +65,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 5, syntheticFixtures: 0, currentPredictions: 2 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -90,6 +92,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -114,6 +117,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
     const triggerSync = vi.spyOn(api, "triggerSync").mockResolvedValue({
       data: { runId: "run-1", fixturesProcessed: 3, fixturesRejected: 0 }
     });
@@ -145,6 +149,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
   }
 
   it("renders past backtest runs with their metrics", async () => {
@@ -292,6 +297,7 @@ describe("AdminDashboard", () => {
     mockBaselineDashboard();
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -348,6 +354,56 @@ describe("AdminDashboard", () => {
     await waitFor(() =>
       expect(screen.getByText("Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho, got 2 out of 50 rows.")).toBeTruthy()
     );
+  });
+
+  it("renders each competition's real calibrated league averages", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({
+      data: [
+        {
+          id: "lc-1",
+          competition_id: "comp-1",
+          competitionName: "Synthetic Premier Division",
+          league_avg_home_goals: 1.92,
+          league_avg_away_goals: 1.34,
+          sample_size: 42,
+          computed_at: "2026-08-27T00:00:00Z"
+        }
+      ]
+    });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("Synthetic Premier Division")).toBeTruthy());
+    expect(screen.getByText("1.92")).toBeTruthy();
+    expect(screen.getByText("1.34")).toBeTruthy();
+    expect(screen.getByText("42")).toBeTruthy();
+  });
+
+  it("shows a plain-language message, not an empty table, when no competition is calibrated yet", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/No competition has enough real fixture history/)).toBeTruthy());
+  });
+
+  it("triggering the league calibration sync hits its own route and refreshes results", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const getLeagueCalibrationResults = vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+    const triggerSync = vi.spyOn(api, "triggerSync").mockResolvedValue({ data: { competitionsCalibrated: 3, competitionsSkipped: 1 } });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Sync League calibration")).toBeTruthy());
+
+    screen.getByText("Sync League calibration").click();
+
+    await waitFor(() => expect(triggerSync).toHaveBeenCalledWith("admin-token", "/admin/league-calibration/run"));
+    expect(getLeagueCalibrationResults).toHaveBeenCalledTimes(2); // initial load + post-trigger refresh
   });
 
   it("shows an error message when the backtest run fails, without crashing the rest of the dashboard", async () => {

@@ -89,6 +89,68 @@ describe("generatePredictionsForUpcomingFixtures", () => {
     expect(predictions[0]).toMatchObject({ fixture_id: "fx-1", market: "1x2", selection: "home" });
   });
 
+  it("uses a competition's real calibrated league averages instead of the fixed cross-league default when one exists", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        competition_id: "comp-calibrated",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      { id: "ts-home", team_id: "team-home", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 15, goals_conceded: 8 },
+      { id: "ts-away", team_id: "team-away", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 12, goals_conceded: 10 }
+    ]);
+    fake.seed("league_calibration", [
+      { id: "lc-1", competition_id: "comp-calibrated", league_avg_home_goals: 2.1, league_avg_away_goals: 1.7, sample_size: 40 }
+    ]);
+
+    const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    const payload = predictPoisson.mock.calls[0]?.[0] as PoissonPredictionRequest;
+    expect(payload.leagueAvgHomeGoals).toBe(2.1);
+    expect(payload.leagueAvgAwayGoals).toBe(1.7);
+  });
+
+  it("falls back to the fixed cross-league default when the fixture's competition has no calibration yet", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        competition_id: "comp-uncalibrated",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      { id: "ts-home", team_id: "team-home", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 15, goals_conceded: 8 },
+      { id: "ts-away", team_id: "team-away", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 12, goals_conceded: 10 }
+    ]);
+    // No league_calibration row for comp-uncalibrated (or the table at all).
+
+    const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    const payload = predictPoisson.mock.calls[0]?.[0] as PoissonPredictionRequest;
+    expect(payload.leagueAvgHomeGoals).toBe(1.5);
+    expect(payload.leagueAvgAwayGoals).toBe(1.1);
+  });
+
   it("skips a fixture when either team has fewer than 3 matches of stats, without calling the prediction client", async () => {
     const fake = new FakeSupabase();
     fake.seed("fixtures", [

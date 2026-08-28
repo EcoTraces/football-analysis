@@ -226,9 +226,12 @@ data, which required a brand-new ingestion pipeline — `player_statistics`,
   no live API-Football key has ever been connected here, so there is no
   real fixture history to fit against. Treat this model's calibration as
   unverified until someone runs it against real data.
-- **League-agnostic.** The same `RHO` and the caller-supplied league
-  averages are the only place league identity enters the model. No
-  league-specific home-advantage effect is modeled yet (spec section 16).
+- **`RHO` is still one platform-wide value, not per-league** — league
+  averages now get a real per-competition calibration (see
+  "League-specific calibration" below), but a per-competition `RHO` fit
+  does not exist yet. The same caveat as the bullet above applies to
+  whichever `RHO` (fixed or fitted) is currently in effect: it's one value
+  shared by every league this platform predicts, real fixture data or not.
 - **No opponent-strength or recency weighting.** `goals_scored_avg`/
   `goals_conceded_avg` are simple season averages passed in by the caller —
   no recency weighting (spec section 10) or head-to-head signal (section 11)
@@ -478,6 +481,67 @@ no real fixture history to train on — the `gradient-boosting`
 deliberately left untrained (`trained_at = null`), because there isn't
 remotely enough real data here to train it honestly, and synthetic seed
 data must never be used to fabricate a "trained" model.
+
+## League-specific calibration
+
+`backend/src/jobs/calibrateLeagues.ts` computes a real, per-competition
+`league_avg_home_goals`/`league_avg_away_goals` pair from that
+competition's own finished, non-synthetic fixtures — instead of the fixed
+`LEAGUE_AVG_HOME_GOALS = 1.5` / `LEAGUE_AVG_AWAY_GOALS = 1.1` constants
+every prediction used regardless of which league the fixture was in. This
+directly addresses the "no league-specific home-advantage effect is
+modeled" gap called out under "Known limitations" above — the two
+league-average inputs are where a league's overall scoring rate and home
+advantage actually enter the Poisson model's `expected_goals()` formula.
+
+**The computation is a plain average, not a model fit.** `runLeagueCalibration()`
+fetches every real, finished fixture's `(competition_id, home_score,
+away_score)` in one pass and groups by competition in application code
+(the same "fetch raw rows, aggregate in JS" style
+`computePointInTimeStrength()` and `refreshTeamCornersAverage()` already
+use — this repo's `FakeSupabase` test double has no database-side
+aggregation support). A competition needs at least
+`MIN_FIXTURES_FOR_LEAGUE_CALIBRATION` (20) real fixtures before it gets a
+row; below that, `getLeagueAverages()` — the read path every live
+prediction goes through — falls back to the fixed cross-league default,
+same "no data, no market"-style discipline as everywhere else in this
+codebase, just applied to a model input instead of a market.
+
+**Wired into live predictions only, deliberately not into
+backtesting/training/rho-fitting yet.** `generatePredictionsForUpcomingFixtures`
+looks up each fixture's own competition via `getLeagueAverages()`.
+`runBacktest.ts`/`trainGradientBoosting.ts`/`fitDixonColesRho.ts` still
+import the fixed `LEAGUE_AVG_HOME_GOALS`/`AWAY_GOALS` constants directly
+and use them for every historical fixture regardless of competition. This
+is a stated gap, not an oversight: those three pipelines already do a
+genuine walk-forward, point-in-time computation for team strength (see
+`computePointInTimeStrength()`), and reading `league_calibration`'s
+*current* value for a historical fixture would reintroduce a
+lookahead-bias risk of exactly the kind that motivated that point-in-time
+computation — a league's scoring rate can drift era to era, so "the
+league average as of today" isn't quite "the league average as it stood
+at that historical fixture's kickoff." The effect is far smaller than
+team-specific lookahead bias (an average across an entire competition's
+many teams drifts far more slowly than one team's own form), but a
+genuinely point-in-time per-competition average is real, unimplemented
+future work, not something to gloss over.
+
+**Runs on the scheduler, unlike backtesting/training/rho-fitting.** This
+job reads only from the database (no ml-service call, no admin-chosen date
+range — always a competition's full real fixture history) and is cheap
+enough to run daily like a regular sync job (`calibrate_leagues`, right
+before `predictions` — see `scheduler.ts`), not gated behind an admin's
+explicit trigger the way a model-behavior-changing fit is. A manual
+trigger (`POST /admin/league-calibration/run`) still exists for an
+out-of-cycle recalibration, e.g. right after a fixtures backfill.
+
+**Caveats — same discipline as everything else in this file.** This has
+never actually calibrated anything for real: no live API-Football key has
+ever been connected in this environment, so no competition has anywhere
+near `MIN_FIXTURES_FOR_LEAGUE_CALIBRATION` real fixtures — every live
+prediction is still using the fixed cross-league default in practice,
+`league_calibration` stays empty, and the admin dashboard's "League
+calibration" panel has nothing to show until real data exists.
 
 ## Adding a new model
 

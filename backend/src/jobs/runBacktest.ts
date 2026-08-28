@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { PredictionClient, type PoissonPredictionResponse } from "../services/predictionClient.js";
-import { LEAGUE_AVG_AWAY_GOALS, LEAGUE_AVG_HOME_GOALS, MIN_MATCHES_FOR_PREDICTION } from "./generatePredictions.js";
+import { MIN_MATCHES_FOR_PREDICTION } from "./generatePredictions.js";
+import { LEAGUE_AVG_AWAY_GOALS, LEAGUE_AVG_HOME_GOALS } from "./calibrateLeagues.js";
 
 // Every model this pipeline knows how to backtest, keyed by its
 // model_versions.name. Adding a model here (and to buildPredictFn below) is

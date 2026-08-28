@@ -9,6 +9,7 @@ import {
   getApiFootballHealth,
   getBacktestResults,
   getDataHealth,
+  getLeagueCalibrationResults,
   getRhoStatus,
   getSchedulerHealth,
   runBacktest,
@@ -25,6 +26,7 @@ import type {
   DataHealth,
   IngestionRun,
   JobsSummary,
+  LeagueCalibrationRow,
   RhoStatus,
   SchedulerHealth
 } from "../../lib/types";
@@ -79,6 +81,8 @@ interface DashboardData {
   backtestResultsError: string | null;
   rhoStatus: RhoStatus | null;
   rhoStatusError: string | null;
+  leagueCalibration: LeagueCalibrationRow[] | null;
+  leagueCalibrationError: string | null;
 }
 
 type SyncActionState =
@@ -127,7 +131,8 @@ export function AdminDashboard() {
       [recentJobsRes, recentJobsError],
       [fixtureCountsRes, fixtureCountsError],
       [backtestResultsRes, backtestResultsError],
-      [rhoStatusRes, rhoStatusError]
+      [rhoStatusRes, rhoStatusError],
+      [leagueCalibrationRes, leagueCalibrationError]
     ] = await Promise.all([
       loadPiece(() => getDataHealth()),
       loadPiece(() => getApiFootballHealth()),
@@ -136,7 +141,8 @@ export function AdminDashboard() {
       loadPiece(() => getAdminJobs(token, 20)),
       loadPiece(() => getAdminDataHealth(token)),
       loadPiece(() => getBacktestResults(token, 20)),
-      loadPiece(() => getRhoStatus(token))
+      loadPiece(() => getRhoStatus(token)),
+      loadPiece(() => getLeagueCalibrationResults(token))
     ]);
 
     setData({
@@ -155,7 +161,9 @@ export function AdminDashboard() {
       backtestResults: backtestResultsRes?.data ?? null,
       backtestResultsError,
       rhoStatus: rhoStatusRes?.data ?? null,
-      rhoStatusError
+      rhoStatusError,
+      leagueCalibration: leagueCalibrationRes?.data ?? null,
+      leagueCalibrationError
     });
   }, [session]);
 
@@ -372,6 +380,54 @@ export function AdminDashboard() {
             );
           })}
         </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">League calibration</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          Each competition's real average home/away goals, computed from its own finished fixtures — replacing the
+          fixed cross-league default used for a competition with too little real history yet. Runs daily (the
+          "League calibration" button above triggers it out of cycle) and feeds every live prediction; not yet used
+          by backtesting/training/rho-fitting below, which still use the fixed default for every historical fixture
+          regardless of competition.
+        </p>
+        {data.leagueCalibrationError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.leagueCalibrationError}
+          </p>
+        )}
+        {data.leagueCalibration && data.leagueCalibration.length === 0 && (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No competition has enough real fixture history to calibrate yet — every prediction is using the fixed
+            cross-league default.
+          </p>
+        )}
+        {data.leagueCalibration && data.leagueCalibration.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4 font-medium">Competition</th>
+                  <th className="py-2 pr-4 font-medium">Avg home goals</th>
+                  <th className="py-2 pr-4 font-medium">Avg away goals</th>
+                  <th className="py-2 pr-4 font-medium">Sample size</th>
+                  <th className="py-2 font-medium">Computed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.leagueCalibration.map((row) => (
+                  <tr key={row.id} className="border-b border-slate-100 dark:border-slate-900">
+                    <td className="py-2 pr-4">{row.competitionName ?? row.competition_id}</td>
+                    <td className="py-2 pr-4">{row.league_avg_home_goals.toFixed(2)}</td>
+                    <td className="py-2 pr-4">{row.league_avg_away_goals.toFixed(2)}</td>
+                    <td className="py-2 pr-4">{row.sample_size}</td>
+                    <td className="py-2 text-xs text-slate-500 dark:text-slate-400">{formatDateTime(row.computed_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section>

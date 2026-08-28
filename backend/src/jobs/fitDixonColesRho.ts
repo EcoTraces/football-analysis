@@ -3,7 +3,8 @@ import type { Logger } from "pino";
 import { ApiError } from "../middleware/errorHandler.js";
 import { PredictionClient, type DixonColesRhoFitRow } from "../services/predictionClient.js";
 import { computePointInTimeStrength } from "./runBacktest.js";
-import { LEAGUE_AVG_AWAY_GOALS, LEAGUE_AVG_HOME_GOALS, MIN_MATCHES_FOR_PREDICTION } from "./generatePredictions.js";
+import { MIN_MATCHES_FOR_PREDICTION } from "./generatePredictions.js";
+import { LEAGUE_AVG_AWAY_GOALS, LEAGUE_AVG_HOME_GOALS } from "./calibrateLeagues.js";
 
 export interface FitDixonColesRhoOptions {
   from: string; // ISO timestamp — inclusive lower bound on kickoff_utc

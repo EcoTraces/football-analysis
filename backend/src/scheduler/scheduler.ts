@@ -12,6 +12,7 @@ import { syncOdds } from "../jobs/syncOdds.js";
 import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
+import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 
 export interface SchedulerDeps {
   supabase: SupabaseClient;
@@ -36,6 +37,7 @@ export const PLAYER_STATISTICS_SYNC_CRON = "35 2 * * *"; // Same team/season-sco
 export const INJURIES_SYNC_CRON = "45 2 * * *";
 export const STANDINGS_SYNC_CRON = "0 3 * * *";
 export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions — a finished match's corners don't change once posted, so once a day is enough (unlike lineups/odds, nothing about it needs to be "closer to kickoff").
+export const LEAGUE_CALIBRATION_CRON = "12 3 * * *"; // Between fixture-statistics and predictions — predictions should read the freshest per-competition calibration, not yesterday's.
 export const PREDICTIONS_CRON = "15 3 * * *";
 export const LINEUPS_SYNC_CRON = "0,15,30,45 * * * *";
 export const ODDS_SYNC_CRON = "5,20,35,50 * * * *";
@@ -97,6 +99,14 @@ export async function runOddsSync(deps: SchedulerDeps): Promise<void> {
 export async function runFixtureStatisticsSync(deps: SchedulerDeps): Promise<void> {
   const result = await syncFixtureStatistics(deps.supabase, deps.provider, deps.logger, FIXTURE_STATISTICS_WINDOW_HOURS);
   deps.logger.info({ job: "sync_fixture_statistics", result }, "Scheduled sync finished");
+}
+
+// Reads only from fixtures already in the database (no provider call) —
+// same reasoning as runPredictions below for why this isn't gated behind
+// isProviderConfigured.
+export async function runLeagueCalibrationSync(deps: SchedulerDeps): Promise<void> {
+  const result = await runLeagueCalibration(deps.supabase, deps.logger);
+  deps.logger.info({ job: "calibrate_leagues", result }, "Scheduled sync finished");
 }
 
 export async function runPredictions(deps: SchedulerDeps): Promise<void> {
@@ -166,13 +176,17 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     deps.logger.warn(
       "Scheduler starting with no football data provider configured (FOOTBALL_DATA_PROVIDER=null) — " +
         "fixture/team-statistics/player-statistics/injuries/standings/lineups/odds/fixture-statistics sync " +
-        "jobs will NOT be scheduled. The predictions job still runs; it reads from the database, not the provider."
+        "jobs will NOT be scheduled. The predictions and league-calibration jobs still run; they read from " +
+        "the database, not the provider."
     );
   }
 
-  // Always scheduled: reads team_statistics already in the database rather
-  // than calling the provider, so it isn't gated on one being configured
-  // (matches /admin/predictions/run, which has never required a provider).
+  // Always scheduled: reads fixtures/team_statistics already in the
+  // database rather than calling the provider, so neither is gated on one
+  // being configured (matches /admin/predictions/run, which has never
+  // required a provider). calibrate_leagues runs first — predictions
+  // should read the freshest per-competition calibration, not stale data.
+  add("calibrate_leagues", LEAGUE_CALIBRATION_CRON, () => runLeagueCalibrationSync(deps));
   add("predictions", PREDICTIONS_CRON, () => runPredictions(deps));
 
   const jobs = entries.map((e) => e.name);
