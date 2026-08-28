@@ -422,8 +422,12 @@ export function createAdminRouter(
   // Fits the Dixon-Coles low-score correlation parameter (rho) from real,
   // point-in-time match data (fitDixonColesRho.ts) instead of
   // poisson.py's fixed RHO = -0.1 approximation — see ML_Model.md's "Rho
-  // fitting" section. Updates poisson-baseline's existing model_versions
-  // row (this refines that model, it doesn't create a new one). Same
+  // fitting" section. `competitionId` branches the outcome: omitted, this
+  // is a GLOBAL fit (updates poisson-baseline's existing model_versions
+  // row and becomes ml-service's process-wide fallback rho); present,
+  // it's a COMPETITION-SCOPED fit (stored in competition_rho, applied only
+  // to that competition's own future predictions — never clobbers the
+  // global fallback every other competition still falls back to). Same
   // guardrails/rate-limiting as backtest/training; never on the scheduler.
   router.post("/admin/model/poisson/fit-rho", syncTriggerLimit, async (req, res, next) => {
     try {
@@ -459,6 +463,34 @@ export function createAdminRouter(
     try {
       const client = new PredictionClient(mlServiceUrl);
       res.json({ data: await client.getRhoStatus() });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Every competition's current per-competition rho fit, enriched with its
+  // competition name — same "list everything, join for readability"
+  // pattern as /admin/league-calibration/results and /admin/backtest/results.
+  router.get("/admin/model/poisson/competition-rho", async (_req, res, next) => {
+    try {
+      const [{ data: rhoRows, error }, { data: competitions, error: competitionsError }] = await Promise.all([
+        supabase
+          .from("competition_rho")
+          .select(
+            "id, model_version_id, competition_id, fitted_rho, default_rho, sample_size, informative_matches, log_likelihood_at_fitted_rho, log_likelihood_at_default_rho, evaluation_window, computed_at"
+          ),
+        supabase.from("competitions").select("id, name")
+      ]);
+      if (error) throw new Error(error.message);
+      if (competitionsError) throw new Error(competitionsError.message);
+
+      const competitionNameById = new Map((competitions ?? []).map((c) => [c.id as string, c.name as string]));
+      const enriched = (rhoRows ?? []).map((row) => ({
+        ...row,
+        competitionName: competitionNameById.get(row.competition_id as string) ?? null
+      }));
+
+      res.json({ data: enriched });
     } catch (err) {
       next(err);
     }

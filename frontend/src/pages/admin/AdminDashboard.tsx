@@ -8,6 +8,7 @@ import {
   getAdminJobsSummary,
   getApiFootballHealth,
   getBacktestResults,
+  getCompetitionRhoResults,
   getDataHealth,
   getLeagueCalibrationResults,
   getRhoStatus,
@@ -23,6 +24,7 @@ import type {
   ApiFootballHealth,
   BacktestableModel,
   BacktestEvaluation,
+  CompetitionRhoRow,
   DataHealth,
   IngestionRun,
   JobsSummary,
@@ -83,6 +85,8 @@ interface DashboardData {
   rhoStatusError: string | null;
   leagueCalibration: LeagueCalibrationRow[] | null;
   leagueCalibrationError: string | null;
+  competitionRho: CompetitionRhoRow[] | null;
+  competitionRhoError: string | null;
 }
 
 type SyncActionState =
@@ -92,7 +96,11 @@ type SyncActionState =
 
 type BacktestRunState = { status: "pending" } | { status: "error"; message: string } | null;
 type TrainRunState = { status: "pending" } | { status: "success"; sampleSize: number; trainAccuracy: number | null } | { status: "error"; message: string } | null;
-type FitRhoRunState = { status: "pending" } | { status: "success"; fittedRho: number; sampleSize: number } | { status: "error"; message: string } | null;
+type FitRhoRunState =
+  | { status: "pending" }
+  | { status: "success"; fittedRho: number; sampleSize: number; competitionId: string | null }
+  | { status: "error"; message: string }
+  | null;
 
 const MODEL_LABELS: Record<BacktestableModel, string> = {
   "poisson-baseline": "Poisson baseline",
@@ -118,6 +126,7 @@ export function AdminDashboard() {
   const [backtestRunState, setBacktestRunState] = useState<BacktestRunState>(null);
   const [trainRunState, setTrainRunState] = useState<TrainRunState>(null);
   const [fitRhoRunState, setFitRhoRunState] = useState<FitRhoRunState>(null);
+  const [rhoCompetitionId, setRhoCompetitionId] = useState("");
 
   const refresh = useCallback(async () => {
     if (!session) return;
@@ -132,7 +141,8 @@ export function AdminDashboard() {
       [fixtureCountsRes, fixtureCountsError],
       [backtestResultsRes, backtestResultsError],
       [rhoStatusRes, rhoStatusError],
-      [leagueCalibrationRes, leagueCalibrationError]
+      [leagueCalibrationRes, leagueCalibrationError],
+      [competitionRhoRes, competitionRhoError]
     ] = await Promise.all([
       loadPiece(() => getDataHealth()),
       loadPiece(() => getApiFootballHealth()),
@@ -142,7 +152,8 @@ export function AdminDashboard() {
       loadPiece(() => getAdminDataHealth(token)),
       loadPiece(() => getBacktestResults(token, 20)),
       loadPiece(() => getRhoStatus(token)),
-      loadPiece(() => getLeagueCalibrationResults(token))
+      loadPiece(() => getLeagueCalibrationResults(token)),
+      loadPiece(() => getCompetitionRhoResults(token))
     ]);
 
     setData({
@@ -163,7 +174,9 @@ export function AdminDashboard() {
       rhoStatus: rhoStatusRes?.data ?? null,
       rhoStatusError,
       leagueCalibration: leagueCalibrationRes?.data ?? null,
-      leagueCalibrationError
+      leagueCalibrationError,
+      competitionRho: competitionRhoRes?.data ?? null,
+      competitionRhoError
     });
   }, [session]);
 
@@ -207,11 +220,16 @@ export function AdminDashboard() {
     if (!session || !backtestFrom || !backtestTo) return;
     setFitRhoRunState({ status: "pending" });
     try {
-      const res = await fitDixonColesRho(session.access_token, `${backtestFrom}T00:00:00.000Z`, `${backtestTo}T23:59:59.999Z`);
+      const res = await fitDixonColesRho(
+        session.access_token,
+        `${backtestFrom}T00:00:00.000Z`,
+        `${backtestTo}T23:59:59.999Z`,
+        rhoCompetitionId || undefined
+      );
       setFitRhoRunState(
         res.data.fittedRho === null
           ? null
-          : { status: "success", fittedRho: res.data.fittedRho, sampleSize: res.data.sampleSize }
+          : { status: "success", fittedRho: res.data.fittedRho, sampleSize: res.data.sampleSize, competitionId: res.data.competitionId }
       );
       await refresh();
     } catch (err) {
@@ -509,13 +527,27 @@ export function AdminDashboard() {
           >
             {trainRunState?.status === "pending" ? "Training…" : "Train gradient boosting"}
           </button>
+          <label className="flex flex-col text-xs text-slate-500 dark:text-slate-400">
+            Rho competition ID (optional)
+            <input
+              type="text"
+              value={rhoCompetitionId}
+              onChange={(e) => setRhoCompetitionId(e.target.value)}
+              placeholder="leave blank for a global fit"
+              className="mt-1 w-56 rounded-md border border-slate-300 bg-transparent px-2 py-1 text-sm dark:border-slate-700"
+            />
+          </label>
           <button
             type="button"
             disabled={!backtestFrom || !backtestTo || fitRhoRunState?.status === "pending"}
             onClick={() => void handleFitRho()}
             className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
           >
-            {fitRhoRunState?.status === "pending" ? "Fitting…" : "Fit Dixon-Coles rho"}
+            {fitRhoRunState?.status === "pending"
+              ? "Fitting…"
+              : rhoCompetitionId
+                ? "Fit Dixon-Coles rho (this competition)"
+                : "Fit Dixon-Coles rho (global)"}
           </button>
         </div>
         {backtestRunState?.status === "error" && (
@@ -542,8 +574,10 @@ export function AdminDashboard() {
         )}
         {fitRhoRunState?.status === "success" && (
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Fitted rho = {fitRhoRunState.fittedRho.toFixed(4)} from {fitRhoRunState.sampleSize} matches in range — now in effect for every
-            poisson-baseline prediction.
+            Fitted rho = {fitRhoRunState.fittedRho.toFixed(4)} from {fitRhoRunState.sampleSize} matches in range —{" "}
+            {fitRhoRunState.competitionId
+              ? "stored for this competition only (see the per-competition rho table below); every other competition's predictions are unaffected."
+              : "now in effect for every poisson-baseline prediction that has no competition-specific fit of its own."}
           </p>
         )}
 
@@ -578,6 +612,49 @@ export function AdminDashboard() {
                       <td className="py-2 pr-4">{run.accuracy === null ? "—" : `${Math.round(run.accuracy * 100)}%`}</td>
                       <td className="py-2 pr-4">{formatMetric(run.log_loss)}</td>
                       <td className="py-2">{formatMetric(run.brier_score)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold">Per-competition rho fits</h3>
+          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+            Competitions with their own fitted rho (via the "Competition ID" field above) — each one overrides the
+            global fit above for that competition's own predictions only. Not yet used by backtesting/training,
+            which still use the global fit or fixed default for every historical fixture regardless of competition.
+          </p>
+          {data.competitionRhoError && (
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+              {data.competitionRhoError}
+            </p>
+          )}
+          {data.competitionRho && data.competitionRho.length === 0 && (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              No competition has a rho fit of its own yet — every prediction uses the global fit or fixed default.
+            </p>
+          )}
+          {data.competitionRho && data.competitionRho.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-2 pr-4 font-medium">Competition</th>
+                    <th className="py-2 pr-4 font-medium">Fitted rho</th>
+                    <th className="py-2 pr-4 font-medium">Sample size</th>
+                    <th className="py-2 font-medium">Computed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.competitionRho.map((row) => (
+                    <tr key={row.id} className="border-b border-slate-100 dark:border-slate-900">
+                      <td className="py-2 pr-4">{row.competitionName ?? row.competition_id}</td>
+                      <td className="py-2 pr-4">{row.fitted_rho.toFixed(4)}</td>
+                      <td className="py-2 pr-4">{row.sample_size}</td>
+                      <td className="py-2 text-xs text-slate-500 dark:text-slate-400">{formatDateTime(row.computed_at)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -318,3 +318,45 @@ def test_fit_dixon_coles_rho_updates_rho_status_and_subsequent_poisson_predictio
     # the fit must actually be in effect for later predictions, not just
     # reported back in the fit response.
     assert zero_zero_after > zero_zero_before
+
+
+def test_fit_dixon_coles_rho_with_apply_globally_false_leaves_the_global_fallback_untouched():
+    # A competition-scoped fit (backend passes applyGlobally=False) must
+    # never leak into every other competition's predictions.
+    rows = [_rho_fitting_row(EVEN_TEAM, EVEN_TEAM, 0, 0)] * 20 + [_rho_fitting_row(EVEN_TEAM, EVEN_TEAM, 1, 1)] * 20
+
+    fit_res = client.post(
+        "/fit/dixon_coles_rho",
+        json={"leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1, "rows": rows, "applyGlobally": False},
+    )
+    assert fit_res.status_code == 200
+    fit_body = fit_res.json()
+    assert fit_body["fittedRho"] < -0.1  # the fit itself still ran and returned a real result
+
+    status = client.get("/rho_status").json()
+    assert status["fittedRho"] is None  # ...but the process-wide fallback never moved
+
+    prediction_payload = {"homeTeam": EVEN_TEAM, "awayTeam": EVEN_TEAM, "leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1}
+    predict_res = client.post("/predict/poisson", json=prediction_payload).json()
+    zero_zero = next(p["probability"] for p in predict_res["predictions"] if p["market"] == "correct_score" and p["selection"] == "0-0")
+    # Still using the fixed -0.1 default — not the competition-scoped fit.
+    default_matrix_res = client.post("/predict/poisson", json={**prediction_payload, "rho": -0.1}).json()
+    zero_zero_at_default = next(
+        p["probability"] for p in default_matrix_res["predictions"] if p["market"] == "correct_score" and p["selection"] == "0-0"
+    )
+    assert zero_zero == pytest.approx(zero_zero_at_default)
+
+
+def test_predict_poisson_accepts_a_per_request_rho_override():
+    payload = {"homeTeam": EVEN_TEAM, "awayTeam": EVEN_TEAM, "leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1}
+
+    default_res = client.post("/predict/poisson", json=payload).json()
+    overridden_res = client.post("/predict/poisson", json={**payload, "rho": -0.4}).json()
+
+    def zero_zero(body: dict) -> float:
+        return next(p["probability"] for p in body["predictions"] if p["market"] == "correct_score" and p["selection"] == "0-0")
+
+    # A more negative rho than the -0.1 default pushes more mass onto 0-0
+    # (same direction as the module-level fit tests above) — proves the
+    # override actually reaches score_matrix(), not just accepted and ignored.
+    assert zero_zero(overridden_res) > zero_zero(default_res)

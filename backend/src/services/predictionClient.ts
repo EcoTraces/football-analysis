@@ -15,6 +15,13 @@ export interface PoissonPredictionRequest {
   awayTeam: TeamStrengthInput;
   leagueAvgHomeGoals: number;
   leagueAvgAwayGoals: number;
+  // Optional per-request override of the Dixon-Coles rho used for this one
+  // prediction — the fixture's own competition-specific fitted rho
+  // (fitDixonColesRho.ts::getCompetitionRho), when one exists. Omitted
+  // (not sent at all) when the competition has no per-competition fit yet,
+  // letting ml-service fall back to its own existing global-fit-or-default
+  // chain rather than this client re-implementing that fallback.
+  rho?: number;
   // Optional — the ml-service only predicts total_cards/total_corners when
   // both of a pair are present (see main.py). Omitted, not sent as 0, when
   // this team's team_statistics row doesn't have the underlying data yet.
@@ -90,6 +97,13 @@ export interface DixonColesRhoFitRequest {
   leagueAvgHomeGoals: number;
   leagueAvgAwayGoals: number;
   rows: DixonColesRhoFitRow[];
+  // True (the default) adopts this fit as ml-service's process-wide
+  // fallback rho, same as every fit before per-competition fitting
+  // existed. False fits and returns the result without touching that
+  // fallback — used for a competition-scoped fit, whose result gets
+  // stored in competition_rho instead of overwriting the one value every
+  // other competition's predictions would otherwise fall back to.
+  applyGlobally?: boolean;
 }
 
 export interface DixonColesRhoFitResult {

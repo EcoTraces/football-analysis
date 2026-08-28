@@ -3,6 +3,7 @@ import pino from "pino";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FakeSupabase } from "./testSupabaseFake.js";
 import {
+  getCompetitionRho,
   getLeagueAverages,
   runLeagueCalibration,
   LEAGUE_AVG_AWAY_GOALS,
@@ -146,5 +147,23 @@ describe("runLeagueCalibration", () => {
     const rows = fake.rows("league_calibration");
     expect(rows).toHaveLength(1); // updated in place, not duplicated
     expect(rows[0]!.sample_size).toBe(MIN_FIXTURES_FOR_LEAGUE_CALIBRATION + 1);
+  });
+});
+
+describe("getCompetitionRho", () => {
+  it("returns undefined when the competition has no fit yet", async () => {
+    const fake = new FakeSupabase();
+    const result = await getCompetitionRho(fakeClient(fake), "comp-1");
+    expect(result).toBeUndefined();
+  });
+
+  it("returns the fitted rho when a row exists for the competition", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("competition_rho", [
+      { id: "cr-1", model_version_id: "mv-1", competition_id: "comp-1", fitted_rho: -0.27, default_rho: -0.1, sample_size: 40, informative_matches: 40 },
+      { id: "cr-2", model_version_id: "mv-1", competition_id: "comp-2", fitted_rho: -0.05, default_rho: -0.1, sample_size: 35, informative_matches: 35 }
+    ]);
+    const result = await getCompetitionRho(fakeClient(fake), "comp-1");
+    expect(result).toBe(-0.27);
   });
 });

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import { PredictionClient } from "../services/predictionClient.js";
 import type { PlayerCandidateInput } from "../services/predictionClient.js";
-import { getLeagueAverages } from "./calibrateLeagues.js";
+import { getCompetitionRho, getLeagueAverages } from "./calibrateLeagues.js";
 
 // Exported for reuse by runBacktest.ts/trainGradientBoosting.ts/
 // fitDixonColesRho.ts, which need the same threshold to stay comparable
@@ -93,12 +93,13 @@ export async function generatePredictionsForUpcomingFixtures(
 
   for (const fixture of fixtures ?? []) {
     try {
-      const [homeStats, awayStats, homePlayers, awayPlayers, leagueAverages] = await Promise.all([
+      const [homeStats, awayStats, homePlayers, awayPlayers, leagueAverages, competitionRho] = await Promise.all([
         loadOverallStats(supabase, fixture.home_team_id as string, fixture.season_id as string),
         loadOverallStats(supabase, fixture.away_team_id as string, fixture.season_id as string),
         loadPlayerCandidates(supabase, fixture.home_team_id as string, fixture.season_id as string),
         loadPlayerCandidates(supabase, fixture.away_team_id as string, fixture.season_id as string),
-        getLeagueAverages(supabase, fixture.competition_id as string)
+        getLeagueAverages(supabase, fixture.competition_id as string),
+        getCompetitionRho(supabase, fixture.competition_id as string)
       ]);
 
       if (
@@ -124,6 +125,10 @@ export async function generatePredictionsForUpcomingFixtures(
         },
         leagueAvgHomeGoals: leagueAverages.leagueAvgHomeGoals,
         leagueAvgAwayGoals: leagueAverages.leagueAvgAwayGoals,
+        // undefined when this competition has no per-competition fit yet —
+        // ml-service falls back to its own global-fit-or-default chain in
+        // that case (see PoissonPredictionRequest's comment).
+        rho: competitionRho,
         homeTeamAvgYellowCards: avgOrUndefined(homeStats.yellow_cards, homeStats.matches_played),
         awayTeamAvgYellowCards: avgOrUndefined(awayStats.yellow_cards, awayStats.matches_played),
         homeTeamAvgCorners: avgOrUndefined(homeStats.corners, homeStats.matches_played),

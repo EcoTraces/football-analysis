@@ -266,21 +266,50 @@ range cap, and rate limiting as `/admin/model/gradient-boosting/train`.
 than 30 matches in range finished 0-0, 1-0, 0-1, or 1-1 (the only
 scorelines a Dixon-Coles rho fit can learn anything from — see
 `ML_Model.md`'s "Rho fitting" section); the message names the specific
-reason. On success, updates `poisson-baseline`'s **existing**
-`model_versions` row's `trained_at`/`training_dataset_version`/`notes`
-(this refines that model, it doesn't create a new one) and, from that
-point on, every `/predict/poisson` call — live predictions and any
-backtest run against `poisson-baseline` — uses the fitted value instead
-of the fixed `RHO = -0.1`. Returns `{ runId, modelVersionId, sampleSize,
+reason.
+
+`competitionId` branches what the fit does with its result (see
+`ML_Model.md`'s "Per-competition rho" section):
+- **Omitted — a GLOBAL fit.** Data is drawn from every competition's
+  matches in range. Updates `poisson-baseline`'s **existing**
+  `model_versions` row's `trained_at`/`training_dataset_version`/`notes`
+  (this refines that model, it doesn't create a new one) and, from that
+  point on, every `/predict/poisson` call with no per-request override —
+  live predictions for a competition with no fit of its own, and any
+  backtest run against `poisson-baseline` — uses the fitted value instead
+  of the fixed `RHO = -0.1`.
+- **Present — a COMPETITION-SCOPED fit.** Data is drawn from just that one
+  competition's matches in range. Upserts a row into `competition_rho`
+  (`unique(model_version_id, competition_id)` — refitting the same
+  competition updates its row in place) instead of touching
+  `model_versions`, and never changes ml-service's global fallback rho —
+  only that one competition's own live predictions pick it up (via
+  `getCompetitionRho()`), every other competition is unaffected.
+
+Either way returns `{ runId, modelVersionId, competitionId, sampleSize,
 skipped, informativeMatches, fittedRho, logLikelihoodAtFittedRho,
-logLikelihoodAtDefaultRho, defaultRho }`. Like backtesting/training, never
-on the scheduler.
+logLikelihoodAtDefaultRho, defaultRho }` — `competitionId` echoes back
+`null` for a global fit or the competition id for a scoped one. Like
+backtesting/training, never on the scheduler.
 
 ### `GET /admin/model/poisson/rho-status`
-Whether a fit is currently in effect for `/predict/poisson`. Not rate
-limited — a read-only status check, same as `/admin/data-health`. Returns
-`{ fittedRho, defaultRho }` — `fittedRho` is `null` if nobody has fit rho
-yet (predictions are using the fixed default).
+Whether a *global* fit is currently in effect for `/predict/poisson`. Not
+rate limited — a read-only status check, same as `/admin/data-health`.
+Returns `{ fittedRho, defaultRho }` — `fittedRho` is `null` if nobody has
+run a global fit yet (predictions with no competition-specific fit of
+their own are using the fixed default). Says nothing about
+competition-scoped fits — see `/admin/model/poisson/competition-rho` for
+those.
+
+### `GET /admin/model/poisson/competition-rho`
+Every competition with a per-competition rho fit of its own, enriched with
+its name (joined from `competitions`), same "list everything, join for
+readability" pattern as `/admin/league-calibration/results`. Not rate
+limited — a read-only listing. Returns `{ id, model_version_id,
+competition_id, competitionName, fitted_rho, default_rho, sample_size,
+informative_matches, log_likelihood_at_fitted_rho,
+log_likelihood_at_default_rho, evaluation_window, computed_at }[]` — empty
+until at least one competition-scoped fit has been run.
 
 ### `GET /admin/backtest/results?limit=N`
 Past backtest runs from `model_evaluations` (any model), newest first

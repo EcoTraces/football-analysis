@@ -103,6 +103,7 @@ never does.
 | `weather_observations` | Match-day weather |
 | `model_versions`, `model_evaluations` | Model registry and backtest metrics |
 | `league_calibration` (0007) | One row per competition — real average home/away goals computed from that competition's own finished fixtures, replacing the fixed cross-league default for live predictions (see `ML_Model.md`'s "League-specific calibration" section) |
+| `competition_rho` (0008) | One row per (`model_version_id`, `competition_id`) — a Dixon-Coles rho fit scoped to just that competition's own matches, stored alongside (never overwriting) the global fit (see `ML_Model.md`'s "Per-competition rho" section) |
 | `predictions` | Market probabilities per fixture, with confidence/data_quality/factors |
 | `user_profiles`, `notifications` | User-owned data, RLS-protected |
 | `ingestion_runs`, `data_quality_flags` | Observability for sync jobs and data validation |
@@ -142,6 +143,17 @@ never does.
   `upsert(..., { onConflict: "competition_id" })` behavior — updating the
   existing row in place on a rerun, not inserting a duplicate — has only
   been exercised against the fake, not a live Postgres unique constraint.
+- `0008_competition_rho.sql` (new `competition_rho` table) — same
+  unrun-against-a-real-project caveat as every migration in this file. Its
+  writer (`runLatestDixonColesRhoFitJob()` in `fitDixonColesRho.ts`) and
+  reader (`getCompetitionRho()` in `calibrateLeagues.ts`) are both
+  unit-tested against `FakeSupabase`, but the real
+  `upsert(..., { onConflict: "model_version_id,competition_id" })` behavior
+  — updating the existing row in place on a rerun, not inserting a
+  duplicate — has only been exercised against the fake, same as
+  `league_calibration`'s equivalent caveat above. Both `model_version_id`
+  and `competition_id` are `references ... on delete cascade`, unverified
+  against a live project like the rest of this schema.
 - Real fixtures and `overall`/`home`/`away` team statistics can now be
   synced (`syncFixtures.ts`, `syncTeamStatistics.ts`), so predictions can
   run on non-synthetic fixtures once both have been run — but this hasn't

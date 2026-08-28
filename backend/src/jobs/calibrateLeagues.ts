@@ -159,3 +159,23 @@ export async function runLeagueCalibration(supabase: SupabaseClient, logger: Log
     throw err;
   }
 }
+
+// The read path every live-prediction caller should go through for a
+// fixture's competition-specific fitted rho — see fitDixonColesRho.ts for
+// how competition_rho rows get written (runLatestDixonColesRhoFitJob, when
+// called with a competitionId). Lives here rather than in
+// fitDixonColesRho.ts itself for the same reason getLeagueAverages does:
+// generatePredictions.ts needs to import it, and fitDixonColesRho.ts
+// already imports FROM generatePredictions.ts (MIN_MATCHES_FOR_PREDICTION),
+// so the reverse import would be circular. undefined (not the fixed
+// default) means no competition-scoped fit exists yet — the caller should
+// simply omit `rho` from the /predict/poisson payload rather than resolve
+// a fallback itself; ml-service's own _effective_rho() already knows how
+// to fall back from the last global fit to the fixed constant (see
+// main.py), so duplicating that chain here would just be two places that
+// could disagree.
+export async function getCompetitionRho(supabase: SupabaseClient, competitionId: string): Promise<number | undefined> {
+  const { data, error } = await supabase.from("competition_rho").select("fitted_rho").eq("competition_id", competitionId).maybeSingle();
+  if (error) throw new Error(`Failed to load competition_rho: ${error.message}`);
+  return data ? (data.fitted_rho as number) : undefined;
+}

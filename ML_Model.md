@@ -402,6 +402,91 @@ connected in this environment, so there is no real fixture history with
 enough 0-0/1-0/0-1/1-1 results to fit against. `poisson-baseline`'s
 `model_versions` row stays at its dev-seeded, unfit state in practice.
 
+### Per-competition rho
+
+The global fit above answers "what's the best single rho across every
+competition in the database?" — but different leagues plausibly have
+different low-score correlation structure (a defensive league draws 0-0
+more often than an attacking one, all else equal), so a single global rho
+is itself an approximation. This extension lets an admin fit rho scoped to
+one competition's own matches, stored *alongside* the global fallback
+rather than overwriting it, so fitting a bad or thin per-competition sample
+never degrades every other competition's predictions.
+
+**How a competition-scoped fit differs from a global one.**
+`POST /admin/model/poisson/fit-rho?from=&to=&competitionId=<id>` (the same
+route as the global fit — presence of `competitionId` is what branches the
+behavior) builds rows from that one competition's finished fixtures only
+(same point-in-time `computePointInTimeStrength()` machinery, same
+`MIN_INFORMATIVE_MATCHES` gate) and calls ml-service's
+`POST /fit/dixon_coles_rho` with `applyGlobally: false`. ml-service still
+computes the fit the identical way (`fit_rho()`/`minimize_scalar` — nothing
+about the optimization itself changes), but with `applyGlobally: false` it
+does **not** mutate `_fitted_rho`, so the global fallback every other
+competition relies on is left completely untouched. `runLatestDixonColesRhoFitJob()`
+then upserts the result into a new `competition_rho` table
+(`unique(model_version_id, competition_id)` — refitting the same
+competition updates its row in place, it doesn't accumulate history) rather
+than touching `poisson-baseline`'s `model_versions` row the way a global
+fit does; `ingestion_runs.job_name` is `fit:dixon-coles-rho:competition`
+for this path, `fit:dixon-coles-rho` for a global one, so the two are
+distinguishable in job history.
+
+**Why `competition_rho` is shaped like `model_evaluations`, not like
+`league_calibration`.** It carries `model_version_id` + `competition_id` +
+`evaluation_window` + the same fit diagnostics
+(`log_likelihood_at_fitted_rho`/`log_likelihood_at_default_rho`/
+`informative_matches`) the global fit's response already has — because a
+rho fit is a model-calibration record tied to a specific model version and
+a specific fitting run, not a model-agnostic observational statistic the
+way `league_calibration`'s plain averages are.
+
+**How a fit takes effect at predict time.** `PoissonPredictionRequest`
+gained an optional `rho` field — an explicit per-request override that
+`_effective_rho()` checks *before* falling back to the existing
+global-fitted-or-default chain. ml-service itself has no notion of
+"competition" as a concept and still keeps exactly the one process-local
+`_fitted_rho: float | None` it always has; resolving which rho applies to
+a given fixture is entirely the backend's job.
+`generatePredictionsForUpcomingFixtures` calls `getCompetitionRho()`
+(`backend/src/jobs/calibrateLeagues.ts` — deliberately not
+`fitDixonColesRho.ts`; see the module comment there explaining the
+circular-import reasoning, the same one that put
+`LEAGUE_AVG_HOME_GOALS`/`LEAGUE_AVG_AWAY_GOALS` in that module too) for
+each fixture's own competition and forwards whatever it finds (or
+`undefined`, never a resolved fallback value, when that competition has no
+fit of its own) as `rho` in the prediction payload. So the effective chain
+for any one prediction is: this competition's own fit, if one exists → the
+global fit, if one has ever been run → the fixed `-0.1` default — each
+level only consulted if the one above it is absent.
+
+**Not yet wired into backtesting/training.** Same stated gap as
+league-specific calibration above, for the identical reason:
+`runBacktest.ts`/`trainGradientBoosting.ts` still use whatever rho
+`_effective_rho()` resolves to with no per-request override, never a
+competition-scoped one, for every historical fixture regardless of
+competition. Reading `competition_rho`'s *current* fitted value for a
+historical fixture would reintroduce the same lookahead-bias risk
+league-specific calibration's caveat describes — a genuinely point-in-time
+per-competition rho is real, unimplemented future work.
+
+Admin UI: the "Backtest & models" panel's "Competition ID (optional)" text
+field controls this — leave it blank for a global fit (button reads "Fit
+Dixon-Coles rho (global)"), or fill in a competition ID to scope the fit
+(button reads "Fit Dixon-Coles rho (this competition)"). A new
+"Per-competition rho fits" table beneath it lists every competition with a
+fit of its own, mirroring the "League calibration" table's layout —
+`GET /admin/model/poisson/competition-rho` backs it.
+
+**Caveats — same discipline as everything else in this file.** This has
+never been run against real data, for the same reason as the global fit:
+no live API-Football key has ever been connected in this environment, so
+no competition has anywhere near enough 0-0/1-0/0-1/1-1 results to fit
+against on its own (a per-competition sample is necessarily smaller than
+the global one, so this gate is harder to clear, not easier).
+`competition_rho` stays empty in practice, and every live prediction falls
+back to the global fit (itself never actually fit) or the fixed default.
+
 ## Gradient boosting model
 
 `ml-service/app/models/gradient_boosting.py` is the platform's second

@@ -654,6 +654,75 @@
   real fixtures; every live prediction still uses the fixed cross-league
   default in practice, and `league_calibration` stays empty. See
   `ML_Model.md`'s "League-specific calibration" section.
+- [x] Per-competition Dixon-Coles rho fitting, a follow-up requested after
+  the four wishlist items above landed. The global rho fit answers "one
+  best rho across every competition"; different leagues plausibly have
+  different low-score correlation, so this lets an admin fit rho scoped to
+  one competition's own matches — stored *alongside*, never overwriting,
+  the global fallback every other competition still relies on.
+  `ml-service/app/schemas.py`: `PoissonPredictionRequest` gained an
+  optional `rho` field (an explicit per-request override,
+  `_effective_rho()` checks it before the existing global-fit-or-default
+  chain); `DixonColesRhoFitRequest` gained `apply_globally: bool = True` —
+  `fit_dixon_coles_rho()` only mutates the process-local `_fitted_rho`
+  when it's `True`, so a competition-scoped fit (`applyGlobally: false`)
+  computes the identical MLE but never touches the global fallback. New
+  migration `0008_competition_rho.sql`: `competition_rho` table, shaped
+  like `model_evaluations` (`model_version_id` + `competition_id` +
+  `evaluation_window` + fit diagnostics), not like `league_calibration`'s
+  plain-average shape — a rho fit is a model-calibration record tied to a
+  specific model version, not a model-agnostic observational stat.
+  `backend/src/jobs/fitDixonColesRho.ts`'s `runLatestDixonColesRhoFitJob()`
+  now branches on whether `competitionId` was passed: omitted → identical
+  global-fit behavior as before (updates `poisson-baseline`'s
+  `model_versions` row, `applyGlobally: true`); present → builds rows from
+  just that competition's matches, calls ml-service with
+  `applyGlobally: false`, and upserts `competition_rho`
+  (`unique(model_version_id, competition_id)` — refitting updates in
+  place) instead of touching `model_versions`; `ingestion_runs.job_name`
+  distinguishes the two (`fit:dixon-coles-rho` vs.
+  `fit:dixon-coles-rho:competition`). `getCompetitionRho()` — the read
+  path `generatePredictionsForUpcomingFixtures` now calls alongside
+  `getLeagueAverages()` — deliberately lives in `calibrateLeagues.ts`, not
+  `fitDixonColesRho.ts`, to avoid a circular import
+  (`generatePredictions.ts` already imports from `fitDixonColesRho.ts`
+  transitively via `runBacktest.ts`); same relocation pattern
+  `LEAGUE_AVG_HOME_GOALS`/`AWAY_GOALS` used in the previous task. The
+  effective rho chain for any one live prediction is now: this
+  competition's own fit, if any → the global fit, if one has ever run →
+  the fixed `-0.1` default — `generatePredictionsForUpcomingFixtures`
+  forwards `undefined` (never a resolved fallback value) when a
+  competition has no fit of its own, letting ml-service's own chain
+  resolve it. `POST /admin/model/poisson/fit-rho` keeps its existing
+  signature (`competitionId` was already an optional query param) but now
+  documents the branch; response gained a `competitionId` field
+  (`null`/the id) so a caller can tell which kind of fit it triggered. New
+  route `GET /admin/model/poisson/competition-rho` (same
+  list-and-join-competition-name pattern as
+  `/admin/league-calibration/results`). New `AdminDashboard.tsx` controls:
+  a "Competition ID (optional)" text field next to the existing rho
+  inputs (button label switches between "Fit Dixon-Coles rho (global)"
+  and "...(this competition)" depending on whether it's filled in), and a
+  "Per-competition rho fits" results table mirroring the league
+  calibration table's layout. **Deliberately NOT wired into
+  backtesting/training** — same lookahead-bias reasoning as
+  league-specific calibration's identical gap: those pipelines already do
+  a genuine point-in-time walk-forward, and reading `competition_rho`'s
+  *current* value for a historical fixture would leak future knowledge
+  into a "historical" evaluation. Test counts: ml-service 68/68 (was 66 —
+  2 new in `test_api.py`), backend 218/218 (was 212 — 2 new in
+  `fitDixonColesRho.test.ts`, 2 new in `calibrateLeagues.test.ts`, 2 new
+  in `generatePredictions.test.ts`), frontend 45/45 (was 42 — 3 new
+  dedicated tests plus `getCompetitionRhoResults` wired into every
+  existing baseline mock). `tsc`/`eslint`/`npm run build` clean across all
+  three. **Like every real-data-dependent pipeline in this file, never run
+  against real data** — no live API-Football key has ever been connected
+  in this environment, and a per-competition sample is necessarily
+  smaller than the global one (harder to clear
+  `MIN_INFORMATIVE_MATCHES`, not easier), so `competition_rho` stays
+  empty in practice and every live prediction still falls back to the
+  (itself never actually fit) global rho or the fixed default. See
+  `ML_Model.md`'s new "Per-competition rho" section.
 
 ## Frontend
 

@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-08-28 — Per-competition Dixon-Coles rho fitting
+
+Follow-up requested after the four original wishlist items landed. The
+existing global rho fit answers "what's the single best rho across every
+competition?" — this lets an admin fit rho scoped to just one
+competition's own matches, storing it *alongside*, never overwriting, the
+global fallback every other competition still relies on.
+
+- `ml-service/app/schemas.py`: `PoissonPredictionRequest` gained an
+  optional `rho` field — an explicit per-request override that
+  `_effective_rho()` checks before its existing global-fit-or-default
+  chain. `DixonColesRhoFitRequest` gained `apply_globally: bool = True`;
+  `fit_dixon_coles_rho()` only mutates the process-local `_fitted_rho`
+  when it's `True`, so a competition-scoped fit computes the identical MLE
+  without ever touching the global fallback.
+- New migration `0008_competition_rho.sql`: `competition_rho`, shaped like
+  `model_evaluations` (`model_version_id` + `competition_id` +
+  `evaluation_window` + fit diagnostics), not like `league_calibration`'s
+  plain-average shape — a rho fit is a model-calibration record tied to a
+  specific model version, not a model-agnostic observational stat.
+- `backend/src/jobs/fitDixonColesRho.ts`'s `runLatestDixonColesRhoFitJob()`
+  now branches on `competitionId`: omitted → unchanged global-fit
+  behavior (updates `poisson-baseline`'s `model_versions` row,
+  `applyGlobally: true`); present → builds rows from just that
+  competition's matches, calls ml-service with `applyGlobally: false`, and
+  upserts `competition_rho` (`unique(model_version_id, competition_id)`)
+  instead of touching `model_versions`. `ingestion_runs.job_name`
+  distinguishes the two paths.
+- `getCompetitionRho()` deliberately lives in `calibrateLeagues.ts`, not
+  `fitDixonColesRho.ts`, to avoid a circular import back into
+  `generatePredictions.ts` — same relocation pattern
+  `LEAGUE_AVG_HOME_GOALS`/`AWAY_GOALS` used for the identical reason in
+  the league-calibration task. `generatePredictionsForUpcomingFixtures`
+  now resolves each fixture's rho as: this competition's own fit, if any
+  → the global fit, if one has ever run → the fixed `-0.1` default —
+  forwarding `undefined` (never a resolved fallback value) when a
+  competition has no fit of its own, so ml-service's own chain resolves
+  it.
+- `POST /admin/model/poisson/fit-rho` keeps its existing signature
+  (`competitionId` was already an optional query param) but its response
+  now includes `competitionId` (`null` for a global fit, the id for a
+  scoped one). New route `GET /admin/model/poisson/competition-rho`
+  (same list-and-join-competition-name pattern as
+  `/admin/league-calibration/results`). New `AdminDashboard.tsx`
+  controls: a "Competition ID (optional)" text field (the fit button's
+  label switches between "...(global)" and "...(this competition)"), and
+  a "Per-competition rho fits" results table.
+- **Deliberately NOT wired into backtesting/training**, for the identical
+  lookahead-bias reason league-specific calibration's own gap states:
+  those pipelines already do a genuine point-in-time walk-forward, and
+  reading `competition_rho`'s *current* value for a historical fixture
+  would leak future knowledge into a "historical" evaluation.
+- Test counts: ml-service 68/68 (was 66), backend 218/218 (was 212),
+  frontend 45/45 (was 42). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Like every real-data-dependent pipeline in this project, never run
+  against real data.** No live API-Football key has ever been connected
+  in this environment, and a per-competition sample is necessarily
+  smaller than the global one — harder to clear
+  `MIN_INFORMATIVE_MATCHES`, not easier — so `competition_rho` stays
+  empty in practice and every live prediction still falls back to the
+  (itself never actually fit) global rho or the fixed default. See
+  `ML_Model.md`'s new "Per-competition rho" section.
+
 ## 2026-08-28 — League-specific calibration (real per-competition goal averages)
 
 Fourth and final item off the original model wishlist in Task.md. The

@@ -151,6 +151,67 @@ describe("generatePredictionsForUpcomingFixtures", () => {
     expect(payload.leagueAvgAwayGoals).toBe(1.1);
   });
 
+  it("passes a competition's fitted rho through to the prediction payload when one exists", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        competition_id: "comp-rho-fit",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      { id: "ts-home", team_id: "team-home", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 15, goals_conceded: 8 },
+      { id: "ts-away", team_id: "team-away", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 12, goals_conceded: 10 }
+    ]);
+    fake.seed("competition_rho", [
+      { id: "cr-1", model_version_id: "mv-poisson", competition_id: "comp-rho-fit", fitted_rho: -0.27, default_rho: -0.1, sample_size: 40 }
+    ]);
+
+    const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    const payload = predictPoisson.mock.calls[0]?.[0] as PoissonPredictionRequest;
+    expect(payload.rho).toBe(-0.27);
+  });
+
+  it("omits rho from the prediction payload when the fixture's competition has no per-competition fit yet", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        season_id: "season-1",
+        competition_id: "comp-no-rho-fit",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        status: "scheduled",
+        is_synthetic: false,
+        kickoff_utc: new Date(Date.now() + 3600_000).toISOString()
+      }
+    ]);
+    fake.seed("team_statistics", [
+      { id: "ts-home", team_id: "team-home", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 15, goals_conceded: 8 },
+      { id: "ts-away", team_id: "team-away", season_id: "season-1", scope: "overall", matches_played: 10, goals_scored: 12, goals_conceded: 10 }
+    ]);
+    // No competition_rho row for comp-no-rho-fit (or the table at all).
+
+    const predictPoisson = vi.fn().mockResolvedValue(samplePredictionResponse());
+    const fakePredictionClient = { predictPoisson } as unknown as PredictionClient;
+
+    await generatePredictionsForUpcomingFixtures(fakeClient(fake), fakePredictionClient, "mv-1", silentLogger);
+
+    const payload = predictPoisson.mock.calls[0]?.[0] as PoissonPredictionRequest;
+    // Never sent as some resolved fallback value — omitted so ml-service applies its own chain.
+    expect(payload.rho).toBeUndefined();
+  });
+
   it("skips a fixture when either team has fewer than 3 matches of stats, without calling the prediction client", async () => {
     const fake = new FakeSupabase();
     fake.seed("fixtures", [

@@ -188,6 +188,10 @@ export interface GradientBoostingTrainResult {
 export interface DixonColesRhoFitResult {
   runId: string | null;
   modelVersionId: string | null;
+  // null = a global fit; a competition id = a fit scoped to (and stored
+  // for) just that one competition — see ML_Model.md's "Rho fitting"
+  // section's per-competition extension.
+  competitionId: string | null;
   sampleSize: number;
   skipped: number;
   informativeMatches: number | null;
@@ -214,5 +218,23 @@ export interface LeagueCalibrationRow {
   league_avg_home_goals: number;
   league_avg_away_goals: number;
   sample_size: number;
+  computed_at: string;
+}
+
+// One competition's current per-competition Dixon-Coles rho fit (see
+// backend/src/jobs/fitDixonColesRho.ts). competitionName is server-side
+// enriched from the competitions table, same pattern as LeagueCalibrationRow.
+export interface CompetitionRhoRow {
+  id: string;
+  model_version_id: string;
+  competition_id: string;
+  competitionName: string | null;
+  fitted_rho: number;
+  default_rho: number;
+  sample_size: number;
+  informative_matches: number;
+  log_likelihood_at_fitted_rho: number;
+  log_likelihood_at_default_rho: number;
+  evaluation_window: string;
   computed_at: string;
 }

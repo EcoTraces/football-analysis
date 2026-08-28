@@ -140,4 +140,121 @@ describe("runLatestDixonColesRhoFitJob", () => {
     // A failed fit must never silently update the model_versions row.
     expect(fake.rows("model_versions")[0]!.trained_at).toBeUndefined();
   });
+
+  it("a competition-scoped fit is sent with applyGlobally: false and stored in competition_rho, never touching model_versions", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("model_versions", [{ id: "mv-poisson", name: "poisson-baseline", version: "0.1.0" }]);
+    const kickoff = "2024-03-10T15:00:00.000Z";
+    fake.seed("fixtures", [
+      ...priorHistoryFixtures("team-home", "hist-opp", 3, kickoff),
+      ...priorHistoryFixtures("team-away", "hist-opp", 3, kickoff),
+      finishedFixture({
+        id: "fx-1",
+        competition_id: "comp-scoped",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        kickoff_utc: kickoff,
+        home_score: 0,
+        away_score: 0
+      })
+    ]);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        sampleSize: 1,
+        informativeMatches: 1,
+        fittedRho: -0.28,
+        logLikelihoodAtFittedRho: -0.4,
+        logLikelihoodAtDefaultRho: -1.1,
+        defaultRho: -0.1
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runLatestDixonColesRhoFitJob(fakeClient(fake), "http://ml-service.invalid", silentLogger, {
+      from: "2024-03-01T00:00:00.000Z",
+      to: "2024-03-31T23:59:59.000Z",
+      competitionId: "comp-scoped"
+    });
+
+    const sentBody = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body);
+    expect(sentBody.applyGlobally).toBe(false);
+
+    expect(result.competitionId).toBe("comp-scoped");
+    expect(result.fittedRho).toBe(-0.28);
+
+    const runs = fake.rows("ingestion_runs");
+    expect(runs[0]).toMatchObject({ job_name: "fit:dixon-coles-rho:competition", status: "succeeded" });
+
+    // The global model_versions row must be left completely untouched.
+    expect(fake.rows("model_versions")[0]!.trained_at).toBeUndefined();
+    expect(fake.rows("model_versions")[0]!.notes).toBeUndefined();
+
+    const competitionRhoRows = fake.rows("competition_rho");
+    expect(competitionRhoRows).toHaveLength(1);
+    expect(competitionRhoRows[0]).toMatchObject({
+      model_version_id: "mv-poisson",
+      competition_id: "comp-scoped",
+      fitted_rho: -0.28,
+      sample_size: 1
+    });
+  });
+
+  it("re-fitting the same competition updates its competition_rho row in place rather than duplicating it", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("model_versions", [{ id: "mv-poisson", name: "poisson-baseline", version: "0.1.0" }]);
+    fake.seed("competition_rho", [
+      {
+        id: "cr-1",
+        model_version_id: "mv-poisson",
+        competition_id: "comp-scoped",
+        fitted_rho: -0.1,
+        default_rho: -0.1,
+        sample_size: 1,
+        informative_matches: 1,
+        log_likelihood_at_fitted_rho: -1,
+        log_likelihood_at_default_rho: -1,
+        evaluation_window: "old-window"
+      }
+    ]);
+    const kickoff = "2024-03-10T15:00:00.000Z";
+    fake.seed("fixtures", [
+      ...priorHistoryFixtures("team-home", "hist-opp", 3, kickoff),
+      ...priorHistoryFixtures("team-away", "hist-opp", 3, kickoff),
+      finishedFixture({
+        id: "fx-1",
+        competition_id: "comp-scoped",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        kickoff_utc: kickoff,
+        home_score: 0,
+        away_score: 0
+      })
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          sampleSize: 1,
+          informativeMatches: 1,
+          fittedRho: -0.35,
+          logLikelihoodAtFittedRho: -0.3,
+          logLikelihoodAtDefaultRho: -1.0,
+          defaultRho: -0.1
+        })
+      })
+    );
+
+    await runLatestDixonColesRhoFitJob(fakeClient(fake), "http://ml-service.invalid", silentLogger, {
+      from: "2024-03-01T00:00:00.000Z",
+      to: "2024-03-31T23:59:59.000Z",
+      competitionId: "comp-scoped"
+    });
+
+    const rows = fake.rows("competition_rho");
+    expect(rows).toHaveLength(1); // updated in place, not duplicated
+    expect(rows[0]!.fitted_rho).toBe(-0.35);
+  });
 });

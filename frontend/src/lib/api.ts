@@ -6,6 +6,7 @@ import type {
   BacktestableModel,
   BacktestEvaluation,
   BacktestRunResult,
+  CompetitionRhoRow,
   DataHealth,
   DixonColesRhoFitResult,
   FixtureSummary,
@@ -212,4 +213,9 @@ export function getRhoStatus(accessToken: string): Promise<ApiEnvelope<RhoStatus
 /** Every competition's current real per-league goal averages (see ML_Model.md's "League-specific calibration" section). */
 export function getLeagueCalibrationResults(accessToken: string): Promise<ApiEnvelope<LeagueCalibrationRow[]>> {
   return authedRequest<ApiEnvelope<LeagueCalibrationRow[]>>("/admin/league-calibration/results", accessToken);
+}
+
+/** Every competition's current per-competition Dixon-Coles rho fit (see ML_Model.md's "Rho fitting" section). */
+export function getCompetitionRhoResults(accessToken: string): Promise<ApiEnvelope<CompetitionRhoRow[]>> {
+  return authedRequest<ApiEnvelope<CompetitionRhoRow[]>>("/admin/model/poisson/competition-rho", accessToken);
 }

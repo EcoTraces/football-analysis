@@ -113,7 +113,13 @@ _gradient_boosting_model = GradientBoostingOneXTwoModel()
 _fitted_rho: float | None = None
 
 
-def _effective_rho() -> float:
+def _effective_rho(override: float | None = None) -> float:
+    """override is a per-request rho (PoissonPredictionRequest.rho) — a
+    competition-specific fitted value the backend looked up for this one
+    fixture's competition. Takes precedence over the process-wide fallback
+    chain (last global fit, else the fixed RHO constant) when present."""
+    if override is not None:
+        return override
     return _fitted_rho if _fitted_rho is not None else RHO
 
 
@@ -139,7 +145,7 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
         lambda_home, lambda_away = expected_goals(
             home, away, payload.league_avg_home_goals, payload.league_avg_away_goals
         )
-        matrix = score_matrix(lambda_home, lambda_away, rho=_effective_rho())
+        matrix = score_matrix(lambda_home, lambda_away, rho=_effective_rho(payload.rho))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -486,8 +492,9 @@ def fit_dixon_coles_rho(payload: DixonColesRhoFitRequest) -> DixonColesRhoFitRes
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    global _fitted_rho
-    _fitted_rho = result.fitted_rho
+    if payload.apply_globally:
+        global _fitted_rho
+        _fitted_rho = result.fitted_rho
 
     return DixonColesRhoFitResponse(
         sample_size=result.sample_size,

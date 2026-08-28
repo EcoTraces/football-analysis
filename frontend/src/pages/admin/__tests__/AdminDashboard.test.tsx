@@ -34,6 +34,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getBacktestResults").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getRhoStatus").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getLeagueCalibrationResults").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getCompetitionRhoResults").mockReturnValue(new Promise(() => {}));
 
     renderDashboard();
 
@@ -66,6 +67,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -93,6 +95,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -118,6 +121,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
     const triggerSync = vi.spyOn(api, "triggerSync").mockResolvedValue({
       data: { runId: "run-1", fixturesProcessed: 3, fixturesRejected: 0 }
     });
@@ -150,6 +154,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
   }
 
   it("renders past backtest runs with their metrics", async () => {
@@ -312,6 +317,7 @@ describe("AdminDashboard", () => {
       data: {
         runId: "run-1",
         modelVersionId: "mv-poisson",
+        competitionId: null,
         sampleSize: 40,
         skipped: 2,
         informativeMatches: 40,
@@ -323,17 +329,52 @@ describe("AdminDashboard", () => {
     });
 
     renderDashboard();
-    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho (global)")).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
 
-    screen.getByText("Fit Dixon-Coles rho").click();
+    screen.getByText("Fit Dixon-Coles rho (global)").click();
 
     await waitFor(() => expect(fitRhoSpy).toHaveBeenCalledTimes(1));
-    expect(fitRhoSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z");
+    expect(fitRhoSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z", undefined);
     await waitFor(() => expect(screen.getByText(/Fitted rho = -0.3100 from 40 matches/)).toBeTruthy());
+    expect(screen.getByText(/now in effect for every poisson-baseline prediction/)).toBeTruthy();
     expect(getRhoStatus).toHaveBeenCalledTimes(2); // initial load + post-fit refresh
+  });
+
+  it("fitting rho with a competition ID sends it through and reports a scoped fit, not a global one", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const fitRhoSpy = vi.spyOn(api, "fitDixonColesRho").mockResolvedValue({
+      data: {
+        runId: "run-1",
+        modelVersionId: "mv-poisson",
+        competitionId: "comp-1",
+        sampleSize: 40,
+        skipped: 2,
+        informativeMatches: 40,
+        fittedRho: -0.42,
+        logLikelihoodAtFittedRho: -10,
+        logLikelihoodAtDefaultRho: -20,
+        defaultRho: -0.1
+      }
+    });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho (global)")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+    fireEvent.change(screen.getByLabelText("Rho competition ID (optional)"), { target: { value: "comp-1" } });
+
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho (this competition)")).toBeTruthy());
+    screen.getByText("Fit Dixon-Coles rho (this competition)").click();
+
+    await waitFor(() => expect(fitRhoSpy).toHaveBeenCalledTimes(1));
+    expect(fitRhoSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z", "comp-1");
+    await waitFor(() => expect(screen.getByText(/Fitted rho = -0.4200 from 40 matches/)).toBeTruthy());
+    expect(screen.getByText(/stored for this competition only/)).toBeTruthy();
   });
 
   it("shows an error message when fitting rho fails (e.g. too few informative matches in range)", async () => {
@@ -344,12 +385,12 @@ describe("AdminDashboard", () => {
     );
 
     renderDashboard();
-    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho (global)")).toBeTruthy());
 
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
     fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
 
-    screen.getByText("Fit Dixon-Coles rho").click();
+    screen.getByText("Fit Dixon-Coles rho (global)").click();
 
     await waitFor(() =>
       expect(screen.getByText("Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho, got 2 out of 50 rows.")).toBeTruthy()
@@ -389,6 +430,44 @@ describe("AdminDashboard", () => {
     renderDashboard();
 
     await waitFor(() => expect(screen.getByText(/No competition has enough real fixture history/)).toBeTruthy());
+  });
+
+  it("renders each competition's own fitted rho, separately from the global fit", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({
+      data: [
+        {
+          id: "cr-1",
+          model_version_id: "mv-poisson",
+          competition_id: "comp-1",
+          competitionName: "Synthetic Premier Division",
+          fitted_rho: -0.27,
+          default_rho: -0.1,
+          sample_size: 40,
+          informative_matches: 40,
+          log_likelihood_at_fitted_rho: -10,
+          log_likelihood_at_default_rho: -20,
+          evaluation_window: "2024-01-01T00:00:00.000Z..2024-01-31T23:59:59.999Z",
+          computed_at: "2026-08-27T00:00:00Z"
+        }
+      ]
+    });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("Synthetic Premier Division")).toBeTruthy());
+    expect(screen.getByText("-0.2700")).toBeTruthy();
+  });
+
+  it("shows a plain-language message, not an empty table, when no competition has its own rho fit yet", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/No competition has a rho fit of its own yet/)).toBeTruthy());
   });
 
   it("triggering the league calibration sync hits its own route and refreshes results", async () => {

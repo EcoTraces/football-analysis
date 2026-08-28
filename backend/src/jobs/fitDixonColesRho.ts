@@ -86,6 +86,7 @@ export async function buildRhoFittingRows(
 export interface RunLatestDixonColesRhoFitResult {
   runId: string | null;
   modelVersionId: string | null;
+  competitionId: string | null;
   sampleSize: number;
   skipped: number;
   informativeMatches: number | null;
@@ -95,11 +96,19 @@ export interface RunLatestDixonColesRhoFitResult {
   defaultRho: number | null;
 }
 
-// Mirrors runLatestGradientBoostingTrainingJob's structure, but updates
-// the EXISTING poisson-baseline model_versions row rather than a separate
-// model's row — fitting rho refines that same model, it doesn't create a
-// new one. Like training/backtesting, never wired into the scheduler —
-// this is an occasional, admin-triggered action over a chosen date range.
+// Mirrors runLatestGradientBoostingTrainingJob's structure. `options.
+// competitionId` branches the whole run between two meaningfully different
+// outcomes:
+//  - Absent: a GLOBAL fit, exactly as before per-competition fitting
+//    existed — applies process-wide in ml-service (applyGlobally: true)
+//    and updates poisson-baseline's own model_versions row.
+//  - Present: a COMPETITION-SCOPED fit — still uses that competition's
+//    fixtures as training rows, but is fit with applyGlobally: false (so
+//    it never clobbers the one fallback every *other* competition's
+//    predictions would otherwise use) and stored in competition_rho
+//    instead of model_versions, keyed to this one competition.
+// Like training/backtesting, never wired into the scheduler — this is an
+// occasional, admin-triggered action over a chosen date range.
 export async function runLatestDixonColesRhoFitJob(
   supabase: SupabaseClient,
   mlServiceUrl: string,
@@ -118,6 +127,7 @@ export async function runLatestDixonColesRhoFitJob(
     return {
       runId: null,
       modelVersionId: null,
+      competitionId: options.competitionId ?? null,
       sampleSize: 0,
       skipped: 0,
       informativeMatches: null,
@@ -128,10 +138,15 @@ export async function runLatestDixonColesRhoFitJob(
     };
   }
   const modelVersionId = modelVersion.id as string;
+  const isCompetitionScoped = Boolean(options.competitionId);
 
   const { data: run, error: runError } = await supabase
     .from("ingestion_runs")
-    .insert({ job_name: "fit:dixon-coles-rho", provider: "ml-service", status: "running" })
+    .insert({
+      job_name: isCompetitionScoped ? "fit:dixon-coles-rho:competition" : "fit:dixon-coles-rho",
+      provider: "ml-service",
+      status: "running"
+    })
     .select("id")
     .single();
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
@@ -145,7 +160,8 @@ export async function runLatestDixonColesRhoFitJob(
     fitResult = await client.fitDixonColesRho({
       leagueAvgHomeGoals: LEAGUE_AVG_HOME_GOALS,
       leagueAvgAwayGoals: LEAGUE_AVG_AWAY_GOALS,
-      rows
+      rows,
+      applyGlobally: !isCompetitionScoped
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Dixon-Coles rho fit failed.";
@@ -170,21 +186,43 @@ export async function runLatestDixonColesRhoFitJob(
     .eq("id", runId);
   if (finishError) logger.error({ err: finishError, runId }, "Failed to finalize ingestion_runs row");
 
-  const { error: modelUpdateError } = await supabase
-    .from("model_versions")
-    .update({
-      trained_at: new Date().toISOString(),
-      training_dataset_version: `${options.from}..${options.to}`,
-      notes: `Dixon-Coles rho fit: fittedRho=${fitResult.fittedRho.toFixed(4)} (was ${fitResult.defaultRho}), ` +
-        `sampleSize=${fitResult.sampleSize}, informativeMatches=${fitResult.informativeMatches}, ` +
-        `logLikelihood ${fitResult.logLikelihoodAtFittedRho.toFixed(2)} vs ${fitResult.logLikelihoodAtDefaultRho.toFixed(2)} at the old default.`
-    })
-    .eq("id", modelVersionId);
-  if (modelUpdateError) logger.error({ err: modelUpdateError, modelVersionId }, "Failed to update model_versions row after rho fit");
+  const evaluationWindow = `${options.from}..${options.to}`;
+
+  if (isCompetitionScoped) {
+    const { error: upsertError } = await supabase.from("competition_rho").upsert(
+      {
+        model_version_id: modelVersionId,
+        competition_id: options.competitionId,
+        fitted_rho: fitResult.fittedRho,
+        default_rho: fitResult.defaultRho,
+        sample_size: fitResult.sampleSize,
+        informative_matches: fitResult.informativeMatches,
+        log_likelihood_at_fitted_rho: fitResult.logLikelihoodAtFittedRho,
+        log_likelihood_at_default_rho: fitResult.logLikelihoodAtDefaultRho,
+        evaluation_window: evaluationWindow,
+        computed_at: new Date().toISOString()
+      },
+      { onConflict: "model_version_id,competition_id" }
+    );
+    if (upsertError) logger.error({ err: upsertError, competitionId: options.competitionId }, "Failed to upsert competition_rho row after fit");
+  } else {
+    const { error: modelUpdateError } = await supabase
+      .from("model_versions")
+      .update({
+        trained_at: new Date().toISOString(),
+        training_dataset_version: evaluationWindow,
+        notes: `Dixon-Coles rho fit: fittedRho=${fitResult.fittedRho.toFixed(4)} (was ${fitResult.defaultRho}), ` +
+          `sampleSize=${fitResult.sampleSize}, informativeMatches=${fitResult.informativeMatches}, ` +
+          `logLikelihood ${fitResult.logLikelihoodAtFittedRho.toFixed(2)} vs ${fitResult.logLikelihoodAtDefaultRho.toFixed(2)} at the old default.`
+      })
+      .eq("id", modelVersionId);
+    if (modelUpdateError) logger.error({ err: modelUpdateError, modelVersionId }, "Failed to update model_versions row after rho fit");
+  }
 
   return {
     runId,
     modelVersionId,
+    competitionId: options.competitionId ?? null,
     sampleSize: fitResult.sampleSize,
     skipped,
     informativeMatches: fitResult.informativeMatches,

@@ -27,6 +27,14 @@ class PoissonPredictionRequest(CamelModel):
     away_team: TeamStrengthInput
     league_avg_home_goals: float = Field(gt=0)
     league_avg_away_goals: float = Field(gt=0)
+    # Optional per-request override of the Dixon-Coles rho used for this
+    # one prediction — lets the caller supply a competition-specific fitted
+    # rho (backend/src/jobs/fitDixonColesRho.ts::getCompetitionRho) without
+    # this service needing to know anything about competitions as entities.
+    # None (the default) falls back to the existing global behavior:
+    # whatever /fit/dixon_coles_rho last set process-wide, or the fixed
+    # RHO constant if nobody has fit anything yet — see _effective_rho().
+    rho: float | None = None
     # Optional: each team's own average yellow cards / corners per match.
     # Unlike goals, the backend only has these once fixture-statistics data
     # (corners) or cards-parsing (see syncTeamStatistics.ts) has actually
@@ -109,6 +117,14 @@ class DixonColesRhoFitRequest(CamelModel):
     league_avg_home_goals: float = Field(gt=0)
     league_avg_away_goals: float = Field(gt=0)
     rows: list[RhoFittingRowInput]
+    # True (the default, and the only behavior that existed before
+    # per-competition fitting): adopt this fit as the process-wide fallback
+    # rho, exactly like every prior /fit/dixon_coles_rho call. False: fit
+    # and return the result, but leave the global fallback untouched — used
+    # for a competition-scoped fit, where the result gets stored per
+    # competition (competition_rho) instead of overwriting the one value
+    # every other competition's predictions would otherwise fall back to.
+    apply_globally: bool = True
 
 
 class DixonColesRhoFitResponse(CamelModel):
