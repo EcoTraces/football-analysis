@@ -123,6 +123,66 @@ const predictions: PredictionView[] = [
     modelVersionId: "v1",
     generatedAt: new Date().toISOString(),
     freshness: "LIVE"
+  },
+  {
+    market: "home_wins_a_half",
+    selection: "yes",
+    probability: 0.7,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "home_wins_a_half",
+    selection: "no",
+    probability: 0.3,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "btts_and_result",
+    selection: "yes_home",
+    probability: 0.28,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "btts_and_result",
+    selection: "no_away",
+    probability: 0.09,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "handicap",
+    selection: "home",
+    probability: 0.4,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
   }
 ];
 
@@ -203,5 +263,24 @@ describe("PredictionCard", () => {
   it("renders nothing for away-team goalscorers when the fixture has no such prediction", () => {
     const { container } = render(<PredictionCard predictions={predictions} market="away_anytime_goalscorer" />);
     expect(container.innerHTML).toBe("");
+  });
+
+  it("renders home-wins-a-half as its own independent yes/no market", () => {
+    render(<PredictionCard predictions={predictions} market="home_wins_a_half" />);
+    expect(screen.getByText("Home team wins a half")).toBeTruthy();
+    expect(screen.getByText("70%")).toBeTruthy();
+  });
+
+  it("renders btts_and_result joint selections with human-readable combo labels", () => {
+    render(<PredictionCard predictions={predictions} market="btts_and_result" />);
+    expect(screen.getByText("Both teams to score & result")).toBeTruthy();
+    expect(screen.getByText("BTTS & home win")).toBeTruthy();
+    expect(screen.getByText("No BTTS & away win")).toBeTruthy();
+  });
+
+  it("renders the handicap market with the fixed line in its label", () => {
+    render(<PredictionCard predictions={predictions} market="handicap" />);
+    expect(screen.getByText("Handicap (Home -1.5)")).toBeTruthy();
+    expect(screen.getByText("40%")).toBeTruthy();
   });
 });

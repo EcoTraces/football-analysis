@@ -1,15 +1,23 @@
 from fastapi import FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
-from app.models.half_markets import build_half_matrices, half_result_probabilities, half_with_most_goals_probabilities
+from app.models.half_markets import (
+    build_half_matrices,
+    half_result_probabilities,
+    half_with_most_goals_probabilities,
+    wins_at_least_one_half_probabilities,
+)
 from app.models.player_market import anytime_scorer_probability, top_scorers
 from app.models.player_market import PlayerCandidate as ScorerCandidate
 from app.models.poisson import (
     TeamStrength,
+    btts_and_result_probabilities,
     data_quality_for,
     expected_goals,
     explain_factors,
+    handicap_probabilities,
     market_probabilities,
+    result_and_total_goals_probabilities,
     score_matrix,
     top_correct_scores,
 )
@@ -56,6 +64,8 @@ def _anytime_goalscorer_predictions(
 # against this platform's own data (there is none yet — see Task.md).
 CARDS_LINE = 3.5
 CORNERS_LINE = 9.5
+TEAM_TOTAL_GOALS_LINE = 1.5  # A single team's own goals, not the match total — same "plausible, not fitted" caveat.
+HANDICAP_HOME_LINE = -1.5  # Half-integer so there's no push case; see poisson.py::handicap_probabilities.
 
 app = FastAPI(title="Football Analysis ML Service", version=MODEL_VERSION)
 
@@ -136,6 +146,32 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
             probability=probs["draw_or_away"],
             factors=away_leaning,
         ),
+        # Clean sheet, odd/even goals, and draw-no-bet are all, like double
+        # chance, pure relabelings of market_probabilities()'s output — no
+        # separate model behind any of them.
+        # home_clean_sheet leans on home_leaning (which includes home's own
+        # defensive-record factor) since it's about home's defense holding,
+        # not directly about the model's overall goal-difference lean.
+        MarketProbability(
+            market="home_clean_sheet", selection="yes", probability=probs["home_clean_sheet_yes"], factors=home_leaning
+        ),
+        MarketProbability(
+            market="home_clean_sheet", selection="no", probability=probs["home_clean_sheet_no"], factors=[]
+        ),
+        MarketProbability(
+            market="away_clean_sheet", selection="yes", probability=probs["away_clean_sheet_yes"], factors=away_leaning
+        ),
+        MarketProbability(
+            market="away_clean_sheet", selection="no", probability=probs["away_clean_sheet_no"], factors=[]
+        ),
+        MarketProbability(market="odd_even_goals", selection="even", probability=probs["even_goals"], factors=[]),
+        MarketProbability(market="odd_even_goals", selection="odd", probability=probs["odd_goals"], factors=[]),
+        MarketProbability(
+            market="draw_no_bet", selection="home", probability=probs["draw_no_bet_home"], factors=home_leaning
+        ),
+        MarketProbability(
+            market="draw_no_bet", selection="away", probability=probs["draw_no_bet_away"], factors=away_leaning
+        ),
     ]
 
     # Correct score: only the top N exact scorelines are surfaced individually
@@ -150,6 +186,47 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
     )
     predictions.append(
         MarketProbability(market="correct_score", selection="other", probability=other_probability, factors=[])
+    )
+
+    # Two joint (not independent) markets and a handicap — all read directly
+    # off the same full-match matrix as correct_score, always computed.
+    btts_and_result = btts_and_result_probabilities(matrix)
+    predictions.extend(
+        MarketProbability(market="btts_and_result", selection=selection, probability=p, factors=[])
+        for selection, p in btts_and_result.items()
+    )
+
+    result_and_total_goals = result_and_total_goals_probabilities(matrix, line=2.5)
+    predictions.extend(
+        MarketProbability(market="result_and_total_goals", selection=selection, probability=p, factors=[])
+        for selection, p in result_and_total_goals.items()
+    )
+
+    handicap = handicap_probabilities(matrix, home_handicap=HANDICAP_HOME_LINE)
+    predictions.append(
+        MarketProbability(market="handicap", selection="home", probability=handicap["home"], factors=home_leaning)
+    )
+    predictions.append(
+        MarketProbability(market="handicap", selection="away", probability=handicap["away"], factors=away_leaning)
+    )
+
+    # Team total goals: each side's OWN lambda against a fixed line — reuses
+    # count_markets.total_over_under() directly (same shape as total_cards/
+    # total_corners, just with a single team's lambda instead of a summed
+    # one), always computable, no optional-data gate.
+    home_team_total_over, home_team_total_under = total_over_under(lambda_home, TEAM_TOTAL_GOALS_LINE)
+    predictions.append(
+        MarketProbability(market="home_team_total_goals", selection="over", probability=home_team_total_over, factors=home_leaning)
+    )
+    predictions.append(
+        MarketProbability(market="home_team_total_goals", selection="under", probability=home_team_total_under, factors=[])
+    )
+    away_team_total_over, away_team_total_under = total_over_under(lambda_away, TEAM_TOTAL_GOALS_LINE)
+    predictions.append(
+        MarketProbability(market="away_team_total_goals", selection="over", probability=away_team_total_over, factors=away_leaning)
+    )
+    predictions.append(
+        MarketProbability(market="away_team_total_goals", selection="under", probability=away_team_total_under, factors=[])
     )
 
     # Cards and corners are only predicted when the backend actually sent
@@ -215,6 +292,23 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
                 market="half_with_most_goals", selection="equal", probability=most_goals_probs["equal"], factors=[]
             ),
         ]
+    )
+
+    # Wins at least one half: like anytime-goalscorer, independent
+    # per-side probabilities, not a 3-way partition — both sides can win a
+    # half in the same match. See half_markets.py.
+    wins_a_half = wins_at_least_one_half_probabilities(first_half_probs, second_half_probs)
+    predictions.append(
+        MarketProbability(market="home_wins_a_half", selection="yes", probability=wins_a_half["home"], factors=home_leaning)
+    )
+    predictions.append(
+        MarketProbability(market="home_wins_a_half", selection="no", probability=1 - wins_a_half["home"], factors=[])
+    )
+    predictions.append(
+        MarketProbability(market="away_wins_a_half", selection="yes", probability=wins_a_half["away"], factors=away_leaning)
+    )
+    predictions.append(
+        MarketProbability(market="away_wins_a_half", selection="no", probability=1 - wins_a_half["away"], factors=[])
     )
 
     # Anytime goalscorer: independent, non-mutually-exclusive selections —

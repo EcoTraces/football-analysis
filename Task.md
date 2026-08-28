@@ -444,6 +444,34 @@
   live API-Football key** — see `ML_Model.md`'s caveats, plural, for this
   one; there are more open assumptions here than any other market built
   this session.
+- [x] Added 8 more markets, requested directly by name: clean sheet
+  (`home_clean_sheet`/`away_clean_sheet`), odd/even total goals
+  (`odd_even_goals`), draw no bet (`draw_no_bet`), team total goals
+  (`home_team_total_goals`/`away_team_total_goals`, line 1.5), a combined
+  BTTS-and-result market (`btts_and_result`, 6-way joint), a combined
+  result-and-total-goals market (`result_and_total_goals`, 6-way joint),
+  a fixed-line handicap (`handicap`, home -1.5), and win-at-least-one-half
+  (`home_wins_a_half`/`away_wins_a_half`). Unlike the last three rounds,
+  every one of these needed **zero new data** — all derived from the same
+  full-match matrix, half matrices, or `lambda_home`/`lambda_away` already
+  computed for every other market (`poisson.py` gained
+  `btts_and_result_probabilities`, `result_and_total_goals_probabilities`,
+  `handicap_probabilities`, plus clean-sheet/odd-even/DNB added to
+  `market_probabilities()`'s output; `half_markets.py` gained
+  `wins_at_least_one_half_probabilities`; team total goals reuses
+  `count_markets.total_over_under()` directly against a single side's own
+  lambda). The two joint markets are genuine joint distributions (BTTS and
+  match result are correlated through the same scoreline), not the product
+  of two markets' marginals — tests assert the joint reduces to the right
+  marginal when summed. `home_wins_a_half`/`away_wins_a_half` share
+  anytime-goalscorer's "independent, doesn't sum to 1" shape, since both
+  sides can win a half in the same match. 10 new ml-service tests (49/49
+  total, was 39), 3 new frontend tests (29/29 total, was 26). Backend
+  needed no changes at all this round — confirmed the existing 179/179
+  suite passes unmodified. **Not calibrated, backtested, or verified
+  against a live API-Football key** — same caveat as every fixed line in
+  `ML_Model.md` (`TEAM_TOTAL_GOALS_LINE = 1.5`, `HANDICAP_HOME_LINE =
+  -1.5` chosen for plausibility, not fitted).
 - [ ] Backtesting pipeline: load historical results, walk-forward
   train/validation/test split, write to `model_evaluations`.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare

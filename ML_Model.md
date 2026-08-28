@@ -40,6 +40,49 @@ model with the Dixon & Coles (1997) low-score correlation adjustment.
    league-agnostic caveats below apply to them exactly as much as they do
    to 1X2/BTTS/O-U 2.5.
 
+## More derived markets: clean sheet, odd/even, DNB, handicap, and two joint markets
+
+Still in `poisson.py`, still pure functions of the same full-match matrix —
+`market_probabilities()`, `btts_and_result_probabilities()`,
+`result_and_total_goals_probabilities()`, and `handicap_probabilities()`.
+
+- **`home_clean_sheet`/`away_clean_sheet`** were already computed as
+  intermediate values inside `market_probabilities()` (`p_home_0`/`p_away_0`
+  — "this side conceded zero") and simply weren't exposed as their own
+  market before now.
+- **`odd_even_goals`** sums the matrix by parity of `i + j`.
+- **`draw_no_bet`** renormalizes `home_win`/`away_win` over the non-draw
+  outcomes only (`home_win / (home_win + away_win)`) — "what the 1X2
+  probabilities would be if the draw didn't exist," not a separate model.
+  It is *not* the same number as `home_win` itself — draw-no-bet is always
+  more confident, since it drops the probability mass that goes to neither
+  side.
+- **`btts_and_result`** and **`result_and_total_goals`** are each a genuine
+  **joint** distribution (6 selections, sum to 1), not the product of two
+  markets' marginals — BTTS and the match result are correlated through the
+  same scoreline (a 1-0 home win can never be BTTS=yes), so each sums
+  matrix cells directly. Tests assert the joint reduces back to the right
+  marginal when summed over the other axis (e.g. `yes_home + yes_draw +
+  yes_away` isn't asserted, but `no_home + no_draw + no_away ==
+  btts_no` is).
+- **`handicap`** applies a fixed `HANDICAP_HOME_LINE = -1.5` to the home
+  side before comparing scorelines (home needs to win by 2+ to "cover").
+  A half-integer line is used deliberately so there's no push/tie case —
+  every scoreline resolves to exactly one side covering, same clean 2-way
+  shape as every O/U-style market in this service. The line itself is
+  fixed and unfitted, same category of simplification as every other fixed
+  line in this file (`over_under_2_5`, `CARDS_LINE`, `CORNERS_LINE`,
+  `TEAM_TOTAL_GOALS_LINE`).
+
+## Team total goals: `home_team_total_goals`, `away_team_total_goals`
+
+Reuses `count_markets.total_over_under()` directly (see below) — but
+against a *single* side's own `lambda_home`/`lambda_away`, not the summed
+rate cards/corners use. `TEAM_TOTAL_GOALS_LINE = 1.5` (`main.py`), same
+"plausible, not fitted" caveat as every other fixed line. Always computed,
+no optional-data gate — unlike cards/corners, both team lambdas are already
+guaranteed present for every request that reaches this far.
+
 ## Count markets: `total_cards`, `total_corners`
 
 Location: `ml-service/app/models/count_markets.py`. A genuinely different,
@@ -74,7 +117,7 @@ much simpler model from the goals one above — not a derivation of it.
   which is the intended fail-safe (no data → no market), not a bug, but
   worth knowing when a fixture's prediction cards are missing it.
 
-## Half-based markets: `first_half_result`, `second_half_result`, `half_with_most_goals`
+## Half-based markets: `first_half_result`, `second_half_result`, `half_with_most_goals`, `home_wins_a_half`, `away_wins_a_half`
 
 Location: `ml-service/app/models/half_markets.py`. Reuses `poisson.py`'s
 `score_matrix()` function directly, but is not a *derivation* of the
@@ -106,8 +149,15 @@ own pair of per-half score matrices, built from scaled-down lambdas.
   the two halves are independent by this model's own construction, so a
   weighted comparison of their marginals is sufficient and exact under that
   assumption.
+- `home_wins_a_half`/`away_wins_a_half` (`wins_at_least_one_half_probabilities()`)
+  are, like anytime-goalscorer, **independent per-side probabilities that
+  don't sum to 1** — both teams can win a half in the same match (home
+  takes the first, away takes the second), so these aren't a 3-way
+  partition of one distribution. `P(wins >= 1 half) = 1 - P(wins neither
+  half)`, using the same half-independence assumption
+  `half_with_most_goals` already relies on.
 - Always computed, no optional gating like cards/corners — every fixture
-  that gets a 1X2 prediction also gets all three of these.
+  that gets a 1X2 prediction also gets all five of these.
 - **Not calibrated or backtested in any way.** No real half-time score data
   has ever been compared against this model's output — `fixtures.
   home_score_ht`/`away_score_ht` (present in the schema since day one) was

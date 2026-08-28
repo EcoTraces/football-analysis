@@ -67,6 +67,43 @@ def test_predict_poisson_returns_all_markets():
     assert not any(m == "home_anytime_goalscorer" for m, _ in markets)
     assert not any(m == "away_anytime_goalscorer" for m, _ in markets)
 
+    # The 8 newest derived markets — all always computed, no optional data needed.
+    assert ("home_clean_sheet", "yes") in markets
+    assert ("away_clean_sheet", "yes") in markets
+    assert ("odd_even_goals", "even") in markets
+    assert ("odd_even_goals", "odd") in markets
+    assert ("draw_no_bet", "home") in markets
+    assert ("draw_no_bet", "away") in markets
+    assert ("handicap", "home") in markets
+    assert ("handicap", "away") in markets
+    assert ("home_team_total_goals", "over") in markets
+    assert ("away_team_total_goals", "over") in markets
+    assert ("home_wins_a_half", "yes") in markets
+    assert ("away_wins_a_half", "yes") in markets
+
+    for two_way_market in (
+        "home_clean_sheet",
+        "away_clean_sheet",
+        "odd_even_goals",
+        "draw_no_bet",
+        "handicap",
+        "home_team_total_goals",
+        "away_team_total_goals",
+        "home_wins_a_half",
+        "away_wins_a_half",
+    ):
+        rows = [p for p in body["predictions"] if p["market"] == two_way_market]
+        assert len(rows) == 2
+        assert sum(p["probability"] for p in rows) == pytest.approx(1.0, abs=1e-6)
+
+    # btts_and_result and result_and_total_goals are each a 6-way joint
+    # market that sums to 1 (unlike anytime-goalscorer/wins-a-half, which
+    # are independent per-side probabilities that don't).
+    for joint_market in ("btts_and_result", "result_and_total_goals"):
+        rows = [p for p in body["predictions"] if p["market"] == joint_market]
+        assert len(rows) == 6
+        assert sum(p["probability"] for p in rows) == pytest.approx(1.0, abs=1e-6)
+
 
 def test_predict_poisson_includes_anytime_goalscorer_only_for_sides_with_players_sent():
     payload = {

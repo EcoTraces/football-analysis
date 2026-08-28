@@ -86,6 +86,23 @@ def half_with_most_goals_probabilities(
     return {"first_half": first_half, "second_half": second_half, "equal": equal}
 
 
+def wins_at_least_one_half_probabilities(
+    first_half_probs: dict[str, float], second_half_probs: dict[str, float]
+) -> dict[str, float]:
+    """P(this side won at least one of the two halves), one value per side.
+
+    Not a 3-way partition (unlike half_with_most_goals) — "home wins a half"
+    and "away wins a half" are not mutually exclusive (home could win the
+    first half while away wins the second), so this returns two independent
+    yes-probabilities rather than selections that sum to 1. Uses the same
+    half-independence assumption as half_with_most_goals_probabilities:
+    P(wins >= 1) = 1 - P(doesn't win either) = 1 - P(not win 1H) * P(not win 2H).
+    """
+    home = 1 - (1 - first_half_probs["home"]) * (1 - second_half_probs["home"])
+    away = 1 - (1 - first_half_probs["away"]) * (1 - second_half_probs["away"])
+    return {"home": home, "away": away}
+
+
 def build_half_matrices(lambda_home: float, lambda_away: float) -> tuple[list[list[float]], list[list[float]]]:
     """Convenience wrapper: returns (first_half_matrix, second_half_matrix)
     for a fixture's full-match lambda_home/lambda_away."""

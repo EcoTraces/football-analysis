@@ -4,9 +4,12 @@ import pytest
 
 from app.models.poisson import (
     TeamStrength,
+    btts_and_result_probabilities,
     data_quality_for,
     expected_goals,
+    handicap_probabilities,
     market_probabilities,
+    result_and_total_goals_probabilities,
     score_matrix,
     top_correct_scores,
 )
@@ -118,3 +121,78 @@ def test_top_correct_scores_plus_other_covers_full_probability_mass():
     # already cover most of the probability mass, leaving "other" small
     # rather than dominant — a sanity check that n=10 is a reasonable cut.
     assert other < 0.5
+
+
+def test_clean_sheet_probabilities_are_the_opposing_sides_shutout_probability():
+    matrix = score_matrix(1.6, 1.0)
+    probs = market_probabilities(matrix)
+
+    # home_clean_sheet means the AWAY side failed to score.
+    assert probs["home_clean_sheet_yes"] + probs["home_clean_sheet_no"] == pytest.approx(1.0, abs=1e-9)
+    assert probs["away_clean_sheet_yes"] + probs["away_clean_sheet_no"] == pytest.approx(1.0, abs=1e-9)
+    for key in ("home_clean_sheet_yes", "away_clean_sheet_yes"):
+        assert 0.0 <= probs[key] <= 1.0
+
+
+def test_odd_even_goals_probabilities_sum_to_one():
+    matrix = score_matrix(1.4, 1.1)
+    probs = market_probabilities(matrix)
+    assert probs["even_goals"] + probs["odd_goals"] == pytest.approx(1.0, abs=1e-9)
+    assert 0.0 <= probs["even_goals"] <= 1.0
+
+
+def test_draw_no_bet_renormalizes_over_non_draw_outcomes_only():
+    matrix = score_matrix(1.6, 1.0)
+    probs = market_probabilities(matrix)
+
+    assert probs["draw_no_bet_home"] + probs["draw_no_bet_away"] == pytest.approx(1.0, abs=1e-9)
+    # A stronger home side should be favoured more heavily once the draw is
+    # excluded than it is in the raw 1x2 probabilities.
+    assert probs["draw_no_bet_home"] > probs["home_win"]
+
+
+def test_btts_and_result_probabilities_sum_to_one_and_match_marginals():
+    matrix = score_matrix(1.6, 1.0)
+    joint = btts_and_result_probabilities(matrix)
+    marginals = market_probabilities(matrix)
+
+    assert sum(joint.values()) == pytest.approx(1.0, abs=1e-9)
+    for value in joint.values():
+        assert 0.0 <= value <= 1.0
+    # Summing the joint over the "no" btts leg should reproduce btts_no.
+    no_total = joint["no_home"] + joint["no_draw"] + joint["no_away"]
+    assert no_total == pytest.approx(marginals["btts_no"], abs=1e-9)
+    # And summing over the "away" result leg should reproduce away_win.
+    away_total = joint["yes_away"] + joint["no_away"]
+    assert away_total == pytest.approx(marginals["away_win"], abs=1e-9)
+
+
+def test_result_and_total_goals_probabilities_sum_to_one_and_match_marginals():
+    matrix = score_matrix(1.6, 1.0)
+    joint = result_and_total_goals_probabilities(matrix, line=2.5)
+    marginals = market_probabilities(matrix)
+
+    assert sum(joint.values()) == pytest.approx(1.0, abs=1e-9)
+    for value in joint.values():
+        assert 0.0 <= value <= 1.0
+    over_total = joint["home_over"] + joint["draw_over"] + joint["away_over"]
+    assert over_total == pytest.approx(marginals["over_2_5"], abs=1e-9)
+    draw_total = joint["draw_over"] + joint["draw_under"]
+    assert draw_total == pytest.approx(marginals["draw"], abs=1e-9)
+
+
+def test_handicap_probabilities_sum_to_one_with_no_push():
+    matrix = score_matrix(1.6, 1.0)
+    probs = handicap_probabilities(matrix, home_handicap=-1.5)
+    assert probs["home"] + probs["away"] == pytest.approx(1.0, abs=1e-9)
+    assert 0.0 <= probs["home"] <= 1.0
+
+
+def test_handicap_probabilities_favour_away_more_than_raw_away_win():
+    # A -1.5 home handicap makes it harder for home to "cover" than to win
+    # outright, so the away side's covering probability should exceed its
+    # raw away_win probability.
+    matrix = score_matrix(1.6, 1.0)
+    handicap = handicap_probabilities(matrix, home_handicap=-1.5)
+    marginals = market_probabilities(matrix)
+    assert handicap["away"] > marginals["away_win"]

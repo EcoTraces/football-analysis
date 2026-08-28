@@ -82,6 +82,17 @@ export function MatchDetail() {
               been synced for that team's season. */}
           <PredictionCard predictions={match.predictions} market="home_anytime_goalscorer" />
           <PredictionCard predictions={match.predictions} market="away_anytime_goalscorer" />
+          <PredictionCard predictions={match.predictions} market="home_clean_sheet" />
+          <PredictionCard predictions={match.predictions} market="away_clean_sheet" />
+          <PredictionCard predictions={match.predictions} market="odd_even_goals" />
+          <PredictionCard predictions={match.predictions} market="draw_no_bet" />
+          <PredictionCard predictions={match.predictions} market="handicap" />
+          <PredictionCard predictions={match.predictions} market="home_team_total_goals" />
+          <PredictionCard predictions={match.predictions} market="away_team_total_goals" />
+          <PredictionCard predictions={match.predictions} market="home_wins_a_half" />
+          <PredictionCard predictions={match.predictions} market="away_wins_a_half" />
+          <PredictionCard predictions={match.predictions} market="btts_and_result" />
+          <PredictionCard predictions={match.predictions} market="result_and_total_goals" />
         </div>
       )}
     </div>

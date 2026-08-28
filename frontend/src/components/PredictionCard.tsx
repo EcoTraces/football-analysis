@@ -13,7 +13,18 @@ const MARKET_LABELS: Record<string, string> = {
   second_half_result: "Second-half result",
   half_with_most_goals: "Half with most goals",
   home_anytime_goalscorer: "Anytime goalscorer — home team",
-  away_anytime_goalscorer: "Anytime goalscorer — away team"
+  away_anytime_goalscorer: "Anytime goalscorer — away team",
+  home_clean_sheet: "Clean sheet — home team",
+  away_clean_sheet: "Clean sheet — away team",
+  odd_even_goals: "Odd/even total goals",
+  draw_no_bet: "Draw no bet",
+  handicap: "Handicap (Home -1.5)",
+  home_team_total_goals: "Home team goals (O/U 1.5)",
+  away_team_total_goals: "Away team goals (O/U 1.5)",
+  home_wins_a_half: "Home team wins a half",
+  away_wins_a_half: "Away team wins a half",
+  btts_and_result: "Both teams to score & result",
+  result_and_total_goals: "Result & total goals (2.5)"
 };
 
 // These two markets' selections are player names (free text from
@@ -31,7 +42,21 @@ const SELECTION_LABELS: Record<string, string> = {
   draw_or_away: "Draw or away (X2)",
   other: "Other scoreline",
   first_half: "First half",
-  second_half: "Second half"
+  second_half: "Second half",
+  // btts_and_result
+  yes_home: "BTTS & home win",
+  yes_draw: "BTTS & draw",
+  yes_away: "BTTS & away win",
+  no_home: "No BTTS & home win",
+  no_draw: "No BTTS & draw",
+  no_away: "No BTTS & away win",
+  // result_and_total_goals
+  home_over: "Home win & over 2.5",
+  home_under: "Home win & under 2.5",
+  draw_over: "Draw & over 2.5",
+  draw_under: "Draw & under 2.5",
+  away_over: "Away win & over 2.5",
+  away_under: "Away win & under 2.5"
 };
 
 const CONFIDENCE_LABELS: Record<PredictionView["confidence"], string> = {

@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-08-28 — 8 more markets: clean sheet, odd/even, DNB, team totals, two joint markets, handicap, win-a-half
+
+Requested by name, all in one round. Unlike the last three entries, every
+one of these needed **zero new data** — pure functions of the same
+full-match matrix / half matrices / `lambda_home`/`lambda_away` every
+other market already computes. Backend needed no changes at all this
+time; confirmed by re-running its suite unmodified.
+
+- `home_clean_sheet`/`away_clean_sheet`: were already computed as
+  intermediate values inside `poisson.py::market_probabilities()`
+  (`p_home_0`/`p_away_0`) and just weren't exposed as their own market.
+- `odd_even_goals`: parity of `i + j` summed across the matrix.
+- `draw_no_bet`: `home_win`/`away_win` renormalized over the non-draw
+  outcomes only — "what 1X2 would be if the draw didn't exist."
+- `home_team_total_goals`/`away_team_total_goals` (line 1.5): reuses
+  `count_markets.total_over_under()` directly, but against a single
+  side's own lambda rather than the summed rate cards/corners use.
+- `btts_and_result` and `result_and_total_goals`: two new **genuinely
+  joint** functions (`btts_and_result_probabilities`,
+  `result_and_total_goals_probabilities`), 6 selections each, summing
+  matrix cells directly rather than multiplying two markets' marginals —
+  BTTS and match result are correlated through the same scoreline (a 1-0
+  home win can never be BTTS=yes). Tests assert the joint reduces to the
+  right marginal when summed over one axis.
+- `handicap` (home -1.5): a new `handicap_probabilities()`, using a
+  half-integer line deliberately so there's no push/tie case — clean
+  2-way split like every O/U-style market here.
+- `home_wins_a_half`/`away_wins_a_half`: new
+  `half_markets.wins_at_least_one_half_probabilities()`. Same shape as
+  anytime-goalscorer — independent per-side probabilities that do **not**
+  sum to 1, since both teams can win a half in the same match (home takes
+  the first, away the second). `P(wins >= 1) = 1 - P(wins neither)`,
+  reusing the half-independence assumption `half_with_most_goals` already
+  relies on.
+- Frontend: 11 more `PredictionCard`s in `MatchDetail.tsx`; label maps
+  extended for all 8, including spelled-out combo labels for the two
+  joint markets ("BTTS & home win", "Home win & over 2.5", etc.) so their
+  selection keys (`yes_home`, `home_over`, ...) never leak into the UI.
+- Test counts: ml-service 49/49 (was 39), frontend 29/29 (was 26), backend
+  unchanged at 179/179. `tsc`/`eslint`/`npm run build` clean.
+- **Not calibrated, backtested, or verified against a live API-Football
+  key** — `TEAM_TOTAL_GOALS_LINE = 1.5` and `HANDICAP_HOME_LINE = -1.5`
+  are chosen for plausibility, not fitted to this platform's own data,
+  same category of simplification as every other fixed line in this
+  project (`over_under_2_5`, `CARDS_LINE`, `CORNERS_LINE`).
+
 ## 2026-08-28 — Anytime goalscorer markets
 
 Closes out the market wishlist from the last three entries — this is the
