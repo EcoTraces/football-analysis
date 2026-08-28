@@ -268,3 +268,53 @@ def test_train_then_predict_gradient_boosting_round_trip():
     assert set(predictions.keys()) == {"home", "draw", "away"}
     assert sum(predictions.values()) == pytest.approx(1.0, abs=1e-6)
     assert predictions["home"] > predictions["away"]  # learned the separable training pattern
+
+
+def test_rho_status_defaults_to_no_fitted_value():
+    res = client.get("/rho_status")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["fittedRho"] is None
+    assert body["defaultRho"] == -0.1
+
+
+def _rho_fitting_row(home: dict, away: dict, home_goals: int, away_goals: int) -> dict:
+    return {"homeTeam": home, "awayTeam": away, "actualHomeGoals": home_goals, "actualAwayGoals": away_goals}
+
+
+def test_fit_dixon_coles_rho_rejects_too_few_informative_matches():
+    # 3-2 is never one of the four rho-sensitive scorelines, no matter how many there are.
+    rows = [_rho_fitting_row(STRONG_TEAM, WEAK_TEAM, 3, 2)] * 50
+    res = client.post("/fit/dixon_coles_rho", json={"leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1, "rows": rows})
+    assert res.status_code == 422
+
+
+def test_fit_dixon_coles_rho_updates_rho_status_and_subsequent_poisson_predictions():
+    # Skewed hard toward 0-0/1-1 — enough to pull the fitted rho well away
+    # from the fixed -0.1 default, so its effect on later predictions is
+    # unambiguous rather than lost in noise.
+    rows = [_rho_fitting_row(EVEN_TEAM, EVEN_TEAM, 0, 0)] * 20 + [_rho_fitting_row(EVEN_TEAM, EVEN_TEAM, 1, 1)] * 20
+
+    prediction_payload = {"homeTeam": EVEN_TEAM, "awayTeam": EVEN_TEAM, "leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1}
+    before = client.post("/predict/poisson", json=prediction_payload).json()
+    zero_zero_before = next(p["probability"] for p in before["predictions"] if p["market"] == "correct_score" and p["selection"] == "0-0")
+
+    fit_res = client.post("/fit/dixon_coles_rho", json={"leagueAvgHomeGoals": 1.5, "leagueAvgAwayGoals": 1.1, "rows": rows})
+    assert fit_res.status_code == 200
+    fit_body = fit_res.json()
+    assert fit_body["sampleSize"] == 40
+    assert fit_body["informativeMatches"] == 40
+    assert fit_body["defaultRho"] == -0.1
+    assert fit_body["fittedRho"] < -0.1  # more negative than the default — expected, given the 0-0/1-1-only training data
+
+    status = client.get("/rho_status").json()
+    assert status["fittedRho"] == pytest.approx(fit_body["fittedRho"])
+
+    after = client.post("/predict/poisson", json=prediction_payload).json()
+    zero_zero_after = next(p["probability"] for p in after["predictions"] if p["market"] == "correct_score" and p["selection"] == "0-0")
+
+    # A more negative rho pushes more probability mass onto 0-0 (see
+    # rho_fitting.py's module docstring / poisson.py's dixon_coles_tau) —
+    # the fit must actually be in effect for later predictions, not just
+    # reported back in the fit response.
+    assert zero_zero_after > zero_zero_before

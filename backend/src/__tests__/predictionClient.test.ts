@@ -70,6 +70,57 @@ describe("PredictionClient.trainGradientBoosting", () => {
   it("falls back to a generic message when the error body has no detail field", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }));
     const client = new PredictionClient("http://ml-service.invalid");
-    await expect(client.trainGradientBoosting({ rows: [] })).rejects.toThrow("Training request failed with status 500");
+    await expect(client.trainGradientBoosting({ rows: [] })).rejects.toThrow("Request to /train/gradient_boosting failed with status 500");
+  });
+});
+
+describe("PredictionClient.fitDixonColesRho", () => {
+  it("returns the parsed fit result on success, hitting the dixon_coles_rho endpoint specifically", async () => {
+    const body = {
+      sampleSize: 40,
+      informativeMatches: 40,
+      fittedRho: -0.32,
+      logLikelihoodAtFittedRho: -10.1,
+      logLikelihoodAtDefaultRho: -25.4,
+      defaultRho: -0.1
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => body });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new PredictionClient("http://ml-service.invalid");
+    const result = await client.fitDixonColesRho({ leagueAvgHomeGoals: 1.5, leagueAvgAwayGoals: 1.1, rows: [] });
+
+    expect(result).toEqual(body);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://ml-service.invalid/fit/dixon_coles_rho");
+  });
+
+  it("throws with ml-service's own detail message on a validation failure, rather than swallowing it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: async () => ({ detail: "Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho, got 2 out of 50 rows." })
+      })
+    );
+    const client = new PredictionClient("http://ml-service.invalid");
+    await expect(client.fitDixonColesRho({ leagueAvgHomeGoals: 1.5, leagueAvgAwayGoals: 1.1, rows: [] })).rejects.toThrow(
+      "Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho"
+    );
+  });
+});
+
+describe("PredictionClient.getRhoStatus", () => {
+  it("returns the parsed status on success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ fittedRho: -0.28, defaultRho: -0.1 }) }));
+    const client = new PredictionClient("http://ml-service.invalid");
+    const result = await client.getRhoStatus();
+    expect(result).toEqual({ fittedRho: -0.28, defaultRho: -0.1 });
+  });
+
+  it("throws when the request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    const client = new PredictionClient("http://ml-service.invalid");
+    await expect(client.getRhoStatus()).rejects.toThrow("rho_status request failed with status 500");
   });
 });

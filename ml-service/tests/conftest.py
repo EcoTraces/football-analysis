@@ -14,3 +14,14 @@ def reset_gradient_boosting_model():
     imported `app`) see it as already trained. Reset before every test."""
     main_module._gradient_boosting_model = GradientBoostingOneXTwoModel()
     yield
+
+
+@pytest.fixture(autouse=True)
+def reset_fitted_rho():
+    """Same cross-test-pollution problem as the gradient boosting model
+    above, for app.main's other process-wide, in-memory piece of state —
+    one test fitting rho would make every other test's /predict/poisson
+    calls silently use that fitted value instead of poisson.py's fixed
+    default. Reset before every test."""
+    main_module._fitted_rho = None
+    yield

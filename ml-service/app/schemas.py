@@ -96,3 +96,30 @@ class GradientBoostingTrainResponse(CamelModel):
     sample_size: int
     train_accuracy: float
     class_counts: dict[str, int]
+
+
+class RhoFittingRowInput(CamelModel):
+    home_team: TeamStrengthInput
+    away_team: TeamStrengthInput
+    actual_home_goals: int = Field(ge=0)
+    actual_away_goals: int = Field(ge=0)
+
+
+class DixonColesRhoFitRequest(CamelModel):
+    league_avg_home_goals: float = Field(gt=0)
+    league_avg_away_goals: float = Field(gt=0)
+    rows: list[RhoFittingRowInput]
+
+
+class DixonColesRhoFitResponse(CamelModel):
+    sample_size: int
+    informative_matches: int
+    fitted_rho: float
+    log_likelihood_at_fitted_rho: float
+    log_likelihood_at_default_rho: float
+    default_rho: float
+
+
+class RhoStatusResponse(CamelModel):
+    fitted_rho: float | None
+    default_rho: float

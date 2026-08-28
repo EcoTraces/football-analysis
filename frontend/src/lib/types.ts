@@ -182,3 +182,24 @@ export interface GradientBoostingTrainResult {
   trainAccuracy: number | null;
   classCounts: Record<string, number> | null;
 }
+
+// Result of one Dixon-Coles rho-fitting run (see
+// backend/src/jobs/fitDixonColesRho.ts).
+export interface DixonColesRhoFitResult {
+  runId: string | null;
+  modelVersionId: string | null;
+  sampleSize: number;
+  skipped: number;
+  informativeMatches: number | null;
+  fittedRho: number | null;
+  logLikelihoodAtFittedRho: number | null;
+  logLikelihoodAtDefaultRho: number | null;
+  defaultRho: number | null;
+}
+
+// Whether a fitted rho is currently in effect for /predict/poisson (see
+// ml-service's /rho_status).
+export interface RhoStatus {
+  fittedRho: number | null;
+  defaultRho: number;
+}

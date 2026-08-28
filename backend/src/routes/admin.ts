@@ -6,6 +6,8 @@ import type { Logger } from "pino";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { runLatestBacktestJob, type BacktestableModel } from "../jobs/runBacktest.js";
 import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoosting.js";
+import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
+import { PredictionClient } from "../services/predictionClient.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
@@ -50,6 +52,7 @@ const backtestRunQuerySchema = applyDateRangeGuardrails(
 );
 
 const trainGradientBoostingQuerySchema = applyDateRangeGuardrails(dateRangeSchema);
+const fitRhoQuerySchema = applyDateRangeGuardrails(dateRangeSchema);
 
 // Every sync/prediction trigger below makes real outbound calls to a
 // rate/cost-limited third-party API once one is configured — the app-wide
@@ -371,6 +374,51 @@ export function createAdminRouter(
         return;
       }
       res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Fits the Dixon-Coles low-score correlation parameter (rho) from real,
+  // point-in-time match data (fitDixonColesRho.ts) instead of
+  // poisson.py's fixed RHO = -0.1 approximation — see ML_Model.md's "Rho
+  // fitting" section. Updates poisson-baseline's existing model_versions
+  // row (this refines that model, it doesn't create a new one). Same
+  // guardrails/rate-limiting as backtest/training; never on the scheduler.
+  router.post("/admin/model/poisson/fit-rho", syncTriggerLimit, async (req, res, next) => {
+    try {
+      const parsed = fitRhoQuerySchema.safeParse(req.query);
+      if (!parsed.success) {
+        throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_query");
+      }
+
+      const result = await runLatestDixonColesRhoFitJob(supabase, mlServiceUrl, logger, {
+        from: new Date(parsed.data.from).toISOString(),
+        to: new Date(parsed.data.to).toISOString(),
+        competitionId: parsed.data.competitionId
+      });
+
+      if (!result.modelVersionId) {
+        res.status(409).json({
+          error: { code: "no_model_version", message: "No poisson-baseline model_version row exists yet." }
+        });
+        return;
+      }
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Passthrough to ml-service's /rho_status — whether a fit is currently
+  // in effect for /predict/poisson (and therefore for backtests run
+  // against poisson-baseline) or predictions are still using the fixed
+  // default. Not rate limited: a read-only status check, same as
+  // /admin/data-health.
+  router.get("/admin/model/poisson/rho-status", async (_req, res, next) => {
+    try {
+      const client = new PredictionClient(mlServiceUrl);
+      res.json({ data: await client.getRhoStatus() });
     } catch (err) {
       next(err);
     }

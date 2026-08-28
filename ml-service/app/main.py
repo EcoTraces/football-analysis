@@ -16,6 +16,7 @@ from app.models.half_markets import (
 from app.models.player_market import anytime_scorer_probability, top_scorers
 from app.models.player_market import PlayerCandidate as ScorerCandidate
 from app.models.poisson import (
+    RHO,
     TeamStrength,
     btts_and_result_probabilities,
     data_quality_for,
@@ -27,7 +28,10 @@ from app.models.poisson import (
     score_matrix,
     top_correct_scores,
 )
+from app.models.rho_fitting import RhoFittingRow, fit_rho
 from app.schemas import (
+    DixonColesRhoFitRequest,
+    DixonColesRhoFitResponse,
     Factor,
     GradientBoostingPredictionResponse,
     GradientBoostingPredictRequest,
@@ -37,6 +41,7 @@ from app.schemas import (
     PlayerCandidateInput,
     PoissonPredictionRequest,
     PoissonPredictionResponse,
+    RhoStatusResponse,
 )
 
 MODEL_NAME = "poisson-baseline"
@@ -97,6 +102,20 @@ app = FastAPI(title="Football Analysis ML Service", version=MODEL_VERSION)
 # whose result should stick around for every prediction request after it.
 _gradient_boosting_model = GradientBoostingOneXTwoModel()
 
+# Same process-local, in-memory, restart-loses-it pattern as
+# _gradient_boosting_model above — None means "nobody has fit rho yet, use
+# poisson.py's fixed RHO". Set by POST /fit/dixon_coles_rho, read by every
+# /predict/poisson call after that (see _effective_rho()) and by every
+# market derived from that same score matrix (correct score, btts,
+# over/under, double chance, clean sheet, handicap, the two joint markets —
+# everything except the half-based markets, which deliberately use rho=0
+# regardless; see half_markets.py).
+_fitted_rho: float | None = None
+
+
+def _effective_rho() -> float:
+    return _fitted_rho if _fitted_rho is not None else RHO
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -120,7 +139,7 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
         lambda_home, lambda_away = expected_goals(
             home, away, payload.league_avg_home_goals, payload.league_avg_away_goals
         )
-        matrix = score_matrix(lambda_home, lambda_away)
+        matrix = score_matrix(lambda_home, lambda_away, rho=_effective_rho())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -443,3 +462,43 @@ def predict_gradient_boosting(payload: GradientBoostingPredictRequest) -> Gradie
         data_quality=data_quality_for(home, away),
         predictions=predictions,
     )
+
+
+@app.post("/fit/dixon_coles_rho", response_model=DixonColesRhoFitResponse)
+def fit_dixon_coles_rho(payload: DixonColesRhoFitRequest) -> DixonColesRhoFitResponse:
+    rows = []
+    for row in payload.rows:
+        home = TeamStrength(
+            matches_played=row.home_team.matches_played,
+            goals_scored_avg=row.home_team.goals_scored_avg,
+            goals_conceded_avg=row.home_team.goals_conceded_avg,
+        )
+        away = TeamStrength(
+            matches_played=row.away_team.matches_played,
+            goals_scored_avg=row.away_team.goals_scored_avg,
+            goals_conceded_avg=row.away_team.goals_conceded_avg,
+        )
+        lambda_home, lambda_away = expected_goals(home, away, payload.league_avg_home_goals, payload.league_avg_away_goals)
+        rows.append(RhoFittingRow(lambda_home, lambda_away, row.actual_home_goals, row.actual_away_goals))
+
+    try:
+        result = fit_rho(rows, default_rho=RHO)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    global _fitted_rho
+    _fitted_rho = result.fitted_rho
+
+    return DixonColesRhoFitResponse(
+        sample_size=result.sample_size,
+        informative_matches=result.informative_matches,
+        fitted_rho=result.fitted_rho,
+        log_likelihood_at_fitted_rho=result.log_likelihood_at_fitted_rho,
+        log_likelihood_at_default_rho=result.log_likelihood_at_default_rho,
+        default_rho=RHO,
+    )
+
+
+@app.get("/rho_status", response_model=RhoStatusResponse)
+def rho_status() -> RhoStatusResponse:
+    return RhoStatusResponse(fitted_rho=_fitted_rho, default_rho=RHO)

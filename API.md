@@ -238,6 +238,31 @@ classCounts }` — `trainAccuracy` is in-sample only, never a generalization
 metric (backtest the model for that). Like backtesting, never on the
 scheduler — retraining is an explicit, occasional admin action.
 
+### `POST /admin/model/poisson/fit-rho?from=&to=&competitionId=`
+Fits the Dixon-Coles `rho` parameter by maximum likelihood from real,
+point-in-time match data in `[from, to]` — same required/validated params,
+range cap, and rate limiting as `/admin/model/gradient-boosting/train`.
+`409 no_model_version` if no `poisson-baseline` model version exists yet.
+`422 rho_fit_failed` if ml-service refuses the fit — most commonly fewer
+than 30 matches in range finished 0-0, 1-0, 0-1, or 1-1 (the only
+scorelines a Dixon-Coles rho fit can learn anything from — see
+`ML_Model.md`'s "Rho fitting" section); the message names the specific
+reason. On success, updates `poisson-baseline`'s **existing**
+`model_versions` row's `trained_at`/`training_dataset_version`/`notes`
+(this refines that model, it doesn't create a new one) and, from that
+point on, every `/predict/poisson` call — live predictions and any
+backtest run against `poisson-baseline` — uses the fitted value instead
+of the fixed `RHO = -0.1`. Returns `{ runId, modelVersionId, sampleSize,
+skipped, informativeMatches, fittedRho, logLikelihoodAtFittedRho,
+logLikelihoodAtDefaultRho, defaultRho }`. Like backtesting/training, never
+on the scheduler.
+
+### `GET /admin/model/poisson/rho-status`
+Whether a fit is currently in effect for `/predict/poisson`. Not rate
+limited — a read-only status check, same as `/admin/data-health`. Returns
+`{ fittedRho, defaultRho }` — `fittedRho` is `null` if nobody has fit rho
+yet (predictions are using the fixed default).
+
 ### `GET /admin/backtest/results?limit=N`
 Past backtest runs from `model_evaluations` (any model), newest first
 (`limit` default 50, capped at 200). Returns `{ id, model_version_id,

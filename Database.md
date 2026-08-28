@@ -159,6 +159,11 @@ never does.
   trainGradientBoosting.ts` is that row's real writer for
   `trained_at`/`training_dataset_version`/`notes`, but there's no real
   fixture history in this environment to train it on yet.
+  `backend/src/jobs/fitDixonColesRho.ts` is a second, later writer for
+  those same three columns on `poisson-baseline`'s row specifically (a
+  Dixon-Coles `rho` fit refines that existing model rather than creating a
+  new one — see `ML_Model.md`'s "Rho fitting" section) — same "real writer
+  exists, never actually run against real data" caveat applies.
 - `teams.country_id` and `competitions.competition_type` are not correctly
   populated by fixture ingestion — see `Data_Sources.md`'s "Known
   limitation" notes.

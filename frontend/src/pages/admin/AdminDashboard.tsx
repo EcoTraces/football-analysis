@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import {
   ApiRequestError,
+  fitDixonColesRho,
   getAdminDataHealth,
   getAdminJobs,
   getAdminJobsSummary,
   getApiFootballHealth,
   getBacktestResults,
   getDataHealth,
+  getRhoStatus,
   getSchedulerHealth,
   runBacktest,
   trainGradientBoosting,
@@ -23,6 +25,7 @@ import type {
   DataHealth,
   IngestionRun,
   JobsSummary,
+  RhoStatus,
   SchedulerHealth
 } from "../../lib/types";
 import { FreshnessBadge } from "../../components/FreshnessBadge";
@@ -74,6 +77,8 @@ interface DashboardData {
   fixtureCountsError: string | null;
   backtestResults: BacktestEvaluation[] | null;
   backtestResultsError: string | null;
+  rhoStatus: RhoStatus | null;
+  rhoStatusError: string | null;
 }
 
 type SyncActionState =
@@ -83,6 +88,7 @@ type SyncActionState =
 
 type BacktestRunState = { status: "pending" } | { status: "error"; message: string } | null;
 type TrainRunState = { status: "pending" } | { status: "success"; sampleSize: number; trainAccuracy: number | null } | { status: "error"; message: string } | null;
+type FitRhoRunState = { status: "pending" } | { status: "success"; fittedRho: number; sampleSize: number } | { status: "error"; message: string } | null;
 
 const MODEL_LABELS: Record<BacktestableModel, string> = {
   "poisson-baseline": "Poisson baseline",
@@ -107,6 +113,7 @@ export function AdminDashboard() {
   const [backtestModel, setBacktestModel] = useState<BacktestableModel>("poisson-baseline");
   const [backtestRunState, setBacktestRunState] = useState<BacktestRunState>(null);
   const [trainRunState, setTrainRunState] = useState<TrainRunState>(null);
+  const [fitRhoRunState, setFitRhoRunState] = useState<FitRhoRunState>(null);
 
   const refresh = useCallback(async () => {
     if (!session) return;
@@ -119,7 +126,8 @@ export function AdminDashboard() {
       [jobsSummaryRes, jobsSummaryError],
       [recentJobsRes, recentJobsError],
       [fixtureCountsRes, fixtureCountsError],
-      [backtestResultsRes, backtestResultsError]
+      [backtestResultsRes, backtestResultsError],
+      [rhoStatusRes, rhoStatusError]
     ] = await Promise.all([
       loadPiece(() => getDataHealth()),
       loadPiece(() => getApiFootballHealth()),
@@ -127,7 +135,8 @@ export function AdminDashboard() {
       loadPiece(() => getAdminJobsSummary(token)),
       loadPiece(() => getAdminJobs(token, 20)),
       loadPiece(() => getAdminDataHealth(token)),
-      loadPiece(() => getBacktestResults(token, 20))
+      loadPiece(() => getBacktestResults(token, 20)),
+      loadPiece(() => getRhoStatus(token))
     ]);
 
     setData({
@@ -144,7 +153,9 @@ export function AdminDashboard() {
       fixtureCounts: fixtureCountsRes?.data ?? null,
       fixtureCountsError,
       backtestResults: backtestResultsRes?.data ?? null,
-      backtestResultsError
+      backtestResultsError,
+      rhoStatus: rhoStatusRes?.data ?? null,
+      rhoStatusError
     });
   }, [session]);
 
@@ -180,6 +191,25 @@ export function AdminDashboard() {
       setTrainRunState({
         status: "error",
         message: err instanceof ApiRequestError ? err.message : "Failed to train gradient boosting model."
+      });
+    }
+  }
+
+  async function handleFitRho() {
+    if (!session || !backtestFrom || !backtestTo) return;
+    setFitRhoRunState({ status: "pending" });
+    try {
+      const res = await fitDixonColesRho(session.access_token, `${backtestFrom}T00:00:00.000Z`, `${backtestTo}T23:59:59.999Z`);
+      setFitRhoRunState(
+        res.data.fittedRho === null
+          ? null
+          : { status: "success", fittedRho: res.data.fittedRho, sampleSize: res.data.sampleSize }
+      );
+      await refresh();
+    } catch (err) {
+      setFitRhoRunState({
+        status: "error",
+        message: err instanceof ApiRequestError ? err.message : "Failed to fit Dixon-Coles rho."
       });
     }
   }
@@ -352,10 +382,28 @@ export function AdminDashboard() {
           which would leak future data into a "historical" prediction). "Run backtest" writes one model_evaluations
           row for whichever model is selected — run it once per model over the same range to compare them. "Train
           gradient boosting" fits that second model on point-in-time features from the same kind of range; it has no
-          formula of its own, so predictions from it are unavailable until it's been trained at least once. Only
-          meaningful once real historical fixture results exist in this database — synthetic dev-seed fixtures are
-          always excluded from both.
+          formula of its own, so predictions from it are unavailable until it's been trained at least once. "Fit
+          Dixon-Coles rho" refines the Poisson baseline's own low-score correlation parameter from the same kind of
+          range — once fit, every poisson-baseline prediction (and any backtest run against it) uses the fitted value
+          instead of the fixed -0.1 approximation. Only matches finishing 0-0, 1-0, 0-1, or 1-1 carry any information
+          for that fit — every other scoreline contributes nothing to it, by construction of the Dixon-Coles model.
+          Only meaningful once real historical fixture results exist in this database — synthetic dev-seed fixtures
+          are always excluded from all three.
         </p>
+        {data.rhoStatusError ? (
+          <p role="alert" className="mb-3 text-sm text-red-600 dark:text-red-400">
+            {data.rhoStatusError}
+          </p>
+        ) : (
+          data.rhoStatus && (
+            <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+              Current poisson-baseline rho:{" "}
+              <strong className="text-slate-700 dark:text-slate-300">
+                {data.rhoStatus.fittedRho === null ? `${data.rhoStatus.defaultRho} (fixed default, never fit)` : data.rhoStatus.fittedRho.toFixed(4)}
+              </strong>
+            </p>
+          )
+        )}
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col text-xs text-slate-500 dark:text-slate-400">
             From
@@ -405,6 +453,14 @@ export function AdminDashboard() {
           >
             {trainRunState?.status === "pending" ? "Training…" : "Train gradient boosting"}
           </button>
+          <button
+            type="button"
+            disabled={!backtestFrom || !backtestTo || fitRhoRunState?.status === "pending"}
+            onClick={() => void handleFitRho()}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+          >
+            {fitRhoRunState?.status === "pending" ? "Fitting…" : "Fit Dixon-Coles rho"}
+          </button>
         </div>
         {backtestRunState?.status === "error" && (
           <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
@@ -421,6 +477,17 @@ export function AdminDashboard() {
             Trained on {trainRunState.sampleSize} fixtures — in-sample accuracy{" "}
             {trainRunState.trainAccuracy === null ? "—" : `${Math.round(trainRunState.trainAccuracy * 100)}%`} (not a held-out/generalization
             metric — back-test the model above for that).
+          </p>
+        )}
+        {fitRhoRunState?.status === "error" && (
+          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+            {fitRhoRunState.message}
+          </p>
+        )}
+        {fitRhoRunState?.status === "success" && (
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            Fitted rho = {fitRhoRunState.fittedRho.toFixed(4)} from {fitRhoRunState.sampleSize} matches in range — now in effect for every
+            poisson-baseline prediction.
           </p>
         )}
 

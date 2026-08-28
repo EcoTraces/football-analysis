@@ -7,12 +7,14 @@ import type {
   BacktestEvaluation,
   BacktestRunResult,
   DataHealth,
+  DixonColesRhoFitResult,
   FixtureSummary,
   GradientBoostingTrainResult,
   IngestionRun,
   JobsSummary,
   MatchDetail,
   MeProfile,
+  RhoStatus,
   SchedulerHealth,
   UserRole
 } from "./types";
@@ -175,4 +177,32 @@ export function trainGradientBoosting(
   return authedRequest<ApiEnvelope<GradientBoostingTrainResult>>(`/admin/model/gradient-boosting/train?${params.toString()}`, accessToken, {
     method: "POST"
   });
+}
+
+/**
+ * Fits the Dixon-Coles rho parameter from point-in-time features built
+ * from real, finished fixtures in [from, to], and updates the
+ * poisson-baseline model to use it for every prediction after this call
+ * (see ML_Model.md's "Rho fitting" section). A rare, explicit action —
+ * never scheduled. Throws (via ApiRequestError) with ml-service's own
+ * validation message when the range doesn't have enough matches finishing
+ * 0-0, 1-0, 0-1, or 1-1 — those are the only scorelines rho fitting can
+ * learn anything from.
+ */
+export function fitDixonColesRho(
+  accessToken: string,
+  from: string,
+  to: string,
+  competitionId?: string
+): Promise<ApiEnvelope<DixonColesRhoFitResult>> {
+  const params = new URLSearchParams({ from, to });
+  if (competitionId) params.set("competitionId", competitionId);
+  return authedRequest<ApiEnvelope<DixonColesRhoFitResult>>(`/admin/model/poisson/fit-rho?${params.toString()}`, accessToken, {
+    method: "POST"
+  });
+}
+
+/** Whether a fitted rho is currently in effect for /predict/poisson, or predictions are still using the fixed default. */
+export function getRhoStatus(accessToken: string): Promise<ApiEnvelope<RhoStatus>> {
+  return authedRequest<ApiEnvelope<RhoStatus>>("/admin/model/poisson/rho-status", accessToken);
 }

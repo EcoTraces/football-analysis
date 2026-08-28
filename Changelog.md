@@ -1,5 +1,62 @@
 # Changelog
 
+## 2026-08-28 — Fit the Dixon-Coles rho parameter from real data
+
+Third wishlist item off Task.md: `RHO` (the Dixon-Coles low-score
+correlation parameter) has been a fixed `-0.1` approximation since the
+Poisson model's first commit. `ml-service/app/models/rho_fitting.py`
+fits it by maximum likelihood instead.
+
+- **Why only four scorelines matter**: `dixon_coles_tau(x, y, lam, mu,
+  rho)` is exactly `1.0` — no `rho` dependence at all — for every
+  scoreline except `(0,0)`, `(0,1)`, `(1,0)`, `(1,1)`. That's the entire
+  Dixon-Coles adjustment, by construction. Only matches finishing one of
+  those four scorelines carry any information about `rho`; `fit_rho()`
+  refuses (`422`) below `MIN_INFORMATIVE_MATCHES` (30) of those
+  specifically, not below some raw row count.
+- **The fit**: maximizing the log-likelihood over `rho` reduces to
+  maximizing `sum(log(tau_i(rho)))` (the independent-Poisson terms don't
+  depend on `rho`), via `scipy.optimize.minimize_scalar`, bounded to
+  whatever range keeps every informative match's `tau` strictly positive —
+  derived directly from `tau`'s own formulas, not guessed.
+- **Tested against a genuine parameter-recovery case**: synthetic
+  scorelines sampled from `poisson.py`'s own `score_matrix()` at a known
+  `true_rho`, and `fit_rho()` is asserted to recover it within 0.03 — the
+  strongest test in this codebase that an optimization actually works, not
+  merely that it runs without error.
+- New ml-service endpoints: `POST /fit/dixon_coles_rho`,
+  `GET /rho_status`.
+- `backend/src/jobs/fitDixonColesRho.ts` reuses the identical
+  `computePointInTimeStrength()` walk-forward computation
+  training/backtesting already use (same lookahead-bias avoidance as
+  those), but each row carries the *exact final score*, not gradient
+  boosting's win/draw/loss label — rho fitting is sensitive to the precise
+  scoreline.
+- Like gradient boosting's trained model, `main.py` keeps the fitted rho
+  as process-local, in-memory state, used by every `/predict/poisson` call
+  after a successful fit. That means a fit takes effect for **every market
+  derived from the full-match score matrix** — 1x2, correct score, BTTS,
+  over/under, double chance, clean sheet, odd/even, draw no bet, the two
+  joint markets, and the handicap market — not just 1x2. The half-based
+  markets are the one exception: they deliberately use `rho=0` regardless.
+- On success, updates `poisson-baseline`'s **existing** `model_versions`
+  row (`trained_at`/`training_dataset_version`/`notes`) — this refines
+  that model, it doesn't create a new one, unlike gradient boosting's
+  separate row.
+- New admin routes: `POST
+  /admin/model/poisson/fit-rho?from=&to=&competitionId=` and
+  `GET /admin/model/poisson/rho-status`. The admin dashboard's "Backtest &
+  models" panel shows the currently-effective rho and a "Fit Dixon-Coles
+  rho" button — never on the scheduler, same as backtesting/training.
+- Test counts: ml-service 66/66 (was 59), backend 202/202 (was 194),
+  frontend 39/39 (was 35). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Like everything else on this list, never run against real data.** No
+  live API-Football key exists in this environment, so there's no real
+  fixture history with enough 0-0/1-0/0-1/1-1 results to fit against —
+  `poisson-baseline`'s `model_versions` row stays at its dev-seeded,
+  unfit state in practice. See `ML_Model.md`'s "Rho fitting" section.
+
 ## 2026-08-28 — Second model: gradient boosting (1x2 market) + baseline comparison
 
 First item off the model wishlist in Task.md: "add at least one additional

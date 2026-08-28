@@ -72,6 +72,40 @@ export interface GradientBoostingTrainResult {
   classCounts: Record<string, number>;
 }
 
+// Fitting the Dixon-Coles RHO parameter (Task.md wishlist) — see
+// ml-service/app/models/rho_fitting.py. One row per historical match;
+// leagueAvgHomeGoals/leagueAvgAwayGoals are shared across the whole
+// request (this platform always uses one fixed pair, never per-fixture
+// values — see generatePredictions.ts), so ml-service can derive each
+// row's lambda_home/lambda_away itself via the same expected_goals()
+// formula /predict/poisson uses.
+export interface DixonColesRhoFitRow {
+  homeTeam: TeamStrengthInput;
+  awayTeam: TeamStrengthInput;
+  actualHomeGoals: number;
+  actualAwayGoals: number;
+}
+
+export interface DixonColesRhoFitRequest {
+  leagueAvgHomeGoals: number;
+  leagueAvgAwayGoals: number;
+  rows: DixonColesRhoFitRow[];
+}
+
+export interface DixonColesRhoFitResult {
+  sampleSize: number;
+  informativeMatches: number;
+  fittedRho: number;
+  logLikelihoodAtFittedRho: number;
+  logLikelihoodAtDefaultRho: number;
+  defaultRho: number;
+}
+
+export interface RhoStatus {
+  fittedRho: number | null;
+  defaultRho: number;
+}
+
 // Thin HTTP client for the Python ML service. Kept separate from route
 // handlers so the timeout/error-mapping policy lives in exactly one place.
 export class PredictionClient {
@@ -116,12 +150,36 @@ export class PredictionClient {
   // swallowing to null, letting the admin route surface exactly why
   // training didn't happen.
   async trainGradientBoosting(payload: GradientBoostingTrainRequest): Promise<GradientBoostingTrainResult> {
-    const controller = new AbortController();
     // Training a few hundred rows of gradient boosting is more expensive
     // than a single prediction — give it more room before giving up.
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs * 6);
+    return this.postJsonThrowing("/train/gradient_boosting", payload, this.timeoutMs * 6);
+  }
+
+  // Same "throw with ml-service's own detail message" contract as
+  // trainGradientBoosting — a fit failure (e.g. too few matches finishing
+  // 0-0/1-0/0-1/1-1 — see rho_fitting.py) is rare and actionable, not
+  // something to silently skip.
+  async fitDixonColesRho(payload: DixonColesRhoFitRequest): Promise<DixonColesRhoFitResult> {
+    return this.postJsonThrowing("/fit/dixon_coles_rho", payload, this.timeoutMs * 6);
+  }
+
+  async getRhoStatus(): Promise<RhoStatus> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(`${this.baseUrl}/train/gradient_boosting`, {
+      const res = await fetch(`${this.baseUrl}/rho_status`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`rho_status request failed with status ${res.status}`);
+      return (await res.json()) as RhoStatus;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async postJsonThrowing<T>(path: string, payload: unknown, timeoutMs: number): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -129,9 +187,9 @@ export class PredictionClient {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(body?.detail ?? `Training request failed with status ${res.status}`);
+        throw new Error(body?.detail ?? `Request to ${path} failed with status ${res.status}`);
       }
-      return (await res.json()) as GradientBoostingTrainResult;
+      return (await res.json()) as T;
     } finally {
       clearTimeout(timeout);
     }

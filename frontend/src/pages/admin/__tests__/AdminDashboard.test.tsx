@@ -32,6 +32,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminJobs").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminDataHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getBacktestResults").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getRhoStatus").mockReturnValue(new Promise(() => {}));
 
     renderDashboard();
 
@@ -62,6 +63,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 5, syntheticFixtures: 0, currentPredictions: 2 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
 
     renderDashboard();
 
@@ -87,6 +89,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
 
     renderDashboard();
 
@@ -110,6 +113,7 @@ describe("AdminDashboard", () => {
     const getAdminJobs = vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     const triggerSync = vi.spyOn(api, "triggerSync").mockResolvedValue({
       data: { runId: "run-1", fixturesProcessed: 3, fixturesRejected: 0 }
     });
@@ -140,6 +144,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
   }
 
   it("renders past backtest runs with their metrics", async () => {
@@ -271,6 +276,78 @@ describe("AdminDashboard", () => {
     screen.getByText("Train gradient boosting").click();
 
     await waitFor(() => expect(screen.getByText("Need at least 20 training rows, got 3.")).toBeTruthy());
+  });
+
+  it("shows the current fitted rho when one is in effect, instead of the fixed default", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: -0.2837, defaultRho: -0.1 } });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("-0.2837")).toBeTruthy());
+  });
+
+  it("shows the fixed default label when rho has never been fit", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/-0.1 \(fixed default, never fit\)/)).toBeTruthy());
+  });
+
+  it("fitting rho shows the fitted value and refreshes the rho status", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const getRhoStatus = vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
+    const fitRhoSpy = vi.spyOn(api, "fitDixonColesRho").mockResolvedValue({
+      data: {
+        runId: "run-1",
+        modelVersionId: "mv-poisson",
+        sampleSize: 40,
+        skipped: 2,
+        informativeMatches: 40,
+        fittedRho: -0.31,
+        logLikelihoodAtFittedRho: -10,
+        logLikelihoodAtDefaultRho: -20,
+        defaultRho: -0.1
+      }
+    });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+
+    screen.getByText("Fit Dixon-Coles rho").click();
+
+    await waitFor(() => expect(fitRhoSpy).toHaveBeenCalledTimes(1));
+    expect(fitRhoSpy).toHaveBeenCalledWith("admin-token", "2024-01-01T00:00:00.000Z", "2024-01-31T23:59:59.999Z");
+    await waitFor(() => expect(screen.getByText(/Fitted rho = -0.3100 from 40 matches/)).toBeTruthy());
+    expect(getRhoStatus).toHaveBeenCalledTimes(2); // initial load + post-fit refresh
+  });
+
+  it("shows an error message when fitting rho fails (e.g. too few informative matches in range)", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "fitDixonColesRho").mockRejectedValue(
+      new api.ApiRequestError("Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho, got 2 out of 50 rows.", 422)
+    );
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Fit Dixon-Coles rho")).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2024-01-01" } });
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2024-01-31" } });
+
+    screen.getByText("Fit Dixon-Coles rho").click();
+
+    await waitFor(() =>
+      expect(screen.getByText("Need at least 30 matches finishing 0-0, 1-0, 0-1, or 1-1 to fit rho, got 2 out of 50 rows.")).toBeTruthy()
+    );
   });
 
   it("shows an error message when the backtest run fails, without crashing the rest of the dashboard", async () => {
