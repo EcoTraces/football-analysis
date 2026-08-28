@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-08-28 — Double chance and correct score prediction markets
+
+Adds two of the markets requested for the prediction engine (out of a
+longer wishlist — corners, bookings, half-time/full-time, player-to-score,
+etc. remain unbuilt; see `Task.md` → "Frontend"/"Model" for the full gap
+list). Chose these two first because both are derivable from the Poisson
+model's existing score matrix — no new data source, model, or DB schema
+change required.
+
+- `ml-service/app/models/poisson.py`: `market_probabilities()` now also
+  returns `home_or_draw`/`home_or_away`/`draw_or_away` (each the sum of the
+  two 1X2 outcomes it covers). New `top_correct_scores(matrix, n=10)`
+  returns the n most probable exact scorelines, sorted descending.
+- `ml-service/app/main.py`: `/predict/poisson` now includes `double_chance`
+  (3 selections) and `correct_score` (top 10 scorelines + one `"other"`
+  selection covering the remaining probability mass, so the market's
+  probabilities still sum to 1). 5 new tests across `test_poisson.py`/
+  `test_api.py`; ml-service suite now 15/15 (was 10/10).
+- Backend needed **no changes** — `predictions.market`/`selection` are
+  free-text columns with no CHECK constraint, and
+  `generatePredictionsForUpcomingFixtures` already writes whatever markets
+  the ml-service response contains. This was true before today but is
+  worth stating plainly: the pipeline was already market-agnostic by
+  design.
+- Frontend: `MatchDetail.tsx` renders two more `PredictionCard`s.
+  `PredictionCard.tsx` gained a selection-label map (`home_or_draw` →
+  "Home or draw (1X)", `other` → "Other scoreline", correct-score
+  scorelines like `2-1` render as-is) and now sorts each card's rows by
+  probability descending, with `"other"` always pinned last regardless of
+  its own probability (it's a catch-all bucket, not a specific outcome, so
+  ranking it by probability would be misleading). 3 new tests; frontend
+  suite now 20/20 (was 17/17).
+- Documented in `ML_Model.md` that both are *derived*, not independently
+  modeled — same `RHO`/league-agnostic caveats as the original three
+  markets apply, and correct_score explicitly cannot represent a scoreline
+  outside its top 10 as anything other than `"other"`.
+- Updated `API.md`/`Data_Sources.md`/`README.md`, which previously said (now
+  incorrectly) that odds ingestion covers "the markets the prediction
+  engine produces" — that was true when there were only three; it no
+  longer is. Odds ingestion (`syncOdds.ts`/`ApiFootballProvider.mapOdds`)
+  still only covers `1x2`/`btts`/`over_under_2_5`; extending it to these
+  two new markets is now tracked as its own item in `Task.md`.
+- Verified: `pytest` (ml-service) and `vitest`/`tsc`/`eslint`/`npm run
+  build` (frontend) all clean. **Not verified against a live Supabase or
+  API-Football setup** — same caveat as everything else in this project;
+  only the ml-service's own math and the frontend's rendering of
+  hand-constructed fixture data have actually been exercised.
+
 ## 2026-08-28 — Manual security review + fixes
 
 The `/security-review` automated skill could not be run in this environment

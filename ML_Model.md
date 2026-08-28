@@ -18,6 +18,27 @@ model with the Dixon & Coles (1997) low-score correlation adjustment.
    cells (0-0, 1-0, 0-1, 1-1) using a fixed `RHO = -0.1`.
 3. Market probabilities (1X2, BTTS, Over/Under 2.5) are summed from the
    matrix. All tests assert these sum to 1 exactly (`tests/test_poisson.py`).
+4. Two markets are then *derived* from the results of steps 1–3 rather than
+   modeled independently:
+   - **Double chance** (`home_or_draw`, `home_or_away`, `draw_or_away`) is
+     just a relabeling — each selection is the sum of the two 1X2 outcomes
+     it covers (e.g. `home_or_draw = home_win + draw`). It carries no
+     information beyond the 1X2 probabilities it's built from, and is only
+     as accurate as they are.
+   - **Correct score** exposes the score matrix's individual cells as their
+     own market. The full grid is 121 cells (0–10 goals each side); only
+     the top 10 most probable exact scorelines are returned as their own
+     selections (`top_correct_scores()`), with the remaining probability
+     mass reported as one `"other"` selection — so the market's
+     probabilities still sum to 1 rather than silently dropping the tail.
+     A scoreline this model has never assigned any real weight to (an 8-6,
+     say) simply falls inside `"other"`, not its own selection.
+
+   Both are pure functions of the same `lambda_home`/`lambda_away` and
+   score matrix as the three original markets — there is no separate model,
+   calibration, or historical data behind either one. The `RHO` and
+   league-agnostic caveats below apply to them exactly as much as they do
+   to 1X2/BTTS/O-U 2.5.
 
 ### Known limitations (be honest about these)
 

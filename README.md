@@ -82,9 +82,11 @@ See `Road_map.md` and `Task.md` for the full list. The highlights:
   production. See `Data_Sources.md`.
 - The odds sync (`syncOdds.ts`) only looks at scheduled/live fixtures within
   a window around kickoff (±24h by default), like lineups, and only stores
-  the three markets the prediction engine actually produces (`1x2`/`btts`/
-  `over_under_2_5`) — other markets and lines a bookmaker offers are read
-  but not stored. It's deliberately **not idempotent**: `odds_snapshots` is
+  `1x2`/`btts`/`over_under_2_5` — other markets and lines a bookmaker offers
+  are read but not stored, including `double_chance` and `correct_score`,
+  which the prediction engine produces (see `ML_Model.md`) but odds
+  ingestion doesn't cover yet — no bookmaker price to compare either of
+  those against. It's deliberately **not idempotent**: `odds_snapshots` is
   a genuine time series (spec section 25 wants price movement, not just a
   current price), so every run appends new rows rather than overwriting,
   and there's no de-duplication yet — running it on a tight schedule with

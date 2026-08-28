@@ -156,10 +156,13 @@ Calls the configured provider's odds endpoint for every real (non-synthetic)
 fixture with status `scheduled`/`live` whose kickoff falls within `±N` hours
 of now (default 24, capped at 168) — like lineups, odds aren't meaningful
 further from kickoff, and there's no "closing odds" use case for finished
-fixtures yet. Only the three markets the prediction engine produces
-(`1x2`/`btts`/`over_under_2_5`) are stored; other markets/lines a bookmaker
-offers are read but dropped. An empty response for a fixture (no bookmaker
-has posted a covered-market price yet) is counted separately from failures.
+fixtures yet. Only `1x2`/`btts`/`over_under_2_5` are stored; other
+markets/lines a bookmaker offers are read but dropped — this includes
+`double_chance` and `correct_score`, which the prediction engine now
+produces (see `ML_Model.md`) but odds ingestion does not yet cover, so
+those two have model probabilities with no bookmaker price to compare
+against. An empty response for a fixture (no bookmaker has posted a
+covered-market price yet) is counted separately from failures.
 **Deliberately not idempotent**: every successful run inserts new
 `odds_snapshots` rows rather than upserting, since this table is a genuine
 price-history time series, not a "current odds" cache — running this

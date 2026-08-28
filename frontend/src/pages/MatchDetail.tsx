@@ -62,10 +62,12 @@ export function MatchDetail() {
       )}
 
       {match.predictionsAvailable && (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <PredictionCard predictions={match.predictions} market="1x2" />
           <PredictionCard predictions={match.predictions} market="btts" />
           <PredictionCard predictions={match.predictions} market="over_under_2_5" />
+          <PredictionCard predictions={match.predictions} market="double_chance" />
+          <PredictionCard predictions={match.predictions} market="correct_score" />
         </div>
       )}
     </div>

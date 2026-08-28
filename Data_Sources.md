@@ -130,11 +130,15 @@ accordingly — see the lineups ingestion section below.
 
 `getOdds` returns a typed `ProviderOdds[]` — one entry per bookmaker, each
 carrying a list of `{ market, selection, decimalOdds }` selections.
-`ApiFootballProvider.mapOdds` restricts this to the three markets the
-prediction engine actually produces (`1x2`/`btts`/`over_under_2_5`),
+`ApiFootballProvider.mapOdds` restricts this to `1x2`/`btts`/`over_under_2_5`,
 classifying each vendor "bet" by its name (`mapBet`) and dropping any
 bookmaker left with zero covered-market selections after filtering —
 unverified against a live response, like every other mapping in this file.
+The prediction engine also now produces `double_chance` and `correct_score`
+(see `ML_Model.md`), but `mapOdds` doesn't cover either yet — those two
+markets have model probabilities only, with no bookmaker odds ingested to
+compare against (no value-analysis for them until this mapping is
+extended, per `ProviderOddsSelection`'s comment in `providers/types.ts`).
 
 **Shared helper extraction:** once a third sync job needed the same
 "batch-lookup a table's rows by internal id, then read each one's provider

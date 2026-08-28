@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -31,9 +32,18 @@ def test_predict_poisson_returns_all_markets():
     assert ("1x2", "away") in markets
     assert ("btts", "yes") in markets
     assert ("over_under_2_5", "over") in markets
+    assert ("double_chance", "home_or_draw") in markets
+    assert ("double_chance", "home_or_away") in markets
+    assert ("double_chance", "draw_or_away") in markets
+    assert ("correct_score", "other") in markets
 
     for prediction in body["predictions"]:
         assert 0.0 <= prediction["probability"] <= 1.0
+
+    correct_score_predictions = [p for p in body["predictions"] if p["market"] == "correct_score"]
+    # 10 exact scorelines + the "other" bucket covering the rest.
+    assert len(correct_score_predictions) == 11
+    assert sum(p["probability"] for p in correct_score_predictions) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_predict_poisson_rejects_invalid_input():

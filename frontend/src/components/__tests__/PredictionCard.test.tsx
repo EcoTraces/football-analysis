@@ -27,6 +27,42 @@ const predictions: PredictionView[] = [
     modelVersionId: "v1",
     generatedAt: new Date().toISOString(),
     freshness: "LIVE"
+  },
+  {
+    market: "double_chance",
+    selection: "home_or_draw",
+    probability: 0.8,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: "low",
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "correct_score",
+    selection: "2-1",
+    probability: 0.12,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: "high",
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "correct_score",
+    selection: "other",
+    probability: 0.4,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
   }
 ];
 
@@ -45,5 +81,26 @@ describe("PredictionCard", () => {
   it("renders nothing when the market has no predictions, rather than a misleading empty card", () => {
     const { container } = render(<PredictionCard predictions={predictions} market="btts" />);
     expect(container.innerHTML).toBe("");
+  });
+
+  it("renders double chance with a human-readable selection label, not a raw enum value", () => {
+    render(<PredictionCard predictions={predictions} market="double_chance" />);
+    expect(screen.getByText("Double chance")).toBeTruthy();
+    expect(screen.getByText("Home or draw (1X)")).toBeTruthy();
+    expect(screen.getByText("80%")).toBeTruthy();
+  });
+
+  it("renders correct score scorelines as-is and labels the catch-all bucket", () => {
+    render(<PredictionCard predictions={predictions} market="correct_score" />);
+    expect(screen.getByText("Correct score")).toBeTruthy();
+    expect(screen.getByText("2-1")).toBeTruthy();
+    expect(screen.getByText("Other scoreline")).toBeTruthy();
+  });
+
+  it("sorts selections by probability descending, keeping 'other' last regardless of its own probability", () => {
+    render(<PredictionCard predictions={predictions} market="correct_score" />);
+    const rowLabels = screen.getAllByText(/^(2-1|Other scoreline)$/).map((el) => el.textContent);
+    // "other" has the higher probability (0.4 vs 0.12) but must still sort last.
+    expect(rowLabels).toEqual(["2-1", "Other scoreline"]);
   });
 });

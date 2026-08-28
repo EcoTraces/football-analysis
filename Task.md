@@ -282,6 +282,34 @@
 
 ## Model
 
+- [x] Added `double_chance` and `correct_score` markets to the Poisson
+  model's output (`ml-service/app/main.py`,
+  `ml-service/app/models/poisson.py`). Both are *derived* from the same
+  score matrix as the existing 1X2/BTTS/O-U 2.5 markets, not separately
+  modeled: double chance sums the relevant pair of 1X2 outcomes;
+  correct_score surfaces the top 10 most probable exact scorelines plus one
+  `"other"` selection covering the rest of the probability mass, so it
+  still sums to 1. The backend/DB layer needed **no changes** —
+  `predictions.market`/`selection` are free-text columns and
+  `generatePredictionsForUpcomingFixtures` already relays whatever markets
+  the ml-service returns. Frontend: `MatchDetail.tsx` now renders both as
+  additional `PredictionCard`s; `PredictionCard.tsx` got human-readable
+  selection labels (`Home or draw (1X)`, `Other scoreline`, etc.) and now
+  sorts each card's rows by probability descending (with `"other"` always
+  last). 8 new tests (4 ml-service, 4 frontend); ml-service suite now
+  15/15, frontend suite now 20/20. **Not yet verified against a live
+  Supabase/API-Football setup** — same caveat as the rest of this file.
+  Odds ingestion (`syncOdds.ts`/`ApiFootballProvider.mapOdds`) still only
+  covers `1x2`/`btts`/`over_under_2_5` — these two new markets have model
+  probabilities only, no bookmaker price to value-compare against yet; see
+  the new item below.
+- [ ] Extend `ApiFootballProvider.mapOdds`/`syncOdds.ts` to also ingest
+  `double_chance` and `correct_score` bookmaker odds (API-Football exposes
+  both as bet types) now that the prediction engine produces matching
+  markets — needed before Value Analysis (spec section 25) can compare
+  either against a real price. Confirm the exact bet-name/value strings
+  against a live API-Football response first; nothing in this environment
+  has done that yet for any market.
 - [ ] Backtesting pipeline: load historical results, walk-forward
   train/validation/test split, write to `model_evaluations`.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare

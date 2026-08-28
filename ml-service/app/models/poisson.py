@@ -87,6 +87,14 @@ def market_probabilities(matrix: list[list[float]]) -> dict[str, float]:
 
     over_2_5 = sum(matrix[i][j] for i in range(n) for j in range(n) if i + j >= 3)
 
+    # Double chance is just a relabeling of the 1x2 outcome probabilities
+    # (each selection covers two of the three 1x2 results) — no separate
+    # model, so it can only ever be as accurate as the 1x2 probabilities
+    # it's built from.
+    home_or_draw = home_win + draw
+    home_or_away = home_win + away_win
+    draw_or_away = draw + away_win
+
     return {
         "home_win": home_win,
         "draw": draw,
@@ -95,7 +103,30 @@ def market_probabilities(matrix: list[list[float]]) -> dict[str, float]:
         "btts_no": 1 - btts_yes,
         "over_2_5": over_2_5,
         "under_2_5": 1 - over_2_5,
+        "home_or_draw": home_or_draw,
+        "home_or_away": home_or_away,
+        "draw_or_away": draw_or_away,
     }
+
+
+def top_correct_scores(matrix: list[list[float]], n: int = 10) -> list[tuple[int, int, float]]:
+    """Returns the `n` most probable exact scorelines as (home_goals, away_goals,
+    probability), sorted by probability descending (ties broken by fewest total
+    goals, then by home_goals, for a deterministic order).
+
+    The full grid has (MAX_GOALS + 1)^2 = 121 cells; the overwhelming majority
+    carry negligible probability for realistic football lambdas, so only the
+    top `n` are surfaced as individual "correct score" selections — the caller
+    is responsible for reporting the remaining probability mass as a single
+    "other" selection rather than silently dropping it (see main.py).
+    """
+    cells = [
+        (home_goals, away_goals, matrix[home_goals][away_goals])
+        for home_goals in range(len(matrix))
+        for away_goals in range(len(matrix[0]))
+    ]
+    cells.sort(key=lambda c: (-c[2], c[0] + c[1], c[0]))
+    return cells[:n]
 
 
 def data_quality_for(home: TeamStrength, away: TeamStrength) -> str:

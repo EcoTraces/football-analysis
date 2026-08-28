@@ -8,6 +8,7 @@ from app.models.poisson import (
     expected_goals,
     market_probabilities,
     score_matrix,
+    top_correct_scores,
 )
 
 LEAGUE_AVG_HOME = 1.5
@@ -80,3 +81,40 @@ def test_expected_goals_never_reaches_zero():
     assert lam_home > 0
     assert lam_away > 0
     assert not math.isnan(lam_home)
+
+
+def test_double_chance_probabilities_are_internally_consistent():
+    matrix = score_matrix(1.6, 1.0)
+    probs = market_probabilities(matrix)
+
+    # Each double-chance selection is exactly the sum of the two 1x2
+    # outcomes it covers — so it should equal 1 minus the excluded outcome.
+    assert probs["home_or_draw"] == pytest.approx(1.0 - probs["away_win"], abs=1e-9)
+    assert probs["home_or_away"] == pytest.approx(1.0 - probs["draw"], abs=1e-9)
+    assert probs["draw_or_away"] == pytest.approx(1.0 - probs["home_win"], abs=1e-9)
+    for key in ("home_or_draw", "home_or_away", "draw_or_away"):
+        assert 0.0 <= probs[key] <= 1.0
+
+
+def test_top_correct_scores_returns_requested_count_sorted_descending():
+    matrix = score_matrix(1.6, 1.0)
+    top = top_correct_scores(matrix, n=5)
+
+    assert len(top) == 5
+    probabilities = [p for _, _, p in top]
+    assert probabilities == sorted(probabilities, reverse=True)
+    # Every returned probability should actually come from the matrix cell it claims.
+    for home_goals, away_goals, probability in top:
+        assert matrix[home_goals][away_goals] == pytest.approx(probability)
+
+
+def test_top_correct_scores_plus_other_covers_full_probability_mass():
+    matrix = score_matrix(1.4, 1.1)
+    top = top_correct_scores(matrix, n=10)
+    other = 1.0 - sum(p for _, _, p in top)
+
+    assert 0.0 <= other <= 1.0
+    # For realistic low-scoring lambdas, the top 10 scorelines should
+    # already cover most of the probability mass, leaving "other" small
+    # rather than dominant — a sanity check that n=10 is a reasonable cut.
+    assert other < 0.5

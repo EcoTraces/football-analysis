@@ -7,6 +7,7 @@ from app.models.poisson import (
     explain_factors,
     market_probabilities,
     score_matrix,
+    top_correct_scores,
 )
 from app.schemas import Factor, MarketProbability, PoissonPredictionRequest, PoissonPredictionResponse
 
@@ -72,7 +73,41 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
         MarketProbability(
             market="over_under_2_5", selection="under", probability=probs["under_2_5"], factors=[]
         ),
+        # Double chance is a relabeling of the 1x2 probabilities (see
+        # market_probabilities' comment) — home_or_draw and draw_or_away each
+        # still carry a directional lean since they include one of the two
+        # 1x2 sides; home_or_away (excludes only the draw) doesn't lean
+        # toward either team, so it gets no factors.
+        MarketProbability(
+            market="double_chance",
+            selection="home_or_draw",
+            probability=probs["home_or_draw"],
+            factors=home_leaning,
+        ),
+        MarketProbability(
+            market="double_chance", selection="home_or_away", probability=probs["home_or_away"], factors=[]
+        ),
+        MarketProbability(
+            market="double_chance",
+            selection="draw_or_away",
+            probability=probs["draw_or_away"],
+            factors=away_leaning,
+        ),
     ]
+
+    # Correct score: only the top N exact scorelines are surfaced individually
+    # (the full grid is 121 cells, almost all negligible); the remaining
+    # probability mass is reported as an explicit "other" selection so the
+    # market's probabilities still sum to 1 rather than silently omitting it.
+    top_scores = top_correct_scores(matrix, n=10)
+    other_probability = max(0.0, 1.0 - sum(p for _, _, p in top_scores))
+    predictions.extend(
+        MarketProbability(market="correct_score", selection=f"{home_goals}-{away_goals}", probability=p, factors=[])
+        for home_goals, away_goals, p in top_scores
+    )
+    predictions.append(
+        MarketProbability(market="correct_score", selection="other", probability=other_probability, factors=[])
+    )
 
     return PoissonPredictionResponse(
         model_name=MODEL_NAME,
