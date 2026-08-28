@@ -74,6 +74,48 @@ much simpler model from the goals one above — not a derivation of it.
   which is the intended fail-safe (no data → no market), not a bug, but
   worth knowing when a fixture's prediction cards are missing it.
 
+## Half-based markets: `first_half_result`, `second_half_result`, `half_with_most_goals`
+
+Location: `ml-service/app/models/half_markets.py`. Reuses `poisson.py`'s
+`score_matrix()` function directly, but is not a *derivation* of the
+full-match matrix the way double chance/correct score are — it needs its
+own pair of per-half score matrices, built from scaled-down lambdas.
+
+- Each side's full-match `lambda_home`/`lambda_away` (already computed for
+  the main markets — no new request fields needed, unlike cards/corners)
+  is split into a first-half share and a second-half share using a fixed
+  `FIRST_HALF_FRACTION = 0.45` — the well-known empirical tendency for
+  slightly more goals in the second half of professional matches, but
+  **not fitted to this platform's own data**, same category of
+  simplification as `RHO` and the count-markets' fixed lines.
+- Each half gets its own independent Poisson score matrix
+  (`build_half_matrices()`), but **with `rho=0`, not the full match's
+  `RHO`.** Dixon-Coles' low-score correlation adjustment is documented for
+  full 90-minute matches; there's no basis in this codebase for assuming it
+  applies identically, unadjusted, to a 45-minute segment, and compounding
+  one unverified constant onto another without any evidence for either felt
+  like the wrong default. Plain independent Poisson per half is the more
+  honest choice given what's actually known here.
+- `first_half_result`/`second_half_result` are each a plain home/draw/away
+  computed from one half's own matrix (`half_result_probabilities()`) — the
+  same structure as 1X2, just scoped to one half's goals instead of the
+  full match's.
+- `half_with_most_goals` (`first_half`/`second_half`/`equal`) compares each
+  half's *total*-goals marginal distribution
+  (`total_goals_distribution()`), not a full joint scoreline computation —
+  the two halves are independent by this model's own construction, so a
+  weighted comparison of their marginals is sufficient and exact under that
+  assumption.
+- Always computed, no optional gating like cards/corners — every fixture
+  that gets a 1X2 prediction also gets all three of these.
+- **Not calibrated or backtested in any way.** No real half-time score data
+  has ever been compared against this model's output — `fixtures.
+  home_score_ht`/`away_score_ht` (present in the schema since day one) was
+  only wired up to actually get populated in the same piece of work that
+  added these markets (`syncFixtures.ts`, parsing the vendor's
+  `score.halftime` field), so there's now a real data source to eventually
+  check these predictions against, but that check hasn't been done.
+
 ### Known limitations (be honest about these)
 
 - **`RHO` is not fitted.** -0.1 is a commonly cited starting value in the

@@ -250,7 +250,9 @@ export class ApiFootballProvider implements FootballDataProvider {
       kickoffUtc: new Date(raw.fixture.date).toISOString(),
       status: mapStatus(raw.fixture.status?.short),
       homeScore: raw.goals?.home ?? null,
-      awayScore: raw.goals?.away ?? null
+      awayScore: raw.goals?.away ?? null,
+      homeScoreHt: raw.score?.halftime?.home ?? null,
+      awayScoreHt: raw.score?.halftime?.away ?? null
     };
   }
 
@@ -409,6 +411,7 @@ interface RawFixture {
     away: { id: number; name: string };
   };
   goals?: { home: number | null; away: number | null };
+  score?: { halftime?: { home: number | null; away: number | null } | null };
 }
 
 // Shape per api-football v3's documented /teams/statistics response —

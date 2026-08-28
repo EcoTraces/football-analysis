@@ -49,6 +49,20 @@ def test_predict_poisson_returns_all_markets():
     assert not any(m == "total_cards" for m, _ in markets)
     assert not any(m == "total_corners" for m, _ in markets)
 
+    # Half-based markets always appear — no optional data needed for them.
+    assert ("first_half_result", "home") in markets
+    assert ("first_half_result", "draw") in markets
+    assert ("first_half_result", "away") in markets
+    assert ("second_half_result", "home") in markets
+    assert ("half_with_most_goals", "first_half") in markets
+    assert ("half_with_most_goals", "second_half") in markets
+    assert ("half_with_most_goals", "equal") in markets
+
+    for market_name in ("first_half_result", "second_half_result", "half_with_most_goals"):
+        market_predictions = [p for p in body["predictions"] if p["market"] == market_name]
+        assert len(market_predictions) == 3
+        assert sum(p["probability"] for p in market_predictions) == pytest.approx(1.0, abs=1e-6)
+
 
 def test_predict_poisson_includes_cards_and_corners_only_when_both_teams_averages_are_sent():
     base_payload = {

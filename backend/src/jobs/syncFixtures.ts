@@ -50,6 +50,8 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
     status: fixture.status,
     home_score: fixture.homeScore,
     away_score: fixture.awayScore,
+    home_score_ht: fixture.homeScoreHt,
+    away_score_ht: fixture.awayScoreHt,
     source: provider,
     source_timestamp: sourceTimestamp,
     is_synthetic: false

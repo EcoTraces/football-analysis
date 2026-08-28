@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-08-28 — First-half/second-half result and half-with-most-goals markets
+
+Third round of market build-out. Unlike cards/corners, these don't need any
+new data ingestion for the *predictions* themselves — they're computed from
+the same `lambda_home`/`lambda_away` every other goals-based market already
+uses. Did pick up one real data-completeness fix along the way, though.
+
+- `ml-service/app/models/half_markets.py` (new file): reuses
+  `poisson.py::score_matrix()` for each half separately — full-match
+  lambdas are split by a fixed `FIRST_HALF_FRACTION = 0.45` (the
+  well-documented tendency for more goals in the second half, chosen for
+  plausibility, not fitted to this platform's own data — same category as
+  `RHO` and the count-markets' fixed lines), and each half's matrix uses
+  `rho=0` rather than the full match's `RHO` — deliberately not reusing a
+  constant calibrated (loosely) for full matches on a 45-minute segment
+  with zero evidence either way.
+- `first_half_result`/`second_half_result`: plain home/draw/away from each
+  half's own matrix. `half_with_most_goals`
+  (`first_half`/`second_half`/`equal`): compares each half's total-goals
+  marginal distribution — exact under the model's own independence
+  assumption between halves, no joint scoreline computation needed.
+- All three are always computed (no optional-data gate like cards/corners)
+  and wired into `/predict/poisson` alongside the existing markets.
+- **Data-completeness fix, not required for the markets above but same area
+  of code:** `fixtures.home_score_ht`/`away_score_ht` have existed in the
+  schema since the very first migration and were never once written by any
+  sync job. `ProviderFixture` gained `homeScoreHt`/`awayScoreHt`,
+  `ApiFootballProvider.ts::mapFixture` now parses the vendor's
+  `score.halftime` object, and `syncFixtures.ts` writes both columns on
+  every insert/update. This doesn't feed the model (which has no
+  backtesting pipeline to consume it yet) — it just means there's now a
+  real data source to eventually check `first_half_result`/
+  `half_with_most_goals` predictions against, which there wasn't before.
+- Frontend: `MatchDetail.tsx` renders three more `PredictionCard`s;
+  `PredictionCard.tsx`'s label maps got all three markets plus the
+  `first_half`/`second_half` selection labels.
+- Test counts: backend 166/166 (was 165), ml-service 28/28 (was 21),
+  frontend 24/24 (was 22). `tsc`/`eslint`/`npm run build` clean across all
+  three.
+- **Not calibrated or backtested against anything.** `FIRST_HALF_FRACTION`
+  and the choice of `rho=0` are both reasoned defaults, not measured
+  results — see `ML_Model.md` for the full caveat. Also not verified
+  against a live API-Football key, same as everything else in this project
+  — in particular, the vendor's exact `score.halftime` response shape is
+  unconfirmed.
+- **What's left from the original market wishlist:** only "player to
+  score" (anytime goalscorer), which is a substantially bigger build than
+  anything done in this round or the two before it — there is currently no
+  player-level scoring data anywhere in this schema at all. Scoped as its
+  own item in `Task.md` rather than started here.
+
 ## 2026-08-28 — Corners and cards (bookings) prediction markets
 
 Continues down the market wishlist from the double-chance/correct-score

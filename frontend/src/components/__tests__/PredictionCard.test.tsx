@@ -75,6 +75,30 @@ const predictions: PredictionView[] = [
     modelVersionId: "v1",
     generatedAt: new Date().toISOString(),
     freshness: "LIVE"
+  },
+  {
+    market: "half_with_most_goals",
+    selection: "second_half",
+    probability: 0.48,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: "moderate",
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
+  },
+  {
+    market: "half_with_most_goals",
+    selection: "equal",
+    probability: 0.24,
+    confidence: "medium",
+    dataQuality: "limited",
+    riskClassification: null,
+    factors: [],
+    modelVersionId: "v1",
+    generatedAt: new Date().toISOString(),
+    freshness: "LIVE"
   }
 ];
 
@@ -126,6 +150,20 @@ describe("PredictionCard", () => {
     // Matches how the real data looks before both teams have corners
     // synced — the market simply doesn't appear in the fixture's predictions.
     const { container } = render(<PredictionCard predictions={predictions} market="total_corners" />);
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("renders half-with-most-goals with human-readable labels for both halves", () => {
+    render(<PredictionCard predictions={predictions} market="half_with_most_goals" />);
+    expect(screen.getByText("Half with most goals")).toBeTruthy();
+    expect(screen.getByText("Second half")).toBeTruthy();
+    expect(screen.getByText("48%")).toBeTruthy();
+    // "equal" has no explicit label mapping — falls back to capitalize.
+    expect(screen.getByText("equal")).toBeTruthy();
+  });
+
+  it("renders nothing for first-half result when the fixture has no such prediction", () => {
+    const { container } = render(<PredictionCard predictions={predictions} market="first_half_result" />);
     expect(container.innerHTML).toBe("");
   });
 });

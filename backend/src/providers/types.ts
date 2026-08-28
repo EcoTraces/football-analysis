@@ -21,6 +21,13 @@ export interface ProviderFixture {
   status: "scheduled" | "live" | "finished" | "postponed" | "cancelled" | "abandoned";
   homeScore: number | null;
   awayScore: number | null;
+  // Present in the vendor's response since the initial fixtures mapping was
+  // written, but never parsed until the first_half_result/half_with_most_goals
+  // markets needed real half-time scores to eventually check predictions
+  // against (see ML_Model.md) — fixtures.home_score_ht/away_score_ht (0001)
+  // sat unpopulated the whole time.
+  homeScoreHt: number | null;
+  awayScoreHt: number | null;
 }
 
 export interface ProviderTeamStatistics {

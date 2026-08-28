@@ -48,6 +48,24 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.searchParams.get("date")).toBe("2026-08-27");
   });
 
+  it("maps a finished fixture's half-time score, and null when the response has none", async () => {
+    const finishedFixture = {
+      ...RAW_FIXTURE,
+      goals: { home: 3, away: 1 },
+      score: { halftime: { home: 2, away: 0 } }
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [finishedFixture, RAW_FIXTURE], results: 2 }));
+    const provider = new ApiFootballProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T23:59:59Z");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data[0]).toMatchObject({ homeScoreHt: 2, awayScoreHt: 0 });
+    // RAW_FIXTURE has no `score` field at all — should be null, not a crash.
+    expect(result.data[1]).toMatchObject({ homeScoreHt: null, awayScoreHt: null });
+  });
+
   it("sends the API key as an x-apisports-key header", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [] }));
     const provider = new ApiFootballProvider("secret-key", "https://example.test", fetchMock as unknown as typeof fetch);

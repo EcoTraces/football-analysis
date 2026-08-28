@@ -25,6 +25,8 @@ function makeFixture(overrides: Partial<ProviderFixture> = {}): ProviderFixture 
     status: "scheduled",
     homeScore: null,
     awayScore: null,
+    homeScoreHt: null,
+    awayScoreHt: null,
     ...overrides
   };
 }
@@ -112,7 +114,7 @@ describe("syncFixturesForDateRange", () => {
   it("updates the score/status of an existing fixture on a later sync (e.g. after full time)", async () => {
     const fake = new FakeSupabase();
     const scheduled = makeFixture({ status: "scheduled", homeScore: null, awayScore: null });
-    const finished = makeFixture({ status: "finished", homeScore: 2, awayScore: 1 });
+    const finished = makeFixture({ status: "finished", homeScore: 2, awayScore: 1, homeScoreHt: 1, awayScoreHt: 0 });
 
     const provider1 = new FakeProvider({
       "2026-08-27": { ok: true, data: [scheduled], sourceTimestamp: new Date().toISOString(), provider: "fake-provider" }
@@ -127,6 +129,8 @@ describe("syncFixturesForDateRange", () => {
     expect(fake.rows("fixtures")).toHaveLength(1);
     expect(fake.rows("fixtures")[0]?.status).toBe("finished");
     expect(fake.rows("fixtures")[0]?.home_score).toBe(2);
+    expect(fake.rows("fixtures")[0]?.home_score_ht).toBe(1);
+    expect(fake.rows("fixtures")[0]?.away_score_ht).toBe(0);
   });
 
   it("keeps going after a failed day and records the failure in the ingestion run", async () => {

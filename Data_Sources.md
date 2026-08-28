@@ -109,6 +109,13 @@ they're not among the required fields the mapping insists on.
 `countryName`, `homeTeamName`, etc.) alongside external ids — real
 ingestion needs them to create reference rows (countries/competitions/
 teams/seasons) the first time it sees an entity; see below.
+`homeScoreHt`/`awayScoreHt` (mapped from the vendor's `score.halftime`
+object) were added alongside the `first_half_result`/`half_with_most_goals`
+markets (`ML_Model.md`) — `fixtures.home_score_ht`/`away_score_ht` existed
+in the schema since 0001 but nothing had ever parsed or written them until
+now, so there's now finally a real data source to eventually check those
+markets' predictions against (that check hasn't been done — see
+`ML_Model.md`'s caveat on this).
 
 `getInjuries` similarly returns a typed `ProviderInjury[]` rather than
 `unknown[]` — each entry is one (player, fixture) report, not a

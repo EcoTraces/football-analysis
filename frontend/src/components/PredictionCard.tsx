@@ -8,7 +8,10 @@ const MARKET_LABELS: Record<string, string> = {
   double_chance: "Double chance",
   correct_score: "Correct score",
   total_cards: "Total cards (O/U 3.5)",
-  total_corners: "Total corners (O/U 9.5)"
+  total_corners: "Total corners (O/U 9.5)",
+  first_half_result: "First-half result",
+  second_half_result: "Second-half result",
+  half_with_most_goals: "Half with most goals"
 };
 
 // Selections not listed here (home/draw/away/yes/no/over/under, and
@@ -18,7 +21,9 @@ const SELECTION_LABELS: Record<string, string> = {
   home_or_draw: "Home or draw (1X)",
   home_or_away: "Home or away (12)",
   draw_or_away: "Draw or away (X2)",
-  other: "Other scoreline"
+  other: "Other scoreline",
+  first_half: "First half",
+  second_half: "Second half"
 };
 
 const CONFIDENCE_LABELS: Record<PredictionView["confidence"], string> = {

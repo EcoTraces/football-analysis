@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
+from app.models.half_markets import build_half_matrices, half_result_probabilities, half_with_most_goals_probabilities
 from app.models.poisson import (
     TeamStrength,
     data_quality_for,
@@ -135,6 +136,52 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
             corners_over, corners_under = total_over_under(corners_lambda, CORNERS_LINE)
             predictions.append(MarketProbability(market="total_corners", selection="over", probability=corners_over, factors=[]))
             predictions.append(MarketProbability(market="total_corners", selection="under", probability=corners_under, factors=[]))
+
+    # Half-based markets: always computable from the same lambda_home/
+    # lambda_away as every market above, so — unlike cards/corners — there's
+    # no optional-data gate here. See half_markets.py for the fixed
+    # first/second-half split and why rho=0 is used for each half instead
+    # of the full match's Dixon-Coles RHO.
+    first_half_matrix, second_half_matrix = build_half_matrices(lambda_home, lambda_away)
+    first_half_probs = half_result_probabilities(first_half_matrix)
+    second_half_probs = half_result_probabilities(second_half_matrix)
+    most_goals_probs = half_with_most_goals_probabilities(first_half_matrix, second_half_matrix)
+
+    predictions.extend(
+        [
+            MarketProbability(
+                market="first_half_result", selection="home", probability=first_half_probs["home"], factors=home_leaning
+            ),
+            MarketProbability(market="first_half_result", selection="draw", probability=first_half_probs["draw"], factors=[]),
+            MarketProbability(
+                market="first_half_result", selection="away", probability=first_half_probs["away"], factors=away_leaning
+            ),
+            MarketProbability(
+                market="second_half_result", selection="home", probability=second_half_probs["home"], factors=home_leaning
+            ),
+            MarketProbability(
+                market="second_half_result", selection="draw", probability=second_half_probs["draw"], factors=[]
+            ),
+            MarketProbability(
+                market="second_half_result", selection="away", probability=second_half_probs["away"], factors=away_leaning
+            ),
+            MarketProbability(
+                market="half_with_most_goals",
+                selection="first_half",
+                probability=most_goals_probs["first_half"],
+                factors=[],
+            ),
+            MarketProbability(
+                market="half_with_most_goals",
+                selection="second_half",
+                probability=most_goals_probs["second_half"],
+                factors=[],
+            ),
+            MarketProbability(
+                market="half_with_most_goals", selection="equal", probability=most_goals_probs["equal"], factors=[]
+            ),
+        ]
+    )
 
     return PoissonPredictionResponse(
         model_name=MODEL_NAME,

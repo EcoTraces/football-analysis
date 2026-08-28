@@ -318,6 +318,16 @@
     is unconfirmed; if it differs, `mapFixtureStatistics` silently returns
     `corners: null` for every fixture rather than erroring, which would be
     easy to miss without checking a real response.
+- [x] Populate `fixtures.home_score_ht`/`away_score_ht` — present in the
+  schema since 0001, never parsed or written by any sync job until the
+  `first_half_result`/`half_with_most_goals` markets (see "Model" below)
+  needed a real data source to eventually check those predictions against.
+  `ProviderFixture` gained `homeScoreHt`/`awayScoreHt`, mapped from the
+  vendor's `score.halftime` object in `ApiFootballProvider.ts::mapFixture`;
+  `syncFixtures.ts` writes both columns on every insert/update, same as the
+  existing full-time score. 2 new tests. **Not yet verified against a live
+  API-Football key** — the exact shape of `score.halftime` in a real
+  response is unconfirmed, same caveat as every mapping in this file.
 
 ## Model
 
@@ -369,6 +379,34 @@
   frontend tests (22/22 total). **Not yet verified against a live
   Supabase/API-Football setup**, and the fixed lines are a starting point,
   not researched — see `ML_Model.md`.
+- [x] Added `first_half_result`, `second_half_result`, and
+  `half_with_most_goals` markets (`ml-service/app/models/half_markets.py`).
+  Reuses `poisson.py`'s `score_matrix()` directly but is not a derivation of
+  the full-match matrix (unlike double chance/correct score) — each half
+  gets its own matrix, built from the full-match `lambda_home`/`lambda_away`
+  split by a fixed `FIRST_HALF_FRACTION = 0.45` (empirically plausible, not
+  fitted) and deliberately using `rho=0` rather than the full match's `RHO`
+  (no basis for assuming Dixon-Coles' low-score correlation applies
+  unadjusted to a 45-minute segment — compounding one unfitted constant onto
+  another felt worse than just not applying it). Always computed, no
+  optional-data gating like cards/corners. 7 new ml-service tests (28/28
+  total), 1 new backend test asserting all 3 markets appear (part of the
+  166/166 count above), 2 new frontend tests (24/24 total). **Not
+  calibrated or backtested against anything** — see `ML_Model.md`'s
+  caveat, and the `fixtures.home_score_ht`/`away_score_ht` item above for
+  the data source that would eventually let that check happen.
+- [ ] "Player to score" (anytime goalscorer) market — the last unbuilt item
+  from the original market wishlist (double chance/correct score/cards/
+  corners/half-based markets above are all done). Substantially bigger than
+  any of those: there is currently **no player-level scoring data anywhere**
+  in this schema — `players` only has name/position/team, no goals-per-
+  player table. Needs, at minimum: a new provider method for per-player
+  season stats (api-football's `/players` endpoint), a new
+  `player_statistics`-style table and sync job, a way to know who's actually
+  starting (this platform already has `lineups`, so that part exists), and
+  a model for splitting a team's expected goals among its likely scorers by
+  their individual scoring share — a different shape of problem than any
+  market built so far, not a quick extension of one.
 - [ ] Backtesting pipeline: load historical results, walk-forward
   train/validation/test split, write to `model_evaluations`.
 - [ ] Add at least one additional model (e.g. gradient boosting) and compare

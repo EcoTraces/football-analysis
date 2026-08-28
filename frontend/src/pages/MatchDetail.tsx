@@ -74,6 +74,9 @@ export function MatchDetail() {
               synced, unlike the always-present goals-based markets above. */}
           <PredictionCard predictions={match.predictions} market="total_cards" />
           <PredictionCard predictions={match.predictions} market="total_corners" />
+          <PredictionCard predictions={match.predictions} market="first_half_result" />
+          <PredictionCard predictions={match.predictions} market="second_half_result" />
+          <PredictionCard predictions={match.predictions} market="half_with_most_goals" />
         </div>
       )}
     </div>
