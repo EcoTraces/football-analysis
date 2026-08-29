@@ -33,25 +33,28 @@ import type {
   SchedulerHealth
 } from "../../lib/types";
 import { FreshnessBadge } from "../../components/FreshnessBadge";
+import { Badge, type BadgeVariant } from "../../components/Badge";
 
-const STATUS_STYLES: Record<string, string> = {
-  CONNECTED: "bg-pitch-100 text-pitch-900 dark:bg-pitch-900 dark:text-pitch-100",
-  RUNNING: "bg-pitch-100 text-pitch-900 dark:bg-pitch-900 dark:text-pitch-100",
-  reachable: "bg-pitch-100 text-pitch-900 dark:bg-pitch-900 dark:text-pitch-100",
-  succeeded: "bg-pitch-100 text-pitch-900 dark:bg-pitch-900 dark:text-pitch-100",
-  UNKNOWN: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  DISABLED: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  NOT_CONFIGURED: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  running: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
-  partial: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100",
-  ERROR: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100",
-  unreachable: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100",
-  failed: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100"
+// Same five-color semantic mapping FreshnessBadge uses, via the shared
+// Badge component, instead of this dashboard keeping its own separate
+// copy of the same green/gray/amber/red classes.
+const STATUS_VARIANT: Record<string, BadgeVariant> = {
+  CONNECTED: "success",
+  RUNNING: "success",
+  reachable: "success",
+  succeeded: "success",
+  UNKNOWN: "neutral",
+  DISABLED: "neutral",
+  NOT_CONFIGURED: "neutral",
+  running: "neutral",
+  partial: "warning",
+  ERROR: "danger",
+  unreachable: "danger",
+  failed: "danger"
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const className = STATUS_STYLES[status] ?? "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>{status}</span>;
+  return <Badge variant={STATUS_VARIANT[status] ?? "neutral"}>{status}</Badge>;
 }
 
 function formatDateTime(iso: string | null): string {

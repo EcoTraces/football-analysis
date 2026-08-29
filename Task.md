@@ -743,6 +743,59 @@
   if an operator actually needs a wider one-off sync.
 - [ ] Search, notifications, and a search/results UI — none exist yet.
 - [ ] Daily analysis and accumulator research pages.
+- [x] UI/UX redesign of the 6 real routes (design system + component
+  polish, not new pages) — requested as a full platform redesign covering
+  team pages, league pages, an accumulator, search, filters, charts, and a
+  landing page, none of which have any backend support (no `/teams/:id`
+  or `/leagues/:id` route, no accumulator concept anywhere in the schema,
+  no search endpoint). Scoped down, with the requester's confirmation, to
+  what the real backend actually supports — building UI for the rest
+  would mean either inventing data (this project's own "No Fake Data
+  Rule") or silently adding new backend surface neither asked for nor
+  reviewed. See `Design.md` for the full design-system writeup; summary
+  here:
+  - Extended the existing `pitch` green (kept, not replaced) with
+    `400`/`700`/`800` shades; added Inter (UI text) and JetBrains Mono
+    (prediction percentages/tabular figures, with `tabular-nums`) via
+    `tailwind.config.ts` + a Google Fonts `<link>`.
+  - New shared primitives: `Badge` (consolidates two previously-duplicated
+    copies of the same five-color status mapping — `FreshnessBadge` and
+    `AdminDashboard`'s `StatusBadge` now both delegate to it),
+    `Skeleton`, `EmptyState`, `ErrorState` — every one of the 6 real pages
+    now has an explicit loading/empty/error(+retry) state instead of
+    plain unstyled text.
+  - **Fixed the single most "unfinished" thing this redesign's own audit
+    found**: `FixturesToday`/`MatchDetail` rendered raw team UUIDs, not
+    names — `fixturesService.ts` and `/matches/:id` never joined `teams`.
+    New `backend/src/services/teamsService.ts` (`getTeamNamesById`,
+    batched via `.in()`, same "fetch raw rows, join in JS" pattern this
+    backend already uses everywhere `FakeSupabase` can't) adds
+    `homeTeamName`/`awayTeamName: string | null` to both responses — `null`
+    (never fabricated) when a team has no name yet, UI falls back to the id.
+  - **Information hierarchy fix**: `MatchDetail` rendered all ~20
+    prediction markets in one undifferentiated grid. `PredictionCard`
+    gained a `variant?: "primary" | "secondary"` prop (one component, not
+    a duplicate) — the 1x2 market now renders large and prominent up
+    front; every other market lives behind a native `<details>`/`<summary>`
+    "More markets & analysis" disclosure (zero-dependency, accessible by
+    default).
+  - **Fixed a real overflow risk**: the header nav (Admin link + full
+    email + Sign out + theme toggle, no wrap) could overflow horizontally
+    on narrow phones. Now wraps, with the email truncated responsively
+    (full address still in its `title` attribute).
+  - Small inline-SVG brand mark added next to the wordmark — no icon
+    library dependency for one mark.
+  - Password show/hide toggle added to sign-in/sign-up (was flagged as
+    missing standard affordance).
+  - Verified with a live Playwright render of `/sign-in` (the one route
+    reachable without real Supabase credentials) at 390px/1280px, light
+    and dark — confirmed fonts load, nav wraps instead of overflowing,
+    dark-mode contrast holds. `/`, `/matches/:id`, `/admin` verified via
+    their test suites instead (10 new frontend tests, 6 new backend
+    tests) since they need a real signed-in session this environment has
+    no credentials for. Full suite: backend 220/220, frontend 55/55,
+    ml-service 68/68 (untouched). `tsc`/`eslint`/`npm run build` clean
+    across all three services.
 
 ## Infra
 

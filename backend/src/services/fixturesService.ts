@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { classifyFreshness, type Freshness } from "../lib/freshness.js";
+import { getTeamNamesById } from "./teamsService.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -17,6 +18,11 @@ export interface FixtureSummary {
   competitionId: string;
   homeTeamId: string;
   awayTeamId: string;
+  // null, never a fabricated placeholder, when a team's own `teams` row is
+  // missing a name (or the row itself is missing) — the UI falls back to
+  // the id rather than inventing a name.
+  homeTeamName: string | null;
+  awayTeamName: string | null;
   kickoffUtc: string;
   status: string;
   homeScore: number | null;
@@ -65,11 +71,17 @@ export async function listFixtures(
   const { data, error } = await query;
   if (error) throw new Error(`Failed to load fixtures: ${error.message}`);
 
-  return (data ?? []).map((row) => ({
+  const rows = data ?? [];
+  const teamIds = rows.flatMap((row) => [row.home_team_id as string, row.away_team_id as string]);
+  const teamNamesById = await getTeamNamesById(supabase, teamIds);
+
+  return rows.map((row) => ({
     id: row.id as string,
     competitionId: row.competition_id as string,
     homeTeamId: row.home_team_id as string,
     awayTeamId: row.away_team_id as string,
+    homeTeamName: teamNamesById.get(row.home_team_id as string) ?? null,
+    awayTeamName: teamNamesById.get(row.away_team_id as string) ?? null,
     kickoffUtc: row.kickoff_utc as string,
     status: row.status as string,
     homeScore: row.home_score as number | null,

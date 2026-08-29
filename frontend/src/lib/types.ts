@@ -5,6 +5,9 @@ export interface FixtureSummary {
   competitionId: string;
   homeTeamId: string;
   awayTeamId: string;
+  // null (never a fabricated name) when the team's own row has no name yet.
+  homeTeamName: string | null;
+  awayTeamName: string | null;
   kickoffUtc: string;
   status: string;
   homeScore: number | null;
@@ -37,6 +40,8 @@ export interface MatchDetail {
   competition_id: string;
   home_team_id: string;
   away_team_id: string;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
   kickoff_utc: string;
   status: string;
   home_score: number | null;

@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-08-29 — UI/UX redesign of the 6 real frontend routes
+
+Requested as a full platform redesign (dashboard, match cards, an
+accumulator, team/league pages, search, filters, charts, a landing page).
+Scoped down, with the requester's confirmation, to the 6 routes and APIs
+that actually exist — the rest has no backend support (no `/teams/:id` or
+`/leagues/:id`, no accumulator concept in the schema, no search endpoint),
+and building UI for it would mean fabricating data or silently adding
+scope, either of which this project's own rules rule out. See `Design.md`
+for the full writeup.
+
+- New shared primitives (`frontend/src/components/`): `Badge` (a single
+  semantic `success|info|warning|danger|neutral` mapping, consolidating
+  what used to be two separate copies of the same five colors in
+  `FreshnessBadge` and `AdminDashboard`'s `StatusBadge`), `Skeleton`,
+  `EmptyState`, `ErrorState` — every one of the 6 pages now has an
+  explicit loading/empty/error(+retry) state.
+- `tailwind.config.ts`: extended the existing `pitch` green (kept, not
+  replaced) with `400`/`700`/`800` hover/active/pressed shades; added
+  Inter (UI text, via a Google Fonts `<link>` in `index.html`) and
+  JetBrains Mono (prediction percentages and other tabular figures).
+- **Fixed real team names showing as raw UUIDs** — the single most
+  "unfinished-looking" thing this redesign's own audit found.
+  `fixturesService.ts` and `/matches/:id` never joined `teams`. New
+  `backend/src/services/teamsService.ts` (`getTeamNamesById`, batched via
+  `.in()`, same "fetch raw rows, join in JS" pattern this backend already
+  uses everywhere `FakeSupabase` can't do a real join) adds
+  `homeTeamName`/`awayTeamName: string | null` to both responses — `null`,
+  never a fabricated name, when a team has none yet; the UI falls back to
+  the id in that case.
+- **Fixed the information-hierarchy problem**: `MatchDetail` rendered all
+  ~20 prediction markets with equal visual weight. `PredictionCard`
+  gained a `variant?: "primary" | "secondary"` prop (one reusable
+  component) — 1x2 now renders large and prominent up front, everything
+  else lives behind a native `<details>`/`<summary>` disclosure.
+- **Fixed a real mobile overflow risk**: the header nav (Admin link +
+  full email + Sign out + theme toggle, no wrap) could overflow on narrow
+  phones. Now wraps, with the email truncated responsively.
+- Small inline-SVG brand mark next to the wordmark; password show/hide
+  toggle added to sign-in/sign-up.
+- Verified with a live Playwright render of `/sign-in` at 390px/1280px,
+  light and dark, confirming fonts load, the nav wraps correctly, and
+  dark-mode contrast holds. The other real routes were verified through
+  their test suites (10 new frontend tests, 6 new backend tests) rather
+  than a live render, since they need a real signed-in session this
+  environment has no credentials for.
+- Test counts: backend 220/220 (was 218), frontend 55/55 (was 45),
+  ml-service 68/68 (untouched — confirms no cross-service breakage).
+  `tsc`/`eslint`/`npm run build` clean across all three services.
+
 ## 2026-08-28 — Per-competition Dixon-Coles rho fitting
 
 Follow-up requested after the four original wishlist items landed. The

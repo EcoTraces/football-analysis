@@ -66,4 +66,29 @@ describe("listFixtures", () => {
 
     expect(result).toHaveLength(0);
   });
+
+  it("enriches each fixture with its home/away team's real name", async () => {
+    const fake = new FakeSupabase();
+    seedFixture(fake);
+    fake.seed("teams", [
+      { id: VALID_TEAM_ID, name: "Synthetic United" },
+      { id: "other-team", name: "Synthetic City" }
+    ]);
+
+    const result = await listFixtures(fakeClient(fake), {});
+
+    expect(result[0]?.homeTeamName).toBe("Synthetic United");
+    expect(result[0]?.awayTeamName).toBe("Synthetic City");
+  });
+
+  it("falls back to null (never a fabricated name) when a team row doesn't exist", async () => {
+    const fake = new FakeSupabase();
+    seedFixture(fake);
+    // No teams table rows seeded at all.
+
+    const result = await listFixtures(fakeClient(fake), {});
+
+    expect(result[0]?.homeTeamName).toBeNull();
+    expect(result[0]?.awayTeamName).toBeNull();
+  });
 });

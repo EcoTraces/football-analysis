@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ApiError } from "../middleware/errorHandler.js";
 import { getCurrentPredictions } from "../services/predictionsService.js";
+import { getTeamNamesById } from "../services/teamsService.js";
 import { classifyFreshness } from "../lib/freshness.js";
 import { createRequireAuth } from "../middleware/auth.js";
 
@@ -30,11 +31,16 @@ export function createMatchesRouter(supabase: SupabaseClient): Router {
       if (error) throw new Error(`Failed to load match: ${error.message}`);
       if (!fixture) throw new ApiError(404, "Match not found", "not_found");
 
-      const predictions = await getCurrentPredictions(supabase, fixture.id as string);
+      const [predictions, teamNamesById] = await Promise.all([
+        getCurrentPredictions(supabase, fixture.id as string),
+        getTeamNamesById(supabase, [fixture.home_team_id as string, fixture.away_team_id as string])
+      ]);
 
       res.json({
         data: {
           ...fixture,
+          homeTeamName: teamNamesById.get(fixture.home_team_id as string) ?? null,
+          awayTeamName: teamNamesById.get(fixture.away_team_id as string) ?? null,
           freshness: classifyFreshness(fixture.source_timestamp as string, "fixtures"),
           predictions,
           predictionsAvailable: predictions.length > 0
