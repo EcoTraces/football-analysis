@@ -124,6 +124,14 @@ export class FakeSupabase {
             filters.push((row) => values.includes(resolvePath(row, column)));
             return builder;
           },
+          // Real Postgres/PostgREST reserves .is() for IS NULL/TRUE/FALSE
+          // checks (never a general equality op) — predictionsService.ts's
+          // .is("superseded_at", null) is the one shape this codebase
+          // actually uses it for.
+          is(column: string, value: unknown) {
+            filters.push((row) => resolvePath(row, column) === value);
+            return builder;
+          },
           gte(column: string, value: unknown) {
             filters.push((row) => (resolvePath(row, column) as string | number) >= (value as string | number));
             return builder;

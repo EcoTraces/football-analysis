@@ -799,8 +799,47 @@
 
 ## Infra
 
-- [ ] CI: add a security-scanning step (e.g. `npm audit` gate, `pip-audit`)
-  before deployment.
+- [x] CI: `npm audit --omit=dev` added to both the `backend` and
+  `frontend` CI jobs, `pip-audit -r requirements.txt` added to the
+  `ml-service` job. Deliberately scoped to **production dependencies
+  only** — dev-tooling advisories (the esbuild dev-server issue vitest/
+  vite pull in transitively, for instance) never ship in a deployed
+  build, so gating CI on them would just be noise unrelated to what's
+  actually running in production; `--omit=dev` filters to what matters.
+  This surfaced two real, pre-existing production vulnerabilities, both
+  fixed as part of adding the gate (not left for a future PR to trip
+  over):
+  - **frontend**: `react-router-dom` 6.26.2 carried two moderate CVEs (an
+    open-redirect variant in `<Link>`/`useNavigate`, and an SSR-hydration
+    constructor-injection issue — the latter inapplicable here since this
+    is a plain client-rendered SPA, but fixed anyway since the same
+    dependency needed bumping regardless). Bumped to `^7.18.3` — the
+    minimum patched version; no fix exists within the 6.x line. **Only
+    `react-router-dom` was bumped** — an initial `npm audit fix --force`
+    also dragged `vite` 5→8 and `vitest` 2→4 along as unrelated fallout,
+    which broke 9 tests (including one assertion that went from an
+    expected 2 calls to an observed 26 — a real behavioral change from
+    the vitest/vite jump, not react-router). Reverted and re-applied with
+    only the one package pinned explicitly, leaving `vite`/`vitest`
+    untouched; full suite (55/55), `tsc`, `eslint`, and `npm run build`
+    re-verified clean, plus a live Playwright smoke check that routing
+    still works.
+  - **ml-service**: `fastapi==0.115.0` pulled in `starlette==0.38.6`,
+    which `pip-audit` flagged with **9 known CVEs**, unfixed all the way
+    up to `starlette` 1.0.1+ — a real gap in an actually-deployed service
+    (see the Render deployment work), not a theoretical one. Bumped
+    `fastapi` to `0.141.1` (latest available), which pulls `starlette`
+    1.6.0 — `pip-audit` now reports zero findings. Verified with the full
+    68/68 test suite *and* a live smoke test of the running service
+    (`/health` and a real `/predict/poisson` call, all ~20 markets
+    returned correctly) before trusting the upgrade, given how large the
+    version jump was.
+  - **Deliberately left alone**: the dev-only esbuild/vite/vitest
+    advisory chain in both backend and frontend (`npm audit` with dev
+    deps included still shows these) — upgrading vitest to fix a
+    dev-server-only issue isn't worth the same blind-upgrade risk that
+    just broke 9 tests above, for something that was never reachable in
+    a deployed build in the first place.
 - [x] Backend deployment config for Render — `render.yaml` (Blueprint,
   Docker runtime, secrets marked `sync: false`) plus a `backend/.dockerignore`
   so a local `.env` can never end up baked into an image. See

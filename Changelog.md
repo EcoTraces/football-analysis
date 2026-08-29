@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-08-29 — Favicon, /matches/:id test coverage, CI security-scanning gate
+
+Three smaller, independent follow-ups after the redesign above.
+
+- **Favicon**: `frontend/public/favicon.svg` — the same brand mark (green
+  rounded square, pitch-line strokes) already used in the header, so the
+  browser tab and the header are visually consistent instead of the tab
+  showing Vite's default icon.
+- **`/matches/:id` test coverage**: this route had zero direct tests
+  (its logic lived entirely inline in the Express handler). Extracted
+  into a new exported `getMatchDetail()` — same pattern `routes/me.ts`'s
+  `getOrCreateProfile` already established — and added 5 tests covering
+  the 404 path, team-name enrichment, the null-fallback when a team has
+  no name, and that a superseded prediction is correctly excluded in
+  favor of the current one. Along the way, `FakeSupabase` gained `.is()`
+  support (it was missing entirely — `predictionsService.ts`'s
+  `.is("superseded_at", null)` had apparently never been exercised
+  against the fake before this).
+- **CI security-scanning gate**: `npm audit --omit=dev` (backend,
+  frontend) and `pip-audit -r requirements.txt` (ml-service), scoped to
+  production dependencies only so dev-tooling advisories that never ship
+  in a deployed build don't generate noise. Found and fixed two real,
+  pre-existing production vulnerabilities in the process: `react-router-dom`
+  (two moderate CVEs, fixed by bumping to `^7.18.3` — carefully, after an
+  initial `npm audit fix --force` dragged `vite`/`vitest` along too and
+  broke 9 tests, reverted and redone with only the one package pinned)
+  and `fastapi`'s transitive `starlette` dependency (**9 known CVEs** on
+  the version this actually-deployed service was running, fixed by
+  bumping `fastapi` to `0.141.1`). Full detail in `Task.md`'s "Infra"
+  section.
+- Test counts: backend 225/225 (was 220), frontend 55/55 (unchanged
+  count, but now passing against the patched `react-router-dom`),
+  ml-service 68/68 (unchanged count, passing against the patched
+  `fastapi`/`starlette`). `tsc`/`eslint`/`npm run build` clean across all
+  three, plus a live smoke test of the running ml-service and a
+  Playwright check that frontend routing still works post-upgrade.
+
 ## 2026-08-29 — UI/UX redesign of the 6 real frontend routes
 
 Requested as a full platform redesign (dashboard, match cards, an

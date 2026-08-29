@@ -23,6 +23,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Production dependencies only — dev-tooling advisories (e.g. the
+      # esbuild dev-server issue vitest/vite pull in transitively) never
+      # ship to a deployed build, so gating on them here would just be
+      # noise unrelated to what's actually running in production.
+      - run: npm audit --omit=dev
 
   ml-service:
     runs-on: ubuntu-latest
@@ -36,6 +41,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - run: pip-audit -r requirements.txt
 
   frontend:
     runs-on: ubuntu-latest
@@ -54,3 +60,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # Same production-only rationale as the backend job above.
+      - run: npm audit --omit=dev
