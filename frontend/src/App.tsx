@@ -5,6 +5,8 @@ import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
 import { FixturesToday } from "./pages/FixturesToday";
 import { MatchDetail } from "./pages/MatchDetail";
+import { Top20 } from "./pages/Top20";
+import { MatchesToAvoid } from "./pages/MatchesToAvoid";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
 import { AdminDashboard } from "./pages/admin/AdminDashboard";
@@ -32,6 +34,22 @@ export function App() {
           element={
             <RequireAuth>
               <MatchDetail />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="top20"
+          element={
+            <RequireAuth>
+              <Top20 />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="matches-to-avoid"
+          element={
+            <RequireAuth>
+              <MatchesToAvoid />
             </RequireAuth>
           }
         />

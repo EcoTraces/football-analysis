@@ -31,6 +31,12 @@ function AuthNav() {
 
   return (
     <>
+      <Link to="/top20" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
+        Top 20
+      </Link>
+      <Link to="/matches-to-avoid" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
+        Avoid
+      </Link>
       {profile?.role === "admin" && (
         <Link to="/admin" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
           Admin
