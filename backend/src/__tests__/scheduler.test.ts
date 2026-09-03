@@ -14,6 +14,7 @@ import {
   runPredictions,
   runEloRatings,
   runEnsemblePredictions,
+  runBuildAccumulators,
   guarded,
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
@@ -26,7 +27,8 @@ import {
   LEAGUE_CALIBRATION_CRON,
   PREDICTIONS_CRON,
   ELO_RATINGS_CRON,
-  ENSEMBLE_PREDICTIONS_CRON
+  ENSEMBLE_PREDICTIONS_CRON,
+  BUILD_ACCUMULATORS_CRON
 } from "../scheduler/scheduler.js";
 
 function notConfigured(name: string): Promise<ProviderResponse<never>> {
@@ -68,7 +70,8 @@ describe("scheduler", () => {
       LEAGUE_CALIBRATION_CRON,
       PREDICTIONS_CRON,
       ELO_RATINGS_CRON,
-  ENSEMBLE_PREDICTIONS_CRON
+  ENSEMBLE_PREDICTIONS_CRON,
+  BUILD_ACCUMULATORS_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
@@ -96,7 +99,8 @@ describe("scheduler", () => {
         "calibrate_leagues",
         "predictions",
         "compute_elo_ratings",
-        "predictions_ensemble"
+        "predictions_ensemble",
+        "build_accumulators"
       ].sort()
     );
     expect(logger.warn).not.toHaveBeenCalled();
@@ -113,7 +117,9 @@ describe("scheduler", () => {
       logger
     });
 
-    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions", "compute_elo_ratings", "predictions_ensemble"].sort());
+    expect(scheduler.jobs.sort()).toEqual(
+      ["calibrate_leagues", "predictions", "compute_elo_ratings", "predictions_ensemble", "build_accumulators"].sort()
+    );
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no football data provider configured"));
 
     scheduler.stop();
@@ -326,6 +332,19 @@ describe("scheduler", () => {
       "Scheduled ensemble predictions run finished"
     );
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("runBuildAccumulators runs the real job and logs its result", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+
+    await runBuildAccumulators({ supabase: fakeClient(fake), provider: new StubProvider("fake-provider"), mlServiceUrl: "http://localhost:8000", logger });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "build_accumulators" }),
+      "Scheduled accumulator build finished"
+    );
+    expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "build_accumulators" });
   });
 
   it("runEloRatings runs the real job and logs its result", async () => {

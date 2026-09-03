@@ -1,6 +1,6 @@
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getMatchesToAvoid, getTop20 } from "../services/screeningService.js";
+import { getAccumulatorRecommendations, getMatchesToAvoid, getTop20 } from "../services/screeningService.js";
 import { createRequireAuth } from "../middleware/auth.js";
 
 const MAX_TOP_N = 20;
@@ -26,6 +26,17 @@ export function createScreeningRouter(supabase: SupabaseClient): Router {
   router.get("/matches-to-avoid", async (_req, res, next) => {
     try {
       const data = await getMatchesToAvoid(supabase);
+      res.json({ data, meta: { count: data.length } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/accumulators", async (req, res, next) => {
+    try {
+      const legsParam = req.query.legs !== undefined ? Number(req.query.legs) : undefined;
+      const legs = legsParam !== undefined && Number.isFinite(legsParam) ? Math.trunc(legsParam) : undefined;
+      const data = await getAccumulatorRecommendations(supabase, legs);
       res.json({ data, meta: { count: data.length } });
     } catch (err) {
       next(err);

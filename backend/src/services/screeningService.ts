@@ -141,6 +141,116 @@ async function getCurrentEnsemblePredictions(supabase: SupabaseClient): Promise<
   });
 }
 
+interface AccumulatorRecommendationRow {
+  id: string;
+  target_legs: number;
+  leg_fixture_ids: string[];
+  leg_selections: { ensemblePredictionId: string; fixtureId: string; market: string; selection: string; odds: number; probability: number; selectionScore: number }[];
+  combined_probability: number;
+  combined_decimal_odds: number | null;
+  correlation_penalty: number;
+  composite_score: number;
+  risk_tier: string;
+  is_best_overall: boolean;
+  generated_at: string;
+}
+
+export interface AccumulatorLeg {
+  ensemblePredictionId: string;
+  fixtureId: string;
+  market: string;
+  selection: string;
+  odds: number | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  kickoffUtc: string;
+  selectionScore: number;
+}
+
+export interface AccumulatorRecommendationView {
+  id: string;
+  targetLegs: number;
+  legs: AccumulatorLeg[];
+  combinedProbability: number;
+  combinedDecimalOdds: number | null;
+  correlationPenalty: number;
+  compositeScore: number;
+  riskTier: string;
+  isBestOverall: boolean;
+  generatedAt: string;
+}
+
+// Current accumulator_recommendations rows, each leg enriched with team
+// names/kickoff for display — same fetch-raw-then-join-via-Map style as
+// enrichWithFixtureInfo above, just applied to a nested leg array instead
+// of a flat row list. `legs` param optionally filters to one target.
+export async function getAccumulatorRecommendations(supabase: SupabaseClient, legs?: number): Promise<AccumulatorRecommendationView[]> {
+  let query = supabase
+    .from("accumulator_recommendations")
+    .select(
+      "id, target_legs, leg_fixture_ids, leg_selections, combined_probability, combined_decimal_odds, " +
+        "correlation_penalty, composite_score, risk_tier, is_best_overall, generated_at"
+    )
+    .is("superseded_at", null);
+  if (legs !== undefined) query = query.eq("target_legs", legs);
+
+  const { data, error } = await query;
+  if (error) throw new Error(`Failed to load accumulator_recommendations: ${error.message}`);
+
+  const rows = (data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    return {
+      id: row.id as string,
+      target_legs: row.target_legs as number,
+      leg_fixture_ids: row.leg_fixture_ids as string[],
+      leg_selections: row.leg_selections as AccumulatorRecommendationRow["leg_selections"],
+      combined_probability: row.combined_probability as number,
+      combined_decimal_odds: row.combined_decimal_odds as number | null,
+      correlation_penalty: row.correlation_penalty as number,
+      composite_score: row.composite_score as number,
+      risk_tier: row.risk_tier as string,
+      is_best_overall: row.is_best_overall as boolean,
+      generated_at: row.generated_at as string
+    };
+  });
+
+  if (rows.length === 0) return [];
+
+  const fixtureIds = [...new Set(rows.flatMap((r) => r.leg_fixture_ids))];
+  const { data: fixtures, error: fixturesError } = await supabase.from("fixtures").select("id, home_team_id, away_team_id, kickoff_utc").in("id", fixtureIds);
+  if (fixturesError) throw new Error(`Failed to load fixtures: ${fixturesError.message}`);
+  const fixtureById = new Map(((fixtures ?? []) as (FixtureInfoRow & { kickoff_utc: string })[]).map((f) => [f.id, f]));
+
+  const teamIds = [...fixtureById.values()].flatMap((f) => [f.home_team_id, f.away_team_id]);
+  const teamNamesById = await getTeamNamesById(supabase, teamIds);
+
+  return rows.map((row) => ({
+    id: row.id,
+    targetLegs: row.target_legs,
+    legs: row.leg_selections.map((leg) => {
+      const fixture = fixtureById.get(leg.fixtureId);
+      return {
+        ensemblePredictionId: leg.ensemblePredictionId,
+        fixtureId: leg.fixtureId,
+        market: leg.market,
+        selection: leg.selection,
+        odds: leg.odds,
+        homeTeamName: fixture ? (teamNamesById.get(fixture.home_team_id) ?? null) : null,
+        awayTeamName: fixture ? (teamNamesById.get(fixture.away_team_id) ?? null) : null,
+        kickoffUtc: fixture?.kickoff_utc ?? "",
+        selectionScore: leg.selectionScore
+      };
+    }),
+    combinedProbability: row.combined_probability,
+    combinedDecimalOdds: row.combined_decimal_odds,
+    correlationPenalty: row.correlation_penalty,
+    compositeScore: row.composite_score,
+    riskTier: row.risk_tier,
+    isBestOverall: row.is_best_overall,
+    generatedAt: row.generated_at
+  }));
+}
+
 const DEFAULT_TOP_N = 20;
 
 // One entry per fixture — only its single highest-selection_score

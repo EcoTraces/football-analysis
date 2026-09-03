@@ -15,6 +15,7 @@ import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
 import { runLatestEnsemblePredictionsJob } from "../jobs/generateEnsemblePredictions.js";
+import { buildAccumulatorRecommendations } from "../jobs/buildAccumulators.js";
 
 export interface SchedulerDeps {
   supabase: SupabaseClient;
@@ -42,7 +43,8 @@ export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions 
 export const LEAGUE_CALIBRATION_CRON = "12 3 * * *"; // Between fixture-statistics and predictions — predictions should read the freshest per-competition calibration, not yesterday's.
 export const PREDICTIONS_CRON = "15 3 * * *";
 export const ELO_RATINGS_CRON = "20 3 * * *"; // After predictions — the ensemble predictions job below reads today's Elo ratings, so this must run before that.
-export const ENSEMBLE_PREDICTIONS_CRON = "25 3 * * *"; // After elo_ratings — reads Elo ratings, the current poisson-baseline prediction, and today's league calibration, so it runs last in the daily chain.
+export const ENSEMBLE_PREDICTIONS_CRON = "25 3 * * *"; // After elo_ratings — reads Elo ratings, the current poisson-baseline prediction, and today's league calibration.
+export const BUILD_ACCUMULATORS_CRON = "30 3 * * *"; // After predictions_ensemble — reads its output, so must run last in the daily chain.
 export const LINEUPS_SYNC_CRON = "0,15,30,45 * * * *";
 export const ODDS_SYNC_CRON = "5,20,35,50 * * * *";
 
@@ -145,6 +147,15 @@ export async function runEnsemblePredictions(deps: SchedulerDeps): Promise<void>
   deps.logger.info({ job: "predictions_ensemble", result }, "Scheduled ensemble predictions run finished");
 }
 
+// Reads only ensemble_predictions/fixtures/config already in the
+// database — no provider or ml-service call, same reasoning as
+// runLeagueCalibrationSync for why this isn't gated behind
+// isProviderConfigured.
+export async function runBuildAccumulators(deps: SchedulerDeps): Promise<void> {
+  const result = await buildAccumulatorRecommendations(deps.supabase, deps.logger);
+  deps.logger.info({ job: "build_accumulators", result }, "Scheduled accumulator build finished");
+}
+
 // Wraps a scheduled job so a thrown/rejected error is logged, not left to
 // surface as an unhandled rejection inside node-cron's own timer callback —
 // one job failing must never stop the process or block later scheduled
@@ -217,6 +228,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   add("predictions", PREDICTIONS_CRON, () => runPredictions(deps));
   add("compute_elo_ratings", ELO_RATINGS_CRON, () => runEloRatings(deps));
   add("predictions_ensemble", ENSEMBLE_PREDICTIONS_CRON, () => runEnsemblePredictions(deps));
+  add("build_accumulators", BUILD_ACCUMULATORS_CRON, () => runBuildAccumulators(deps));
 
   const jobs = entries.map((e) => e.name);
   deps.logger.info({ jobs }, "Scheduler started");

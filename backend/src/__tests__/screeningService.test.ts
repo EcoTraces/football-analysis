@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FakeSupabase } from "./testSupabaseFake.js";
-import { getMatchesToAvoid, getTop20 } from "../services/screeningService.js";
+import { getAccumulatorRecommendations, getMatchesToAvoid, getTop20 } from "../services/screeningService.js";
 
 function fakeClient(fake: FakeSupabase): SupabaseClient {
   return fake as unknown as SupabaseClient;
@@ -150,6 +150,67 @@ describe("getMatchesToAvoid", () => {
     fake.seed("ensemble_predictions", [ensembleRow({ id: "ep-fine", risk_tier: "elite", consensus_level: "high", data_quality: "strong" })]);
 
     const result = await getMatchesToAvoid(fakeClient(fake));
+    expect(result).toEqual([]);
+  });
+});
+
+describe("getAccumulatorRecommendations", () => {
+  function accumulatorRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "acc-1",
+      target_legs: 5,
+      leg_fixture_ids: ["fx-1"],
+      leg_selections: [{ ensemblePredictionId: "ep-1", fixtureId: "fx-1", market: "1x2", selection: "home", odds: 1.8, probability: 0.6, selectionScore: 75 }],
+      combined_probability: 0.6,
+      combined_decimal_odds: 1.8,
+      correlation_penalty: 0,
+      composite_score: 72,
+      risk_tier: "strong",
+      is_best_overall: true,
+      generated_at: "2027-01-01T00:00:00.000Z",
+      superseded_at: null,
+      ...overrides
+    };
+  }
+
+  it("enriches each leg with team names and kickoff time", async () => {
+    const fake = new FakeSupabase();
+    seedFixtureContext(fake);
+    fake.seed("accumulator_recommendations", [accumulatorRow()]);
+
+    const result = await getAccumulatorRecommendations(fakeClient(fake));
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.legs[0]).toMatchObject({
+      fixtureId: "fx-1",
+      homeTeamName: "Team A",
+      awayTeamName: "Team B",
+      kickoffUtc: "2027-01-01T15:00:00.000Z",
+      selectionScore: 75
+    });
+  });
+
+  it("filters to one target when legs is provided", async () => {
+    const fake = new FakeSupabase();
+    seedFixtureContext(fake);
+    fake.seed("accumulator_recommendations", [accumulatorRow({ id: "acc-5", target_legs: 5 }), accumulatorRow({ id: "acc-7", target_legs: 7 })]);
+
+    const result = await getAccumulatorRecommendations(fakeClient(fake), 7);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.id).toBe("acc-7");
+  });
+
+  it("excludes superseded recommendations", async () => {
+    const fake = new FakeSupabase();
+    seedFixtureContext(fake);
+    fake.seed("accumulator_recommendations", [accumulatorRow({ superseded_at: "2027-01-01T00:00:00.000Z" })]);
+
+    const result = await getAccumulatorRecommendations(fakeClient(fake));
+    expect(result).toEqual([]);
+  });
+
+  it("returns an empty array when nothing has been built yet", async () => {
+    const result = await getAccumulatorRecommendations(fakeClient(new FakeSupabase()));
     expect(result).toEqual([]);
   });
 });

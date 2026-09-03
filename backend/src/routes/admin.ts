@@ -10,6 +10,7 @@ import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
 import { runLatestEnsemblePredictionsJob } from "../jobs/generateEnsemblePredictions.js";
+import { buildAccumulatorRecommendations } from "../jobs/buildAccumulators.js";
 import {
   getAccumulatorTargets,
   getCompetitionAllowlist,
@@ -709,6 +710,19 @@ export function createAdminRouter(
         return;
       }
       res.json({ data: { runId: result.runId, processed: result.processed, skipped: result.skipped, failed: result.failed } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Builds accumulator recommendations for every enabled target from the
+  // current ensemble_predictions pool — see buildAccumulators.ts. No
+  // model_version gating (unlike the two routes above): this is an
+  // optimization over already-generated predictions, not itself a model.
+  router.post("/admin/accumulators/build", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      const result = await buildAccumulatorRecommendations(supabase, logger);
+      res.json({ data: result });
     } catch (err) {
       next(err);
     }
