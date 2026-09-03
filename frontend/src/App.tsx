@@ -7,6 +7,7 @@ import { FixturesToday } from "./pages/FixturesToday";
 import { MatchDetail } from "./pages/MatchDetail";
 import { Top20 } from "./pages/Top20";
 import { MatchesToAvoid } from "./pages/MatchesToAvoid";
+import { Accumulators } from "./pages/Accumulators";
 import { SignIn } from "./pages/SignIn";
 import { SignUp } from "./pages/SignUp";
 import { AdminDashboard } from "./pages/admin/AdminDashboard";
@@ -50,6 +51,14 @@ export function App() {
           element={
             <RequireAuth>
               <MatchesToAvoid />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="accumulators"
+          element={
+            <RequireAuth>
+              <Accumulators />
             </RequireAuth>
           }
         />

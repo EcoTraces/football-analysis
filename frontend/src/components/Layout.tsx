@@ -34,6 +34,9 @@ function AuthNav() {
       <Link to="/top20" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
         Top 20
       </Link>
+      <Link to="/accumulators" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
+        Accumulators
+      </Link>
       <Link to="/matches-to-avoid" className="shrink-0 rounded-md px-2 py-1 hover:bg-slate-100 hover:underline dark:hover:bg-slate-900">
         Avoid
       </Link>

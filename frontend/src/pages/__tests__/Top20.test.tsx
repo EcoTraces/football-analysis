@@ -5,6 +5,7 @@ import { AuthContext, type AuthContextValue } from "../../lib/auth";
 import { Top20 } from "../Top20";
 import * as api from "../../lib/api";
 import type { EnsemblePredictionRow } from "../../lib/types";
+import { findBannedPhrases } from "../../lib/bannedPhrases";
 
 function authValue(): AuthContextValue {
   return {
@@ -94,5 +95,13 @@ describe("Top20", () => {
 
     await waitFor(() => expect(screen.getByText(/Home United/)).toBeTruthy());
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("never renders any of the platform's banned certainty-language phrases", async () => {
+    vi.spyOn(api, "getTop20").mockResolvedValue({ data: [row(), row({ id: "ep-2", riskTier: "elite" })] });
+    const { container } = renderPage();
+
+    await waitFor(() => expect(screen.getAllByText(/Home United/).length).toBeGreaterThan(0));
+    expect(findBannedPhrases(container.textContent ?? "")).toEqual([]);
   });
 });
