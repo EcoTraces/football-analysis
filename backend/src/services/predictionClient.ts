@@ -61,6 +61,90 @@ export interface GradientBoostingPredictRequest {
 
 export type OneXTwoOutcome = "home" | "draw" | "away";
 
+// --- AI Football Analyst (Phase 1): Elo + ensemble ---
+
+export interface TeamEloInput {
+  rating: number;
+  matchesPlayed: number;
+}
+
+export interface EloPredictionRequest {
+  homeTeam: TeamEloInput;
+  awayTeam: TeamEloInput;
+}
+
+// Same shape as PoissonPredictionResponse (1x2 only) — reused rather than
+// declaring a parallel type, same reasoning as GradientBoostingPredictionResponse.
+
+export interface EnsembleComponentInput {
+  home: number;
+  draw: number;
+  away: number;
+}
+
+export interface EnsembleWeightsInput {
+  elo: number;
+  poisson: number;
+  form: number;
+  homeAway: number;
+  injuries: number;
+  market: number;
+}
+
+export interface ScoreWeightsInput {
+  ensembleConfidence: number;
+  ev: number;
+  consensus: number;
+  dataQuality: number;
+}
+
+export interface RiskThresholdsInput {
+  eliteMin: number;
+  strongMin: number;
+  mediumMin: number;
+  highRiskMin: number;
+}
+
+export interface EnsemblePredictRequest {
+  // Keys are a subset of {"poisson", "elo", "form", "homeAway"} — market
+  // and injuries are derived by ml-service itself from decimalOdds/
+  // homeKeyAbsences+awayKeyAbsences below, not sent as pre-computed
+  // triples (see ensemble.py's module docstring).
+  components: Record<string, EnsembleComponentInput>;
+  // Same keys as components — the data_quality each individual call
+  // reported for itself (e.g. a PoissonPredictionResponse's own dataQuality).
+  componentDataQuality: Record<string, "insufficient" | "limited" | "strong">;
+  weights: EnsembleWeightsInput;
+  scoreWeights: ScoreWeightsInput;
+  riskThresholds: RiskThresholdsInput;
+  // 1x2 only in Phase 1. Omitted (not sent as zeros) when odds coverage is
+  // missing/stale for this fixture — never fabricated.
+  decimalOdds?: { home: number; draw: number; away: number };
+  homeKeyAbsences?: number;
+  awayKeyAbsences?: number;
+}
+
+export interface EnsembleSelectionResult {
+  selection: OneXTwoOutcome;
+  probability: number;
+  ev: number | null;
+  edgePct: number | null;
+  selectionScore: number;
+  riskTier: "elite" | "strong" | "medium" | "high_risk" | "avoid";
+  factors: { direction: "positive" | "negative"; label: string }[];
+}
+
+export interface EnsemblePredictResponse {
+  modelName: string;
+  modelVersion: string;
+  market: string;
+  dataQuality: "insufficient" | "limited" | "strong";
+  consensusLevel: "high" | "moderate" | "low" | "conflicting";
+  componentWeightsUsed: Record<string, number>;
+  missingComponents: string[];
+  selections: EnsembleSelectionResult[];
+}
+
 export interface GradientBoostingTrainingRow {
   homeTeam: TeamStrengthInput;
   awayTeam: TeamStrengthInput;
@@ -126,7 +210,7 @@ export class PredictionClient {
   constructor(private readonly baseUrl: string, private readonly timeoutMs = 5000) {}
 
   async predictPoisson(payload: PoissonPredictionRequest): Promise<PoissonPredictionResponse | null> {
-    return this.predictOrNull("/predict/poisson", payload);
+    return this.predictOrNull<PoissonPredictionResponse>("/predict/poisson", payload);
   }
 
   // Same null-on-any-failure contract as predictPoisson, including the
@@ -134,10 +218,21 @@ export class PredictionClient {
   // scoring, live predictions) treats "no result" as "skip this one",
   // never fabricates a fallback probability.
   async predictGradientBoosting(payload: GradientBoostingPredictRequest): Promise<PoissonPredictionResponse | null> {
-    return this.predictOrNull("/predict/gradient_boosting", payload);
+    return this.predictOrNull<PoissonPredictionResponse>("/predict/gradient_boosting", payload);
   }
 
-  private async predictOrNull(path: string, payload: unknown): Promise<PoissonPredictionResponse | null> {
+  // Same null-on-any-failure contract as predictPoisson/predictGradientBoosting.
+  async predictElo(payload: EloPredictionRequest): Promise<PoissonPredictionResponse | null> {
+    return this.predictOrNull<PoissonPredictionResponse>("/predict/elo", payload);
+  }
+
+  // Same contract — a missing/failed ensemble call means "skip this
+  // fixture", never a fabricated combined probability.
+  async predictEnsemble(payload: EnsemblePredictRequest): Promise<EnsemblePredictResponse | null> {
+    return this.predictOrNull<EnsemblePredictResponse>("/predict/ensemble", payload);
+  }
+
+  private async predictOrNull<T>(path: string, payload: unknown): Promise<T | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -148,7 +243,7 @@ export class PredictionClient {
         signal: controller.signal
       });
       if (!res.ok) return null;
-      return (await res.json()) as PoissonPredictionResponse;
+      return (await res.json()) as T;
     } catch {
       // Network error, timeout, or malformed response — caller treats a
       // null result as "prediction unavailable", never fabricates one.

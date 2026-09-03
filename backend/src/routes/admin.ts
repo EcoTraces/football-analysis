@@ -9,6 +9,7 @@ import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoost
 import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
+import { runLatestEnsemblePredictionsJob } from "../jobs/generateEnsemblePredictions.js";
 import {
   getAccumulatorTargets,
   getCompetitionAllowlist,
@@ -691,6 +692,23 @@ export function createAdminRouter(
         teamName: teamNameById.get(row.team_id as string) ?? null
       }));
       res.json({ data: enriched });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Generates the ensemble prediction (Elo + Poisson + Form + Home/Away +
+  // Injuries + Market) for every upcoming, allowlisted-competition fixture
+  // — see generateEnsemblePredictions.ts. Same "no model_version row yet"
+  // 409 contract as /admin/predictions/run.
+  router.post("/admin/predictions/ensemble/run", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      const result = await runLatestEnsemblePredictionsJob(supabase, mlServiceUrl, logger);
+      if (!result.modelVersionId) {
+        res.status(409).json({ error: { code: "no_model_version", message: "No ensemble model_version row exists yet." } });
+        return;
+      }
+      res.json({ data: { runId: result.runId, processed: result.processed, skipped: result.skipped, failed: result.failed } });
     } catch (err) {
       next(err);
     }

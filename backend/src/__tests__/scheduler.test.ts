@@ -13,6 +13,7 @@ import {
   runLeagueCalibrationSync,
   runPredictions,
   runEloRatings,
+  runEnsemblePredictions,
   guarded,
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
@@ -24,7 +25,8 @@ import {
   FIXTURE_STATISTICS_SYNC_CRON,
   LEAGUE_CALIBRATION_CRON,
   PREDICTIONS_CRON,
-  ELO_RATINGS_CRON
+  ELO_RATINGS_CRON,
+  ENSEMBLE_PREDICTIONS_CRON
 } from "../scheduler/scheduler.js";
 
 function notConfigured(name: string): Promise<ProviderResponse<never>> {
@@ -65,7 +67,8 @@ describe("scheduler", () => {
       FIXTURE_STATISTICS_SYNC_CRON,
       LEAGUE_CALIBRATION_CRON,
       PREDICTIONS_CRON,
-      ELO_RATINGS_CRON
+      ELO_RATINGS_CRON,
+  ENSEMBLE_PREDICTIONS_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
@@ -92,7 +95,8 @@ describe("scheduler", () => {
         "sync_fixture_statistics",
         "calibrate_leagues",
         "predictions",
-        "compute_elo_ratings"
+        "compute_elo_ratings",
+        "predictions_ensemble"
       ].sort()
     );
     expect(logger.warn).not.toHaveBeenCalled();
@@ -109,7 +113,7 @@ describe("scheduler", () => {
       logger
     });
 
-    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions", "compute_elo_ratings"].sort());
+    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions", "compute_elo_ratings", "predictions_ensemble"].sort());
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no football data provider configured"));
 
     scheduler.stop();
@@ -287,6 +291,41 @@ describe("scheduler", () => {
     );
     expect(logger.error).not.toHaveBeenCalled();
     expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "calibrate_leagues" });
+  });
+
+  it("runEnsemblePredictions logs a warning (not an error) and does not throw when no ensemble model_version exists yet", async () => {
+    const logger = fakeLogger();
+    await runEnsemblePredictions({
+      supabase: fakeClient(new FakeSupabase()),
+      provider: new StubProvider("fake-provider"),
+      mlServiceUrl: "http://localhost:8000",
+      logger
+    });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      { job: "predictions_ensemble" },
+      expect.stringContaining("no ensemble model_version")
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("runEnsemblePredictions runs the real job and logs success once an ensemble model_version exists", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("model_versions", [{ id: "mv-1", name: "ensemble", created_at: new Date().toISOString() }]);
+    // A non-empty allowlist so generateEnsemblePredictionsForUpcomingFixtures
+    // doesn't hit its own "nothing allowlisted" warning (covered separately
+    // in generateEnsemblePredictions.test.ts) — this test is only about the
+    // scheduler wrapper's own logging.
+    fake.seed("competition_allowlist", [{ id: "a1", competition_id: "comp-1", enabled: true }]);
+    const logger = fakeLogger();
+
+    await runEnsemblePredictions({ supabase: fakeClient(fake), provider: new StubProvider("fake-provider"), mlServiceUrl: "http://localhost:8000", logger });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "predictions_ensemble" }),
+      "Scheduled ensemble predictions run finished"
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("runEloRatings runs the real job and logs its result", async () => {
