@@ -35,6 +35,11 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getRhoStatus").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getLeagueCalibrationResults").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getCompetitionRhoResults").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getEnsembleWeights").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getScreeningConfig").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getAccumulatorTargets").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getCompetitionAllowlist").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getLeagues").mockReturnValue(new Promise(() => {}));
 
     renderDashboard();
 
@@ -68,6 +73,19 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.2667, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: true }
+    });
+    vi.spyOn(api, "getScreeningConfig").mockResolvedValue({
+      data: {
+        scoreWeights: { ensembleConfidence: 0.4, ev: 0.3, consensus: 0.2, dataQuality: 0.1 },
+        riskThresholds: { eliteMin: 85, strongMin: 70, mediumMin: 50, highRiskMin: 30 },
+        isDefault: true
+      }
+    });
+    vi.spyOn(api, "getAccumulatorTargets").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -96,6 +114,19 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.2667, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: true }
+    });
+    vi.spyOn(api, "getScreeningConfig").mockResolvedValue({
+      data: {
+        scoreWeights: { ensembleConfidence: 0.4, ev: 0.3, consensus: 0.2, dataQuality: 0.1 },
+        riskThresholds: { eliteMin: 85, strongMin: 70, mediumMin: 50, highRiskMin: 30 },
+        isDefault: true
+      }
+    });
+    vi.spyOn(api, "getAccumulatorTargets").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -122,6 +153,19 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.2667, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: true }
+    });
+    vi.spyOn(api, "getScreeningConfig").mockResolvedValue({
+      data: {
+        scoreWeights: { ensembleConfidence: 0.4, ev: 0.3, consensus: 0.2, dataQuality: 0.1 },
+        riskThresholds: { eliteMin: 85, strongMin: 70, mediumMin: 50, highRiskMin: 30 },
+        isDefault: true
+      }
+    });
+    vi.spyOn(api, "getAccumulatorTargets").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
     const triggerSync = vi.spyOn(api, "triggerSync").mockResolvedValue({
       data: { runId: "run-1", fixturesProcessed: 3, fixturesRejected: 0 }
     });
@@ -155,6 +199,19 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.2667, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: true }
+    });
+    vi.spyOn(api, "getScreeningConfig").mockResolvedValue({
+      data: {
+        scoreWeights: { ensembleConfidence: 0.4, ev: 0.3, consensus: 0.2, dataQuality: 0.1 },
+        riskThresholds: { eliteMin: 85, strongMin: 70, mediumMin: 50, highRiskMin: 30 },
+        isDefault: true
+      }
+    });
+    vi.spyOn(api, "getAccumulatorTargets").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
   }
 
   it("renders past backtest runs with their metrics", async () => {
@@ -464,6 +521,19 @@ describe("AdminDashboard", () => {
     mockBaselineDashboard();
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getCompetitionRhoResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.2667, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: true }
+    });
+    vi.spyOn(api, "getScreeningConfig").mockResolvedValue({
+      data: {
+        scoreWeights: { ensembleConfidence: 0.4, ev: 0.3, consensus: 0.2, dataQuality: 0.1 },
+        riskThresholds: { eliteMin: 85, strongMin: 70, mediumMin: 50, highRiskMin: 30 },
+        isDefault: true
+      }
+    });
+    vi.spyOn(api, "getAccumulatorTargets").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
 
     renderDashboard();
 
@@ -501,5 +571,54 @@ describe("AdminDashboard", () => {
     screen.getByText("Run backtest").click();
 
     await waitFor(() => expect(screen.getByText("No poisson-baseline model_version row exists yet.")).toBeTruthy());
+  });
+
+  it("edits and saves the ensemble weights, then refreshes", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    const setEnsembleWeights = vi.spyOn(api, "setEnsembleWeights").mockResolvedValue({
+      data: { elo: 0.5, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667, isDefault: false }
+    });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Save weights")).toBeTruthy());
+
+    const eloInput = screen.getByLabelText("Elo") as HTMLInputElement;
+    fireEvent.change(eloInput, { target: { value: "0.5" } });
+    screen.getByText("Save weights").click();
+
+    await waitFor(() =>
+      expect(setEnsembleWeights).toHaveBeenCalledWith(
+        "admin-token",
+        expect.objectContaining({ elo: 0.5, poisson: 0.2, form: 0.2, homeAway: 0.1333, injuries: 0.1333, market: 0.0667 })
+      )
+    );
+  });
+
+  it("shows a plain-language message, not an empty toggle table, when no competitions exist yet", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/no competitions exist yet/i)).toBeTruthy());
+  });
+
+  it("toggling a competition's allowlist entry calls the API with the new state and refreshes", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getLeagues").mockResolvedValue({
+      data: [{ id: "comp-1", country_id: null, name: "Premier League", short_name: null, tier: 1, competition_type: "league", is_active: true }]
+    });
+    const setCompetitionAllowlistEntry = vi.spyOn(api, "setCompetitionAllowlistEntry").mockResolvedValue({ data: [] });
+
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Premier League")).toBeTruthy());
+
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+
+    await waitFor(() => expect(setCompetitionAllowlistEntry).toHaveBeenCalledWith("admin-token", "comp-1", true));
   });
 });

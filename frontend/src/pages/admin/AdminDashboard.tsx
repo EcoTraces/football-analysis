@@ -1,36 +1,50 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../lib/auth";
 import {
   ApiRequestError,
   fitDixonColesRho,
+  getAccumulatorTargets,
   getAdminDataHealth,
   getAdminJobs,
   getAdminJobsSummary,
   getApiFootballHealth,
   getBacktestResults,
+  getCompetitionAllowlist,
   getCompetitionRhoResults,
   getDataHealth,
+  getEnsembleWeights,
   getLeagueCalibrationResults,
+  getLeagues,
   getRhoStatus,
   getSchedulerHealth,
+  getScreeningConfig,
   runBacktest,
+  setAccumulatorTarget,
+  setCompetitionAllowlistEntry,
+  setEnsembleWeights,
+  setScreeningConfig,
   trainGradientBoosting,
   triggerSync,
   SYNC_ACTIONS,
   type SyncAction
 } from "../../lib/api";
 import type {
+  AccumulatorTarget,
   AdminDataHealthCounts,
   ApiFootballHealth,
   BacktestableModel,
   BacktestEvaluation,
+  Competition,
+  CompetitionAllowlistEntry,
   CompetitionRhoRow,
   DataHealth,
+  EnsembleWeights,
   IngestionRun,
   JobsSummary,
   LeagueCalibrationRow,
   RhoStatus,
-  SchedulerHealth
+  SchedulerHealth,
+  ScreeningConfig
 } from "../../lib/types";
 import { FreshnessBadge } from "../../components/FreshnessBadge";
 import { Badge, type BadgeVariant } from "../../components/Badge";
@@ -90,6 +104,16 @@ interface DashboardData {
   leagueCalibrationError: string | null;
   competitionRho: CompetitionRhoRow[] | null;
   competitionRhoError: string | null;
+  ensembleWeights: EnsembleWeights | null;
+  ensembleWeightsError: string | null;
+  screeningConfig: ScreeningConfig | null;
+  screeningConfigError: string | null;
+  accumulatorTargets: AccumulatorTarget[] | null;
+  accumulatorTargetsError: string | null;
+  competitionAllowlist: CompetitionAllowlistEntry[] | null;
+  competitionAllowlistError: string | null;
+  leagues: Competition[] | null;
+  leaguesError: string | null;
 }
 
 type SyncActionState =
@@ -114,6 +138,19 @@ function formatMetric(value: number | null): string {
   return value === null ? "—" : value.toFixed(3);
 }
 
+type EnsembleWeightsInput = Omit<EnsembleWeights, "isDefault">;
+type ScreeningConfigInput = Omit<ScreeningConfig, "isDefault">;
+type SaveState = { status: "pending" } | { status: "error"; message: string } | null;
+
+const ENSEMBLE_WEIGHT_FIELDS: { key: keyof EnsembleWeightsInput; label: string }[] = [
+  { key: "elo", label: "Elo" },
+  { key: "poisson", label: "Poisson" },
+  { key: "form", label: "Form" },
+  { key: "homeAway", label: "Home/away" },
+  { key: "injuries", label: "Injuries" },
+  { key: "market", label: "Market" }
+];
+
 // The dashboard the six sync jobs + predictions + scheduler + provider
 // connectivity have always had an API for, but never a UI (see
 // Architecture.md's "Deliberately deferred" list) — this reads all of it
@@ -131,6 +168,23 @@ export function AdminDashboard() {
   const [fitRhoRunState, setFitRhoRunState] = useState<FitRhoRunState>(null);
   const [rhoCompetitionId, setRhoCompetitionId] = useState("");
 
+  // AI Football Analyst config forms — seeded once from the loaded data
+  // (see the seedConfigDrafts effect below) rather than re-derived on
+  // every render, so a refresh() triggered by an unrelated action (e.g.
+  // triggering a sync job) doesn't clobber an in-progress edit.
+  const [ensembleWeightsDraft, setEnsembleWeightsDraft] = useState<EnsembleWeightsInput | null>(null);
+  const [ensembleWeightsSaveState, setEnsembleWeightsSaveState] = useState<SaveState>(null);
+  const [screeningConfigDraft, setScreeningConfigDraft] = useState<ScreeningConfigInput | null>(null);
+  const [screeningConfigSaveState, setScreeningConfigSaveState] = useState<SaveState>(null);
+  const configDraftsSeeded = useRef(false);
+
+  // Accumulator targets and the competition allowlist are per-row edits
+  // instead — each row's current draft falls back to its live server value
+  // until touched, so no seeding effect is needed for these two.
+  const [accumulatorTargetDrafts, setAccumulatorTargetDrafts] = useState<Record<number, { minSelectionScore: number; enabled: boolean }>>({});
+  const [accumulatorTargetSaveState, setAccumulatorTargetSaveState] = useState<Record<number, SaveState>>({});
+  const [allowlistSaveState, setAllowlistSaveState] = useState<Record<string, SaveState>>({});
+
   const refresh = useCallback(async () => {
     if (!session) return;
     const token = session.access_token;
@@ -145,7 +199,12 @@ export function AdminDashboard() {
       [backtestResultsRes, backtestResultsError],
       [rhoStatusRes, rhoStatusError],
       [leagueCalibrationRes, leagueCalibrationError],
-      [competitionRhoRes, competitionRhoError]
+      [competitionRhoRes, competitionRhoError],
+      [ensembleWeightsRes, ensembleWeightsError],
+      [screeningConfigRes, screeningConfigError],
+      [accumulatorTargetsRes, accumulatorTargetsError],
+      [competitionAllowlistRes, competitionAllowlistError],
+      [leaguesRes, leaguesError]
     ] = await Promise.all([
       loadPiece(() => getDataHealth()),
       loadPiece(() => getApiFootballHealth()),
@@ -156,7 +215,12 @@ export function AdminDashboard() {
       loadPiece(() => getBacktestResults(token, 20)),
       loadPiece(() => getRhoStatus(token)),
       loadPiece(() => getLeagueCalibrationResults(token)),
-      loadPiece(() => getCompetitionRhoResults(token))
+      loadPiece(() => getCompetitionRhoResults(token)),
+      loadPiece(() => getEnsembleWeights(token)),
+      loadPiece(() => getScreeningConfig(token)),
+      loadPiece(() => getAccumulatorTargets(token)),
+      loadPiece(() => getCompetitionAllowlist(token)),
+      loadPiece(() => getLeagues(token))
     ]);
 
     setData({
@@ -179,13 +243,94 @@ export function AdminDashboard() {
       leagueCalibration: leagueCalibrationRes?.data ?? null,
       leagueCalibrationError,
       competitionRho: competitionRhoRes?.data ?? null,
-      competitionRhoError
+      competitionRhoError,
+      ensembleWeights: ensembleWeightsRes?.data ?? null,
+      ensembleWeightsError,
+      screeningConfig: screeningConfigRes?.data ?? null,
+      screeningConfigError,
+      accumulatorTargets: accumulatorTargetsRes?.data ?? null,
+      accumulatorTargetsError,
+      competitionAllowlist: competitionAllowlistRes?.data ?? null,
+      competitionAllowlistError,
+      leagues: leaguesRes?.data ?? null,
+      leaguesError
     });
   }, [session]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (configDraftsSeeded.current || !data?.ensembleWeights || !data.screeningConfig) return;
+    const weights = data.ensembleWeights;
+    setEnsembleWeightsDraft({
+      elo: weights.elo,
+      poisson: weights.poisson,
+      form: weights.form,
+      homeAway: weights.homeAway,
+      injuries: weights.injuries,
+      market: weights.market
+    });
+    const config = data.screeningConfig;
+    setScreeningConfigDraft({ scoreWeights: config.scoreWeights, riskThresholds: config.riskThresholds });
+    configDraftsSeeded.current = true;
+  }, [data]);
+
+  async function handleSaveEnsembleWeights() {
+    if (!session || !ensembleWeightsDraft) return;
+    setEnsembleWeightsSaveState({ status: "pending" });
+    try {
+      await setEnsembleWeights(session.access_token, ensembleWeightsDraft);
+      setEnsembleWeightsSaveState(null);
+      await refresh();
+    } catch (err) {
+      setEnsembleWeightsSaveState({ status: "error", message: err instanceof ApiRequestError ? err.message : "Failed to save weights." });
+    }
+  }
+
+  async function handleSaveScreeningConfig() {
+    if (!session || !screeningConfigDraft) return;
+    setScreeningConfigSaveState({ status: "pending" });
+    try {
+      await setScreeningConfig(session.access_token, screeningConfigDraft);
+      setScreeningConfigSaveState(null);
+      await refresh();
+    } catch (err) {
+      setScreeningConfigSaveState({ status: "error", message: err instanceof ApiRequestError ? err.message : "Failed to save screening config." });
+    }
+  }
+
+  async function handleSaveAccumulatorTarget(target: AccumulatorTarget) {
+    if (!session) return;
+    const draft = accumulatorTargetDrafts[target.legs] ?? { minSelectionScore: target.minSelectionScore, enabled: target.enabled };
+    setAccumulatorTargetSaveState((prev) => ({ ...prev, [target.legs]: { status: "pending" } }));
+    try {
+      await setAccumulatorTarget(session.access_token, target.legs, draft.minSelectionScore, draft.enabled);
+      setAccumulatorTargetSaveState((prev) => ({ ...prev, [target.legs]: null }));
+      await refresh();
+    } catch (err) {
+      setAccumulatorTargetSaveState((prev) => ({
+        ...prev,
+        [target.legs]: { status: "error", message: err instanceof ApiRequestError ? err.message : "Failed to save target." }
+      }));
+    }
+  }
+
+  async function handleToggleAllowlist(competitionId: string, enabled: boolean) {
+    if (!session) return;
+    setAllowlistSaveState((prev) => ({ ...prev, [competitionId]: { status: "pending" } }));
+    try {
+      await setCompetitionAllowlistEntry(session.access_token, competitionId, enabled);
+      setAllowlistSaveState((prev) => ({ ...prev, [competitionId]: null }));
+      await refresh();
+    } catch (err) {
+      setAllowlistSaveState((prev) => ({
+        ...prev,
+        [competitionId]: { status: "error", message: err instanceof ApiRequestError ? err.message : "Failed to update allowlist." }
+      }));
+    }
+  }
 
   async function handleRunBacktest() {
     if (!session || !backtestFrom || !backtestTo) return;
@@ -745,6 +890,289 @@ export function AdminDashboard() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">AI Football Analyst — ensemble weights</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          How much each available component contributes to a fixture's combined probability. A component missing
+          for a given fixture (e.g. no odds synced yet) has its weight redistributed among the rest, never guessed —
+          these six weights only set the *starting* proportions. Must sum to 1; not yet backtested/optimal, see
+          ML_Model.md.
+        </p>
+        {data.ensembleWeightsError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.ensembleWeightsError}
+          </p>
+        )}
+        {ensembleWeightsDraft && (
+          <div className="max-w-xl space-y-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {ENSEMBLE_WEIGHT_FIELDS.map((field) => (
+                <label key={field.key} className="text-sm">
+                  <span className="mb-1 block text-slate-500 dark:text-slate-400">{field.label}</span>
+                  <input
+                    type="number"
+                    step={0.0001}
+                    min={0}
+                    value={ensembleWeightsDraft[field.key]}
+                    onChange={(e) =>
+                      setEnsembleWeightsDraft((prev) => (prev ? { ...prev, [field.key]: Number(e.target.value) } : prev))
+                    }
+                    className="w-full rounded-md border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Sum: {ENSEMBLE_WEIGHT_FIELDS.reduce((sum, f) => sum + (ensembleWeightsDraft[f.key] || 0), 0).toFixed(4)}{" "}
+              (must be ~1)
+            </p>
+            <button
+              type="button"
+              disabled={ensembleWeightsSaveState?.status === "pending"}
+              onClick={() => void handleSaveEnsembleWeights()}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+            >
+              {ensembleWeightsSaveState?.status === "pending" ? "Saving…" : "Save weights"}
+            </button>
+            {ensembleWeightsSaveState?.status === "error" && (
+              <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                {ensembleWeightsSaveState.message}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">AI Football Analyst — selection score &amp; risk tiers</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          How the 0-100 selection score is blended, and the score cutoffs for each risk tier. Thresholds must be
+          strictly descending (elite &gt; strong &gt; medium &gt; high risk).
+        </p>
+        {data.screeningConfigError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.screeningConfigError}
+          </p>
+        )}
+        {screeningConfigDraft && (
+          <div className="max-w-xl space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium">Score weights</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {(
+                  [
+                    ["ensembleConfidence", "Confidence"],
+                    ["ev", "EV"],
+                    ["consensus", "Consensus"],
+                    ["dataQuality", "Data quality"]
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="text-sm">
+                    <span className="mb-1 block text-slate-500 dark:text-slate-400">{label}</span>
+                    <input
+                      type="number"
+                      step={0.01}
+                      min={0}
+                      value={screeningConfigDraft.scoreWeights[key]}
+                      onChange={(e) =>
+                        setScreeningConfigDraft((prev) =>
+                          prev ? { ...prev, scoreWeights: { ...prev.scoreWeights, [key]: Number(e.target.value) } } : prev
+                        )
+                      }
+                      className="w-full rounded-md border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h3 className="mb-2 text-sm font-medium">Risk tier score cutoffs (minimum to qualify)</h3>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {(
+                  [
+                    ["eliteMin", "Elite"],
+                    ["strongMin", "Strong"],
+                    ["mediumMin", "Medium"],
+                    ["highRiskMin", "High risk"]
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="text-sm">
+                    <span className="mb-1 block text-slate-500 dark:text-slate-400">{label}</span>
+                    <input
+                      type="number"
+                      step={1}
+                      min={0}
+                      max={100}
+                      value={screeningConfigDraft.riskThresholds[key]}
+                      onChange={(e) =>
+                        setScreeningConfigDraft((prev) =>
+                          prev ? { ...prev, riskThresholds: { ...prev.riskThresholds, [key]: Number(e.target.value) } } : prev
+                        )
+                      }
+                      className="w-full rounded-md border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={screeningConfigSaveState?.status === "pending"}
+              onClick={() => void handleSaveScreeningConfig()}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+            >
+              {screeningConfigSaveState?.status === "pending" ? "Saving…" : "Save score config"}
+            </button>
+            {screeningConfigSaveState?.status === "error" && (
+              <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                {screeningConfigSaveState.message}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">AI Football Analyst — accumulator targets</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          Target combined-odds bands the accumulator optimizer builds toward, and the minimum selection score a leg
+          needs to be eligible for each. A target never gets a weak leg added just to hit its odds figure — see
+          Task.md.
+        </p>
+        {data.accumulatorTargetsError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.accumulatorTargetsError}
+          </p>
+        )}
+        {data.accumulatorTargets && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4 font-medium">Legs (~odds)</th>
+                  <th className="py-2 pr-4 font-medium">Min selection score</th>
+                  <th className="py-2 pr-4 font-medium">Enabled</th>
+                  <th className="py-2 font-medium">Save</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.accumulatorTargets.map((target) => {
+                  const draft = accumulatorTargetDrafts[target.legs] ?? {
+                    minSelectionScore: target.minSelectionScore,
+                    enabled: target.enabled
+                  };
+                  const saveState = accumulatorTargetSaveState[target.legs];
+                  return (
+                    <tr key={target.legs} className="border-b border-slate-100 dark:border-slate-900">
+                      <td className="py-2 pr-4">ACCA {target.legs}</td>
+                      <td className="py-2 pr-4">
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={draft.minSelectionScore}
+                          onChange={(e) =>
+                            setAccumulatorTargetDrafts((prev) => ({
+                              ...prev,
+                              [target.legs]: { ...draft, minSelectionScore: Number(e.target.value) }
+                            }))
+                          }
+                          className="w-20 rounded-md border border-slate-300 px-2 py-1 dark:border-slate-700 dark:bg-slate-900"
+                        />
+                      </td>
+                      <td className="py-2 pr-4">
+                        <input
+                          type="checkbox"
+                          checked={draft.enabled}
+                          onChange={(e) =>
+                            setAccumulatorTargetDrafts((prev) => ({ ...prev, [target.legs]: { ...draft, enabled: e.target.checked } }))
+                          }
+                        />
+                      </td>
+                      <td className="py-2">
+                        <button
+                          type="button"
+                          disabled={saveState?.status === "pending"}
+                          onClick={() => void handleSaveAccumulatorTarget(target)}
+                          className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                        >
+                          {saveState?.status === "pending" ? "Saving…" : "Save"}
+                        </button>
+                        {saveState?.status === "error" && (
+                          <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                            {saveState.message}
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">AI Football Analyst — competition allowlist</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          Which competitions the Top 20 / accumulator engine may draw fixtures from. Empty means nothing is
+          screened yet — the engine never falls back to "everything unfiltered."
+        </p>
+        {data.leaguesError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.leaguesError}
+          </p>
+        )}
+        {data.competitionAllowlistError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.competitionAllowlistError}
+          </p>
+        )}
+        {data.leagues && data.leagues.length === 0 && (
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            No competitions exist yet — run a fixtures sync first.
+          </p>
+        )}
+        {data.leagues && data.leagues.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4 font-medium">Competition</th>
+                  <th className="py-2 font-medium">Allowlisted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.leagues.map((league) => {
+                  const entry = data.competitionAllowlist?.find((e) => e.competitionId === league.id);
+                  const enabled = entry?.enabled ?? false;
+                  const saveState = allowlistSaveState[league.id];
+                  return (
+                    <tr key={league.id} className="border-b border-slate-100 dark:border-slate-900">
+                      <td className="py-2 pr-4">{league.name}</td>
+                      <td className="py-2">
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          disabled={saveState?.status === "pending"}
+                          onChange={(e) => void handleToggleAllowlist(league.id, e.target.checked)}
+                        />
+                        {saveState?.status === "error" && (
+                          <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                            {saveState.message}
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

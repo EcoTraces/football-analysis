@@ -1,4 +1,6 @@
 import type {
+  AccumulatorRecommendation,
+  AccumulatorTarget,
   AdminDataHealthCounts,
   AdminUserSummary,
   ApiEnvelope,
@@ -6,9 +8,13 @@ import type {
   BacktestableModel,
   BacktestEvaluation,
   BacktestRunResult,
+  Competition,
+  CompetitionAllowlistEntry,
   CompetitionRhoRow,
   DataHealth,
   DixonColesRhoFitResult,
+  EnsemblePredictionRow,
+  EnsembleWeights,
   FixtureSummary,
   GradientBoostingTrainResult,
   IngestionRun,
@@ -18,6 +24,7 @@ import type {
   MeProfile,
   RhoStatus,
   SchedulerHealth,
+  ScreeningConfig,
   UserRole
 } from "./types";
 
@@ -125,7 +132,10 @@ export const SYNC_ACTIONS: SyncAction[] = [
   { key: "sync_odds", label: "Odds", path: "/admin/odds/sync" },
   { key: "sync_fixture_statistics", label: "Fixture statistics (corners)", path: "/admin/fixture-statistics/sync" },
   { key: "calibrate_leagues", label: "League calibration", path: "/admin/league-calibration/run" },
-  { key: "predictions", label: "Predictions", path: "/admin/predictions/run" }
+  { key: "predictions", label: "Predictions", path: "/admin/predictions/run" },
+  { key: "compute_elo_ratings", label: "Elo ratings", path: "/admin/elo/recompute" },
+  { key: "predictions_ensemble", label: "Ensemble predictions", path: "/admin/predictions/ensemble/run" },
+  { key: "build_accumulators", label: "Accumulators", path: "/admin/accumulators/build" }
 ];
 
 /** Triggers one sync/prediction job with the backend's own defaults. Response shape varies by job — see API.md. */
@@ -218,4 +228,83 @@ export function getLeagueCalibrationResults(accessToken: string): Promise<ApiEnv
 /** Every competition's current per-competition Dixon-Coles rho fit (see ML_Model.md's "Rho fitting" section). */
 export function getCompetitionRhoResults(accessToken: string): Promise<ApiEnvelope<CompetitionRhoRow[]>> {
   return authedRequest<ApiEnvelope<CompetitionRhoRow[]>>("/admin/model/poisson/competition-rho", accessToken);
+}
+
+/** Every real (non-synthetic) competition — used for the public competitions listing and the admin allowlist toggle table. */
+export function getLeagues(accessToken: string): Promise<ApiEnvelope<Competition[]>> {
+  return authedRequest<ApiEnvelope<Competition[]>>("/leagues", accessToken);
+}
+
+// --- AI Football Analyst: admin config (Phase 1) ---
+
+export function getEnsembleWeights(accessToken: string): Promise<ApiEnvelope<EnsembleWeights>> {
+  return authedRequest<ApiEnvelope<EnsembleWeights>>("/admin/config/ensemble-weights", accessToken);
+}
+
+export function setEnsembleWeights(accessToken: string, weights: Omit<EnsembleWeights, "isDefault">): Promise<ApiEnvelope<EnsembleWeights>> {
+  return authedRequest<ApiEnvelope<EnsembleWeights>>("/admin/config/ensemble-weights", accessToken, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(weights)
+  });
+}
+
+export function getScreeningConfig(accessToken: string): Promise<ApiEnvelope<ScreeningConfig>> {
+  return authedRequest<ApiEnvelope<ScreeningConfig>>("/admin/config/screening", accessToken);
+}
+
+export function setScreeningConfig(accessToken: string, config: Omit<ScreeningConfig, "isDefault">): Promise<ApiEnvelope<ScreeningConfig>> {
+  return authedRequest<ApiEnvelope<ScreeningConfig>>("/admin/config/screening", accessToken, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config)
+  });
+}
+
+export function getAccumulatorTargets(accessToken: string): Promise<ApiEnvelope<AccumulatorTarget[]>> {
+  return authedRequest<ApiEnvelope<AccumulatorTarget[]>>("/admin/config/accumulator-targets", accessToken);
+}
+
+export function setAccumulatorTarget(
+  accessToken: string,
+  legs: number,
+  minSelectionScore: number,
+  enabled: boolean
+): Promise<ApiEnvelope<AccumulatorTarget[]>> {
+  return authedRequest<ApiEnvelope<AccumulatorTarget[]>>(`/admin/config/accumulator-targets/${legs}`, accessToken, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ minSelectionScore, enabled })
+  });
+}
+
+export function getCompetitionAllowlist(accessToken: string): Promise<ApiEnvelope<CompetitionAllowlistEntry[]>> {
+  return authedRequest<ApiEnvelope<CompetitionAllowlistEntry[]>>("/admin/config/competition-allowlist", accessToken);
+}
+
+export function setCompetitionAllowlistEntry(
+  accessToken: string,
+  competitionId: string,
+  enabled: boolean
+): Promise<ApiEnvelope<CompetitionAllowlistEntry[]>> {
+  return authedRequest<ApiEnvelope<CompetitionAllowlistEntry[]>>(`/admin/config/competition-allowlist/${competitionId}`, accessToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled })
+  });
+}
+
+// --- AI Football Analyst: screening (Top 20 / Matches to Avoid / Accumulators) ---
+
+export function getTop20(accessToken: string): Promise<ApiEnvelope<EnsemblePredictionRow[]>> {
+  return authedRequest<ApiEnvelope<EnsemblePredictionRow[]>>("/top20", accessToken);
+}
+
+export function getMatchesToAvoid(accessToken: string): Promise<ApiEnvelope<EnsemblePredictionRow[]>> {
+  return authedRequest<ApiEnvelope<EnsemblePredictionRow[]>>("/matches-to-avoid", accessToken);
+}
+
+export function getAccumulators(accessToken: string, legs?: number): Promise<ApiEnvelope<AccumulatorRecommendation[]>> {
+  const query = legs ? `?legs=${legs}` : "";
+  return authedRequest<ApiEnvelope<AccumulatorRecommendation[]>>(`/accumulators${query}`, accessToken);
 }

@@ -243,3 +243,105 @@ export interface CompetitionRhoRow {
   evaluation_window: string;
   computed_at: string;
 }
+
+// --- AI Football Analyst (Phase 1) ---
+// Unlike the *Row types above (server-enriched raw DB rows), the config
+// endpoints below return the clean camelCase shape adminConfigService.ts's
+// functions already produce — no raw snake_case pass-through to mirror.
+
+export interface EnsembleWeights {
+  elo: number;
+  poisson: number;
+  form: number;
+  homeAway: number;
+  injuries: number;
+  market: number;
+  isDefault: boolean;
+}
+
+export interface ScreeningConfig {
+  scoreWeights: { ensembleConfidence: number; ev: number; consensus: number; dataQuality: number };
+  riskThresholds: { eliteMin: number; strongMin: number; mediumMin: number; highRiskMin: number };
+  isDefault: boolean;
+}
+
+export interface AccumulatorTarget {
+  legs: number;
+  minSelectionScore: number;
+  enabled: boolean;
+}
+
+export interface CompetitionAllowlistEntry {
+  competitionId: string;
+  enabled: boolean;
+}
+
+// GET /leagues (backend/src/routes/competitions.ts) — every real
+// (non-synthetic, by default) competition, used both by the public
+// competitions listing and, here, to populate the admin allowlist toggle
+// table (allowlist rows only ever hold a competition_id — this is where
+// the name/tier to display alongside it comes from).
+export interface Competition {
+  id: string;
+  country_id: string | null;
+  name: string;
+  short_name: string | null;
+  tier: number | null;
+  competition_type: "league" | "cup" | "continental" | "playoff";
+  is_active: boolean;
+}
+
+export type RiskTier = "elite" | "strong" | "medium" | "high_risk" | "avoid";
+export type ConsensusLevel = "high" | "moderate" | "low" | "conflicting";
+
+// One (fixture, market, selection) row from ensemble_predictions —
+// competitionName/homeTeamName/awayTeamName/kickoffUtc are server-side
+// enriched, same "fetch raw, enrich with a Map" pattern fixturesService.ts
+// already uses for FixtureSummary.
+export interface EnsemblePredictionRow {
+  id: string;
+  fixtureId: string;
+  market: string;
+  selection: string;
+  combinedProbability: number;
+  consensusLevel: ConsensusLevel;
+  selectionScore: number;
+  riskTier: RiskTier;
+  ev: number | null;
+  edgePct: number | null;
+  bestOdds: number | null;
+  bestBookmaker: string | null;
+  dataQuality: "insufficient" | "limited" | "strong";
+  missingComponents: string[];
+  factors: PredictionFactor[];
+  generatedAt: string;
+  competitionName: string | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  kickoffUtc: string;
+}
+
+export interface AccumulatorLeg {
+  ensemblePredictionId: string;
+  fixtureId: string;
+  market: string;
+  selection: string;
+  odds: number | null;
+  homeTeamName: string | null;
+  awayTeamName: string | null;
+  kickoffUtc: string;
+  selectionScore: number;
+}
+
+export interface AccumulatorRecommendation {
+  id: string;
+  targetLegs: number;
+  legs: AccumulatorLeg[];
+  combinedProbability: number;
+  combinedDecimalOdds: number | null;
+  correlationPenalty: number;
+  compositeScore: number;
+  riskTier: RiskTier;
+  isBestOverall: boolean;
+  generatedAt: string;
+}

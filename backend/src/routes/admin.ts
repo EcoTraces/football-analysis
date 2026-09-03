@@ -9,6 +9,16 @@ import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoost
 import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
+import {
+  getAccumulatorTargets,
+  getCompetitionAllowlist,
+  getEnsembleWeights,
+  getScreeningConfig,
+  setCompetitionAllowlistEntry,
+  upsertAccumulatorTarget,
+  upsertEnsembleWeights,
+  upsertScreeningConfig
+} from "../services/adminConfigService.js";
 import { PredictionClient } from "../services/predictionClient.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
@@ -46,6 +56,46 @@ function applyDateRangeGuardrails<T extends { from: string; to: string }>(schema
 }
 
 const dateRangeSchema = z.object({ from: isoDateString, to: isoDateString, competitionId: z.string().uuid().optional() });
+
+// AI Football Analyst config schemas (Phase 1) — weight/threshold bodies
+// for PUT /admin/config/*. Sum-to-1 checks live here (Zod), not as a
+// database constraint — see migration 0011's header comment for why.
+const ensembleWeightsBodySchema = z
+  .object({
+    elo: z.number().min(0),
+    poisson: z.number().min(0),
+    form: z.number().min(0),
+    homeAway: z.number().min(0),
+    injuries: z.number().min(0),
+    market: z.number().min(0)
+  })
+  .refine((w) => Math.abs(w.elo + w.poisson + w.form + w.homeAway + w.injuries + w.market - 1) < 0.01, {
+    message: "Weights must sum to 1 (±0.01)"
+  });
+
+const screeningConfigBodySchema = z.object({
+  scoreWeights: z
+    .object({
+      ensembleConfidence: z.number().min(0),
+      ev: z.number().min(0),
+      consensus: z.number().min(0),
+      dataQuality: z.number().min(0)
+    })
+    .refine((w) => Math.abs(w.ensembleConfidence + w.ev + w.consensus + w.dataQuality - 1) < 0.01, {
+      message: "Score weights must sum to 1 (±0.01)"
+    }),
+  riskThresholds: z
+    .object({ eliteMin: z.number(), strongMin: z.number(), mediumMin: z.number(), highRiskMin: z.number() })
+    .refine((t) => t.eliteMin > t.strongMin && t.strongMin > t.mediumMin && t.mediumMin > t.highRiskMin, {
+      message: "Risk thresholds must be strictly descending: eliteMin > strongMin > mediumMin > highRiskMin"
+    })
+});
+
+const accumulatorTargetParamsSchema = z.object({ legs: z.coerce.number().int().positive() });
+const accumulatorTargetBodySchema = z.object({ minSelectionScore: z.number().min(0).max(100), enabled: z.boolean() });
+
+const competitionAllowlistParamsSchema = z.object({ competitionId: z.string().uuid() });
+const competitionAllowlistBodySchema = z.object({ enabled: z.boolean() });
 
 const BACKTESTABLE_MODELS = ["poisson-baseline", "gradient-boosting"] as const;
 
@@ -641,6 +691,91 @@ export function createAdminRouter(
         teamName: teamNameById.get(row.team_id as string) ?? null
       }));
       res.json({ data: enriched });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // AI Football Analyst admin config (Phase 1) — ensemble weights, score
+  // weights/risk thresholds, accumulator leg targets, and the competition
+  // allowlist. None of these call an external provider or ml-service, so
+  // no syncTriggerLimit — same reasoning as the read-only calibration
+  // routes above and the existing /admin/users role-update route.
+  router.get("/admin/config/ensemble-weights", async (_req, res, next) => {
+    try {
+      res.json({ data: await getEnsembleWeights(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.put("/admin/config/ensemble-weights", async (req, res, next) => {
+    try {
+      const parsed = ensembleWeightsBodySchema.safeParse(req.body);
+      if (!parsed.success) throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
+      await upsertEnsembleWeights(supabase, parsed.data, req.authUser!.id);
+      res.json({ data: await getEnsembleWeights(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/admin/config/screening", async (_req, res, next) => {
+    try {
+      res.json({ data: await getScreeningConfig(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.put("/admin/config/screening", async (req, res, next) => {
+    try {
+      const parsed = screeningConfigBodySchema.safeParse(req.body);
+      if (!parsed.success) throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
+      await upsertScreeningConfig(supabase, parsed.data, req.authUser!.id);
+      res.json({ data: await getScreeningConfig(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/admin/config/accumulator-targets", async (_req, res, next) => {
+    try {
+      res.json({ data: await getAccumulatorTargets(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.put("/admin/config/accumulator-targets/:legs", async (req, res, next) => {
+    try {
+      const paramsParsed = accumulatorTargetParamsSchema.safeParse(req.params);
+      if (!paramsParsed.success) throw new ApiError(400, "Invalid legs parameter", "invalid_params");
+      const bodyParsed = accumulatorTargetBodySchema.safeParse(req.body);
+      if (!bodyParsed.success) throw new ApiError(400, bodyParsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
+      await upsertAccumulatorTarget(supabase, paramsParsed.data.legs, bodyParsed.data.minSelectionScore, bodyParsed.data.enabled, req.authUser!.id);
+      res.json({ data: await getAccumulatorTargets(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/admin/config/competition-allowlist", async (_req, res, next) => {
+    try {
+      res.json({ data: await getCompetitionAllowlist(supabase) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/admin/config/competition-allowlist/:competitionId", async (req, res, next) => {
+    try {
+      const paramsParsed = competitionAllowlistParamsSchema.safeParse(req.params);
+      if (!paramsParsed.success) throw new ApiError(400, "Invalid competitionId parameter", "invalid_params");
+      const bodyParsed = competitionAllowlistBodySchema.safeParse(req.body);
+      if (!bodyParsed.success) throw new ApiError(400, bodyParsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
+      await setCompetitionAllowlistEntry(supabase, paramsParsed.data.competitionId, bodyParsed.data.enabled, req.authUser!.id);
+      res.json({ data: await getCompetitionAllowlist(supabase) });
     } catch (err) {
       next(err);
     }
