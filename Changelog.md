@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-03 — First live verification of a real provider: football-data.org
+
+The user provided a real football-data.org API key, letting
+`FootballDataOrgProvider` be exercised against live data for the first
+time in this project's history — every provider before this had only ever
+been tested against documentation-derived fakes. Ran the provider's own
+HTTP mapping directly against the live v4 API (no live Supabase project
+is reachable from this environment, so the database-writing side of
+`syncFixtures.ts`/`syncStandings.ts` remains unverified beyond their
+`FakeSupabase` unit tests — see `Data_Sources.md`'s "What was and wasn't
+verified" note for the precise scope).
+
+**Result: mapping is fundamentally correct** — 186 real fixtures across
+multiple leagues, statuses correctly split live/finished/scheduled, real
+Premier League standings (60 rows), and the `not_configured` short-circuit
+for unsupported capabilities all matched expectations on the first try.
+
+**One real bug found and fixed**: the vendor's own documentation names the
+rate-limit header `X-RequestsAvailable`; a live response actually sends
+`x-requests-available-minute`. `getRateLimitStatus()` was silently always
+returning `null` before this — fixed, verified against the live API again
+after the fix (`remaining: 6`), and locked in with a corrected unit test.
+A second live check confirmed the error envelope really does vary
+(`{ message, errorCode }` on one endpoint, vs. the docs' own `{ error }`
+example) — `unavailableFromBody()` already read `body.error ?? body.message`
+defensively, so no code change was needed there, just confirmation the
+existing defensive handling was the right call.
+
+Backend: 329/329 tests (updated one to match the real header name),
+lint/typecheck/build clean.
+
 ## 2026-09-03 — football-data.org: a second, swappable data provider
 
 Added `FootballDataOrgProvider` (`FOOTBALL_DATA_PROVIDER=football-data-org`)

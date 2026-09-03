@@ -193,8 +193,11 @@ describe("FootballDataOrgProvider", () => {
     expect(sleepMock).not.toHaveBeenCalled();
   });
 
-  it("tracks X-RequestsAvailable via getRateLimitStatus(), with limit always null (the vendor never reports it)", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ matches: [] }, 200, { "X-RequestsAvailable": "7" }));
+  it("tracks x-requests-available-minute via getRateLimitStatus(), with limit always null (the vendor never reports it)", async () => {
+    // The vendor's own docs name this header "X-RequestsAvailable", but a
+    // live response (verified 2026-09-03) actually sends
+    // "x-requests-available-minute" — this test locks in the real header.
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ matches: [] }, 200, { "x-requests-available-minute": "7" }));
     const provider = new FootballDataOrgProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
 
     expect(provider.getRateLimitStatus()).toBeNull();

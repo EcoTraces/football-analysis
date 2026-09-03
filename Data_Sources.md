@@ -30,17 +30,47 @@ at once:
   alternative provider" below for exactly what its free tier does and
   doesn't offer.
 
-**Important caveat, both providers:** neither class has been exercised
-against a live API key in this environment — none was available in the
-environment either was written in. Every request shape and response
-mapping follows each vendor's published documentation, not a verified live
-response, and is covered by unit tests using injected fake HTTP responses
-(`backend/src/__tests__/apiFootballProvider.test.ts`,
-`backend/src/__tests__/footballDataOrgProvider.test.ts`), not live calls.
-Before relying on either: get a real key, run `POST /api/admin/sync?days=1`
+**Important caveat, `ApiFootballProvider`:** this class has never been
+exercised against a live API key in this environment — none has been
+available. Every request shape and response mapping follows the vendor's
+published documentation, not a verified live response, and is covered only
+by unit tests using injected fake HTTP responses
+(`backend/src/__tests__/apiFootballProvider.test.ts`), not live calls.
+Before relying on it: get a real key, run `POST /api/admin/sync?days=1`
 against a real Supabase project, and check `ingestion_runs.error_summary`
-for anything indicating the mapping needs adjusting (a vendor's actual
-field names/shapes can differ from what's documented, or change over time).
+for anything indicating the mapping needs adjusting.
+
+**`FootballDataOrgProvider` — partially verified against live data
+(2026-09-03).** A real key was exercised directly against the vendor's
+live v4 API (bypassing the database/Supabase layer, which no real project
+in this environment can reach — see "What was and wasn't verified" below).
+Real fixtures (186 matches, correctly split live/finished/scheduled),
+Premier League standings (60 rows, correct team names/positions/points),
+the `not_configured` short-circuit for unsupported capabilities, and error
+handling all matched expectations — with one real, live-caught bug: the
+vendor's own docs name the rate-limit header `X-RequestsAvailable`, but a
+live response actually sends `x-requests-available-minute` — fixed in
+`recordRateLimitHeaders()` (was silently always returning `null` before
+this). A second live check confirmed the error envelope really is
+`{ message, errorCode }` on at least one endpoint (a documented example
+elsewhere shows `{ error }`) — `unavailableFromBody()` already checked
+`body.error ?? body.message` defensively before this, which is exactly why
+that fix wasn't needed too.
+
+**What was and wasn't verified.** The live check exercised
+`FootballDataOrgProvider`'s own HTTP request/response mapping directly —
+it did **not** exercise `syncFixtures.ts`/`syncStandings.ts` writing real
+rows into a real Supabase project (no live Supabase project is reachable
+from this environment), so the reference-data upsert path
+(`providerRefKey`, `external_ref` matching, idempotency on a second run)
+for this specific provider remains unverified beyond its `FakeSupabase`
+unit tests. `getFixturesForDateRange`/`getResultsSince`/`getStandings` and
+the rate-limit/error-handling paths are now genuinely live-verified;
+`getTeamStatistics`/`getPlayerStatistics`/`getInjuries`/`getLineup`/
+`getOdds`/`getFixtureStatistics` never make a live call at all (by design —
+see the capability table below), so "verified" for them just means the
+short-circuit itself was confirmed to fire correctly, not that a live
+endpoint was checked.
 
 ## Two providers, never blended
 
@@ -110,15 +140,16 @@ Two mapping decisions worth calling out:
   later" distinction from "stopped for good," same reasoning
   `ApiFootballProvider`'s own `ABD → abandoned` mapping uses.
 
-**Rate-limit tracking is a different shape from api-football's.**
-football-data.org's documented response headers
-(https://docs.football-data.org/general/v4/lookup_tables.html) are
-`X-RequestsAvailable` (remaining requests before being blocked) and
-`X-RequestCounter-Reset` (seconds until reset) — no header for the total
-limit itself, unlike api-football's paired limit+remaining headers. So
-`FootballDataOrgProvider.getRateLimitStatus().limit` is always `null` —
-never guessed at from the documented "10/minute free tier" figure, since a
-different plan would make that wrong.
+**Rate-limit tracking is a different shape from api-football's.** The
+vendor's docs (https://docs.football-data.org/general/v4/lookup_tables.html)
+name the header `X-RequestsAvailable`; a live response actually sends
+`x-requests-available-minute` (confirmed 2026-09-03 — see "What was and
+wasn't verified" above), which is what `recordRateLimitHeaders()` reads.
+Also present but unused: `X-RequestCounter-Reset` (seconds until reset) —
+no header for the total limit itself, unlike api-football's paired
+limit+remaining headers. So `FootballDataOrgProvider.getRateLimitStatus().limit`
+is always `null` — never guessed at from the documented "10/minute free
+tier" figure, since a different plan would make that wrong.
 
 **Error handling.** football-data.org's documented error statuses are
 400/403/404/429, with no separate 401 — both a missing and an invalid token

@@ -93,16 +93,19 @@ export class FootballDataOrgProvider implements FootballDataProvider, Observable
     return this.lastRequestStatus;
   }
 
-  // Response headers per https://docs.football-data.org/general/v4/lookup_tables.html's
-  // "Response Headers" table: X-RequestsAvailable (remaining requests before
-  // being blocked) and X-RequestCounter-Reset (seconds until the counter
-  // resets) — a different pair from api-football's limit+remaining, and
-  // notably this vendor never reports the total limit itself, only what's
-  // left. `limit` is therefore always null here — never guessed at from the
-  // documented "10/minute free tier" figure, since a different plan would
-  // make that wrong.
+  // Verified against a live response (2026-09-03): the vendor's docs
+  // (https://docs.football-data.org/general/v4/lookup_tables.html) name
+  // this header "X-RequestsAvailable", but the real header actually sent is
+  // "x-requests-available-minute" — a genuine documentation/reality
+  // mismatch, exactly the kind this codebase expects and checks for rather
+  // than assuming docs are correct. Also present but unused here:
+  // X-RequestCounter-Reset (seconds until the counter resets) — a different
+  // pair from api-football's limit+remaining, and notably this vendor never
+  // reports the total limit itself, only what's left. `limit` is therefore
+  // always null here — never guessed at from the documented "10/minute free
+  // tier" figure, since a different plan would make that wrong.
   private recordRateLimitHeaders(headers: Headers): void {
-    const remainingHeader = headers.get("x-requestsavailable");
+    const remainingHeader = headers.get("x-requests-available-minute");
     if (remainingHeader === null) return;
 
     const remaining = Number(remainingHeader);

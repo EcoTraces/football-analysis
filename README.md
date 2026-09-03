@@ -331,12 +331,22 @@ than merging).
    — see `Data_Sources.md`'s "football-data.org: a swappable alternative
    provider" section for exactly what is and isn't real here.
 
-None of this can be done from this development environment — there is no
-real account or key for either provider available here, and creating one
-requires a human to sign up with a real account. Everything above is
-otherwise finished and ready to run the moment a key is configured,
-including retry/backoff and rate-limit tracking (`Data_Sources.md`) and the
-job-history/health endpoints to verify the result.
+**Option B's provider-level mapping has now been done once**, with a real
+key, directly against football-data.org's live API (no Supabase project
+was reachable to also verify the database-writing side) — see
+`Changelog.md`'s "First live verification of a real provider" entry and
+`Data_Sources.md`'s "What was and wasn't verified" note for exactly what
+that covered. One real bug was found and fixed (a rate-limit header name);
+the fixture/standings mapping itself needed no changes.
+
+The rest of this — Option A entirely, and Option B's database-writing side
+specifically — cannot be done from this development environment: there is
+no real api-football account/key or Supabase project reachable here, and
+creating either requires a human to sign up with a real account. Everything
+above is otherwise finished and ready to run the moment a key/project is
+configured, including retry/backoff and rate-limit tracking
+(`Data_Sources.md`) and the job-history/health endpoints to verify the
+result.
 
 ## Documentation
 
