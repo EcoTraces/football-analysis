@@ -37,6 +37,12 @@ services:
         value: "null"
       - key: FOOTBALL_DATA_API_KEY
         sync: false
+      # Optional backup for FOOTBALL_DATA_API_KEY — a RapidAPI key for the
+      # same vendor, used only as a failover when the primary channel fails
+      # (see backend/.env.example and ApiFootballProvider.ts). Leave unset
+      # in the Render dashboard to run with no backup.
+      - key: FOOTBALL_DATA_RAPIDAPI_KEY
+        sync: false
       - key: ALLOWED_ORIGINS
         sync: false
       - key: RATE_LIMIT_WINDOW_MS

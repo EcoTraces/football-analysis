@@ -8,6 +8,13 @@ const envSchema = z.object({
   ML_SERVICE_URL: z.string().url().default("http://localhost:8000"),
   FOOTBALL_DATA_PROVIDER: z.enum(["null", "api-football"]).default("null"),
   FOOTBALL_DATA_API_KEY: z.string().optional().default(""),
+  // Optional backup credential for the SAME vendor (API-Football), accessed
+  // via RapidAPI instead of the direct api-sports.io channel — a separate
+  // subscription/quota pool, used only as a failover when the primary
+  // channel fails (see ApiFootballProvider.ts). Empty by default, meaning
+  // "no backup configured" — the provider then behaves exactly as it did
+  // before this option existed.
+  FOOTBALL_DATA_RAPIDAPI_KEY: z.string().optional().default(""),
   SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

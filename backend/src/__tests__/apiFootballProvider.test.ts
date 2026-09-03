@@ -885,4 +885,141 @@ describe("ApiFootballProvider", () => {
     expect(requestedUrl.pathname).toBe("/odds");
     expect(requestedUrl.searchParams.get("fixture")).toBe("12345");
   });
+
+  describe("RapidAPI backup channel", () => {
+    // Every test here configures a distinct rapidApiBaseUrl
+    // ("https://backup.example.test") so assertions on which URL was
+    // actually hit are unambiguous versus the primary's
+    // "https://example.test".
+
+    it("never touches the backup route when the primary succeeds, even if a backup key is configured", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ response: [RAW_FIXTURE], results: 1 }));
+      const provider = new ApiFootballProvider(
+        "primary-key",
+        "https://example.test",
+        fetchMock as unknown as typeof fetch,
+        10_000,
+        undefined,
+        0,
+        undefined,
+        "rapidapi-key",
+        "https://backup.example.test"
+      );
+
+      const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(new URL(fetchMock.mock.calls[0]![0] as string).origin).toBe("https://example.test");
+    });
+
+    it("falls back to the RapidAPI backup, with its own headers, after the primary is rejected (401)", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({}, 401))
+        .mockResolvedValueOnce(jsonResponse({ response: [RAW_FIXTURE], results: 1 }));
+      const provider = new ApiFootballProvider(
+        "bad-primary-key",
+        "https://example.test",
+        fetchMock as unknown as typeof fetch,
+        10_000,
+        undefined,
+        0,
+        undefined,
+        "good-rapidapi-key",
+        "https://backup.example.test",
+        "api-football-v1.p.rapidapi.com"
+      );
+
+      const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      const primaryCallUrl = new URL(fetchMock.mock.calls[0]![0] as string);
+      expect(primaryCallUrl.origin).toBe("https://example.test");
+      const primaryHeaders = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+      expect(primaryHeaders["x-apisports-key"]).toBe("bad-primary-key");
+
+      const backupCallUrl = new URL(fetchMock.mock.calls[1]![0] as string);
+      expect(backupCallUrl.origin).toBe("https://backup.example.test");
+      const backupHeaders = (fetchMock.mock.calls[1]![1] as RequestInit).headers as Record<string, string>;
+      expect(backupHeaders["x-rapidapi-key"]).toBe("good-rapidapi-key");
+      expect(backupHeaders["x-rapidapi-host"]).toBe("api-football-v1.p.rapidapi.com");
+
+      expect(provider.getLastRequestStatus()).toMatchObject({ ok: true, route: "backup" });
+    });
+
+    it("falls back to the backup after the primary's own retries are exhausted on a transient failure (HTTP 500)", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({}, 500))
+        .mockResolvedValueOnce(jsonResponse({ response: [], results: 0 }));
+      const sleepMock = vi.fn().mockResolvedValue(undefined);
+      const provider = new ApiFootballProvider(
+        "primary-key",
+        "https://example.test",
+        fetchMock as unknown as typeof fetch,
+        10_000,
+        undefined,
+        0, // maxRetries=0 on the primary route — it fails after exactly 1 attempt, then falls over
+        sleepMock,
+        "rapidapi-key",
+        "https://backup.example.test"
+      );
+
+      const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(new URL(fetchMock.mock.calls[1]![0] as string).origin).toBe("https://backup.example.test");
+    });
+
+    it("returns the backup's own failure reason when both routes fail", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}, 429));
+      const provider = new ApiFootballProvider(
+        "primary-key",
+        "https://example.test",
+        fetchMock as unknown as typeof fetch,
+        10_000,
+        undefined,
+        0,
+        undefined,
+        "rapidapi-key",
+        "https://backup.example.test"
+      );
+
+      const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("rate_limited");
+      expect(fetchMock).toHaveBeenCalledTimes(2); // 1 primary attempt + 1 backup attempt
+      expect(provider.getLastRequestStatus()).toMatchObject({ ok: false, reason: "rate_limited", route: "backup" });
+    });
+
+    it("tags getRateLimitStatus() with which route the observation came from", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({}, 401))
+        .mockResolvedValueOnce(
+          jsonResponse({ response: [], results: 0 }, 200, { "x-ratelimit-requests-limit": "50", "x-ratelimit-requests-remaining": "10" })
+        );
+      const provider = new ApiFootballProvider(
+        "bad-primary-key",
+        "https://example.test",
+        fetchMock as unknown as typeof fetch,
+        10_000,
+        undefined,
+        0,
+        undefined,
+        "rapidapi-key",
+        "https://backup.example.test"
+      );
+
+      await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+      expect(provider.getRateLimitStatus()).toMatchObject({ limit: 50, remaining: 10, route: "backup" });
+    });
+  });
 });

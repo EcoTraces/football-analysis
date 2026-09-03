@@ -22,7 +22,12 @@ export function createProvider(env: Env, logger: Logger): FootballDataProvider {
             "See backend/.env.example and Data_Sources.md."
         );
       }
-      return new ApiFootballProvider(env.FOOTBALL_DATA_API_KEY, undefined, undefined, undefined, logger);
+      // FOOTBALL_DATA_RAPIDAPI_KEY is optional — an empty string (the
+      // default) is passed through as-is, which ApiFootballProvider treats
+      // as "no backup configured" (see its routes() — a falsy key means the
+      // provider only ever has one route, same as before this option
+      // existed).
+      return new ApiFootballProvider(env.FOOTBALL_DATA_API_KEY, undefined, undefined, undefined, logger, undefined, undefined, env.FOOTBALL_DATA_RAPIDAPI_KEY || undefined);
     default:
       return new NullProvider();
   }

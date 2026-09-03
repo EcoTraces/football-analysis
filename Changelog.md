@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-09-03 — Optional RapidAPI backup channel for ApiFootballProvider
+
+`api-football` is reachable through two channels for the exact same
+vendor data — directly against api-sports.io, or proxied through RapidAPI
+— which are separate subscriptions with separate quota pools despite
+being identical data. Added an optional `FOOTBALL_DATA_RAPIDAPI_KEY` that
+`ApiFootballProvider` uses purely as a **failover**: every request still
+tries the primary (direct) channel first with its existing full retry
+policy, and only moves to the RapidAPI channel — with its own retry
+policy — if the primary is still failing once its retries are exhausted.
+A request that succeeds on the primary channel never touches the backup
+at all, and leaving the new key unset (the default) reproduces the exact
+prior single-channel behavior, byte-for-byte (verified: all 43
+pre-existing provider tests pass completely unmodified).
+
+- `ApiFootballProvider`'s constructor gained three new, purely additive
+  trailing parameters (`rapidApiKey`, `rapidApiBaseUrl`, `rapidApiHost`) —
+  appended at the end specifically so none of the 43 existing positional
+  constructor calls in tests needed to change.
+- `getRateLimitStatus()`/`getLastRequestStatus()` now also report which
+  channel (`route: "primary" | "backup"`) the observation came from, so
+  `GET /health/api-football` can show whether a failover has actually
+  happened, not just whether a backup is configured.
+- Wired through `env.ts` (`FOOTBALL_DATA_RAPIDAPI_KEY`, optional, empty by
+  default) and `registry.ts`; documented in `backend/.env.example`,
+  `render.yaml`, `docker-compose.yml`, `README.md`, and `Data_Sources.md`'s
+  new "Optional RapidAPI backup channel" section.
+- 5 new tests covering: primary success never touches the backup; a 401 on
+  the primary correctly fails over to the backup's own headers; a
+  transient 500 fails over once the primary's retries are exhausted; both
+  routes failing returns the backup's own failure reason; rate-limit
+  observations are tagged with the correct route. Backend test count:
+  297/297 (was 292). `tsc`/`eslint`/build clean.
+- Same "never exercised against a live key" caveat as the rest of this
+  provider — the RapidAPI channel's header casing and rate-limit header
+  names follow published documentation, not a verified live response.
+
 ## 2026-09-03 — AI Football Analyst & Accumulator Engine (Phase 1)
 
 The user submitted a 38-section spec for a full quant-style prediction/

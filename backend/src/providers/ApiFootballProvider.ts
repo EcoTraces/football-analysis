@@ -29,12 +29,20 @@ import type {
 // from the documented contract. Unit tests cover the mapping and error
 // handling using injected fake HTTP responses, not live calls.
 //
-// Auth: a single `x-apisports-key` header (the direct api-sports.io auth
-// scheme). If routing through RapidAPI instead, swap the header for
-// `x-rapidapi-key`/`x-rapidapi-host` — see api-football.com's docs for both
-// options.
+// Auth / two access channels for the SAME underlying vendor data: the
+// direct api-sports.io channel (`x-apisports-key` header, PRIMARY) and the
+// RapidAPI-hosted channel (`x-rapidapi-key`/`x-rapidapi-host` headers,
+// OPTIONAL BACKUP — a separate subscription/quota pool from the primary
+// one, even though the response shape is identical). `rapidApiKey` is
+// undefined by default, meaning "no backup configured" — behavior is then
+// byte-identical to a single-route provider. When it IS configured, a
+// request only ever tries the backup route after the primary route has
+// exhausted its own retries (see request()) — this is a failover, not a
+// load-balance: every request still prefers the primary route first.
 
 const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
+const DEFAULT_RAPIDAPI_BASE_URL = "https://api-football-v1.p.rapidapi.com/v3";
+const DEFAULT_RAPIDAPI_HOST = "api-football-v1.p.rapidapi.com";
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS = 500;
 
@@ -46,6 +54,13 @@ interface ApiFootballEnvelope<T> {
 
 type FetchFn = typeof fetch;
 type SleepFn = (ms: number) => Promise<void>;
+type RouteLabel = "primary" | "backup";
+
+interface Route {
+  label: RouteLabel;
+  baseUrl: string;
+  headers: Record<string, string>;
+}
 
 // Last-observed rate-limit status from API-Football's response headers, so a
 // health/monitoring endpoint can report it without this class needing to
@@ -56,20 +71,27 @@ type SleepFn = (ms: number) => Promise<void>;
 // per-minute `X-RateLimit-Limit`/`X-RateLimit-Remaining` pair. Header names
 // are read defensively (case-insensitive via the Headers API, first match
 // wins) since — like every other mapping in this file — none of this has
-// been confirmed against a live response yet.
+// been confirmed against a live response yet. `route` records which channel
+// this particular observation came from — the two channels are separate
+// quota pools, so a single shared number would conflate them.
 export interface RateLimitStatus {
   limit: number | null;
   remaining: number | null;
   observedAt: string;
+  route: RouteLabel;
 }
 
-// Outcome of the most recent completed request (after retries), for a
-// health/monitoring endpoint to report "last successful request" / "last
-// failed request" without this class needing to know about HTTP routes.
+// Outcome of the most recent completed request (after retries, and after
+// any backup-route failover), for a health/monitoring endpoint to report
+// "last successful request" / "last failed request" without this class
+// needing to know about HTTP routes. `route` records which channel actually
+// served (or last attempted) the request — "backup" here is the signal that
+// a failover has actually happened, not just that one is configured.
 export interface LastRequestStatus {
   ok: boolean;
   reason?: ProviderUnavailable["reason"];
   at: string;
+  route: RouteLabel;
 }
 
 interface AttemptOutcome<T> {
@@ -90,76 +112,105 @@ export class ApiFootballProvider implements FootballDataProvider {
     private readonly timeoutMs: number = 10_000,
     private readonly logger?: Logger,
     private readonly maxRetries: number = DEFAULT_MAX_RETRIES,
-    private readonly sleepImpl: SleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    private readonly sleepImpl: SleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    // Optional RapidAPI backup credential — undefined means "no backup
+    // configured," the only mode this class ran in before this feature.
+    private readonly rapidApiKey?: string,
+    private readonly rapidApiBaseUrl: string = DEFAULT_RAPIDAPI_BASE_URL,
+    private readonly rapidApiHost: string = DEFAULT_RAPIDAPI_HOST
   ) {}
 
-  /** Rate-limit headers from the most recent response, if any were present. Null until a request has been made. */
+  /** Rate-limit headers from the most recently observed response on either route. Null until a request has been made. */
   getRateLimitStatus(): RateLimitStatus | null {
     return this.lastRateLimitStatus;
   }
 
-  /** Outcome of the most recent completed request (after retries). Null until a request has been made. */
+  /** Outcome of the most recent completed request (after retries and any failover). Null until a request has been made. */
   getLastRequestStatus(): LastRequestStatus | null {
     return this.lastRequestStatus;
   }
 
-  private recordRateLimitHeaders(headers: Headers): void {
+  // The ordered list of channels a request may try. Always just the primary
+  // channel unless a RapidAPI backup key was configured — see the module
+  // docstring for why this is a fixed try-primary-then-backup order, never
+  // the reverse and never a random/load-balanced choice.
+  private routes(): Route[] {
+    const routes: Route[] = [{ label: "primary", baseUrl: this.baseUrl, headers: { "x-apisports-key": this.apiKey } }];
+    if (this.rapidApiKey) {
+      routes.push({
+        label: "backup",
+        baseUrl: this.rapidApiBaseUrl,
+        headers: { "x-rapidapi-key": this.rapidApiKey, "x-rapidapi-host": this.rapidApiHost }
+      });
+    }
+    return routes;
+  }
+
+  private routeDescription(route: Route): string {
+    return route.label === "backup" ? "API-Football (RapidAPI backup channel)" : "API-Football";
+  }
+
+  private recordRateLimitHeaders(headers: Headers, route: Route): void {
     const limitHeader = headers.get("x-ratelimit-requests-limit") ?? headers.get("x-ratelimit-limit");
     const remainingHeader = headers.get("x-ratelimit-requests-remaining") ?? headers.get("x-ratelimit-remaining");
     if (limitHeader === null && remainingHeader === null) return;
 
     const limit = limitHeader !== null ? Number(limitHeader) : null;
     const remaining = remainingHeader !== null ? Number(remainingHeader) : null;
-    this.lastRateLimitStatus = { limit, remaining, observedAt: new Date().toISOString() };
+    this.lastRateLimitStatus = { limit, remaining, observedAt: new Date().toISOString(), route: route.label };
 
     if (remaining !== null && limit !== null && limit > 0 && remaining / limit < 0.05) {
-      this.logger?.warn({ provider: this.name, limit, remaining }, "API-Football rate limit nearly exhausted");
+      this.logger?.warn({ provider: this.name, route: route.label, limit, remaining }, "API-Football rate limit nearly exhausted");
     }
   }
 
-  // One HTTP attempt. Distinguishes retryable failures (timeout, network
-  // error, HTTP 5xx, HTTP 429) from permanent ones (401/403 unauthorized, a
-  // malformed/non-JSON body, or a body-level vendor error like an invalid
-  // league/param) — retrying a permanent failure would just burn quota for
-  // an outcome that will never change (spec's "do not endlessly retry an
-  // invalid API key" requirement).
-  private async attemptRequest<T>(path: string, params: Record<string, string>): Promise<AttemptOutcome<T>> {
-    const url = new URL(`${this.baseUrl}${path}`);
+  // One HTTP attempt against one route. Distinguishes retryable failures
+  // (timeout, network error, HTTP 5xx, HTTP 429) from permanent ones
+  // (401/403 unauthorized, a malformed/non-JSON body, or a body-level vendor
+  // error like an invalid league/param) — retrying a permanent failure on
+  // the SAME route would just burn quota for an outcome that will never
+  // change (spec's "do not endlessly retry an invalid API key"
+  // requirement). A permanent failure here can still lead to a DIFFERENT
+  // route being tried — see request() — since a different route carries a
+  // different credential entirely.
+  private async attemptRequest<T>(route: Route, path: string, params: Record<string, string>): Promise<AttemptOutcome<T>> {
+    const url = new URL(`${route.baseUrl}${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     const sourceTimestamp = new Date().toISOString();
+    const label = this.routeDescription(route);
 
     try {
       const res = await this.fetchImpl(url.toString(), {
-        headers: { "x-apisports-key": this.apiKey },
+        headers: route.headers,
         signal: controller.signal
       });
-      this.recordRateLimitHeaders(res.headers);
+      this.recordRateLimitHeaders(res.headers, route);
 
       if (res.status === 401 || res.status === 403) {
-        return this.outcome(this.unavailable("unauthorized", `API-Football rejected the request (HTTP ${res.status})`), false, null);
+        return this.outcome(this.unavailable("unauthorized", `${label} rejected the request (HTTP ${res.status})`), false, null);
       }
       if (res.status === 429) {
         const retryAfterHeader = res.headers.get("retry-after");
         const retryAfterMs = retryAfterHeader !== null && Number.isFinite(Number(retryAfterHeader)) ? Number(retryAfterHeader) * 1000 : null;
-        return this.outcome(this.unavailable("rate_limited", "API-Football rate limit exceeded"), true, retryAfterMs);
+        return this.outcome(this.unavailable("rate_limited", `${label} rate limit exceeded`), true, retryAfterMs);
       }
       if (res.status >= 500) {
-        return this.outcome(this.unavailable("upstream_error", `API-Football returned HTTP ${res.status}`), true, null);
+        return this.outcome(this.unavailable("upstream_error", `${label} returned HTTP ${res.status}`), true, null);
       }
       if (!res.ok) {
         // Other 4xx (bad request, not found, etc.) — the request itself is
         // malformed for this resource; retrying it unchanged won't help.
-        return this.outcome(this.unavailable("upstream_error", `API-Football returned HTTP ${res.status}`), false, null);
+        return this.outcome(this.unavailable("upstream_error", `${label} returned HTTP ${res.status}`), false, null);
       }
 
       let body: ApiFootballEnvelope<T>;
       try {
         body = (await res.json()) as ApiFootballEnvelope<T>;
       } catch {
-        return this.outcome(this.unavailable("upstream_error", "API-Football returned a non-JSON response"), false, null);
+        return this.outcome(this.unavailable("upstream_error", `${label} returned a non-JSON response`), false, null);
       }
 
       // API-Football returns HTTP 200 even for an invalid key or bad
@@ -167,16 +218,16 @@ export class ApiFootballProvider implements FootballDataProvider {
       if (body.errors && !Array.isArray(body.errors) && Object.keys(body.errors).length > 0) {
         const message = Object.values(body.errors).join("; ");
         const reason = /token|key|plan/i.test(message) ? "unauthorized" : "upstream_error";
-        return this.outcome(this.unavailable(reason, `API-Football error: ${message}`), false, null);
+        return this.outcome(this.unavailable(reason, `${label} error: ${message}`), false, null);
       }
       if (Array.isArray(body.errors) && body.errors.length > 0) {
-        return this.outcome(this.unavailable("upstream_error", `API-Football error: ${JSON.stringify(body.errors)}`), false, null);
+        return this.outcome(this.unavailable("upstream_error", `${label} error: ${JSON.stringify(body.errors)}`), false, null);
       }
 
       return this.outcome({ ok: true, data: body.response, sourceTimestamp, provider: this.name }, false, null);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        return this.outcome(this.unavailable("timeout", `API-Football request timed out after ${this.timeoutMs}ms`), true, null);
+        return this.outcome(this.unavailable("timeout", `${label} request timed out after ${this.timeoutMs}ms`), true, null);
       }
       // A thrown (not merely rejected-with-status) error here is a network-
       // level failure (DNS, connection reset, etc.) — transient by nature.
@@ -190,15 +241,16 @@ export class ApiFootballProvider implements FootballDataProvider {
     return { response, retryable, retryAfterMs };
   }
 
-  // Retries retryable failures with exponential backoff (plus jitter),
-  // honoring a 429 response's Retry-After header when present. Permanent
-  // failures (unauthorized, malformed request) return on the first attempt.
-  private async request<T>(path: string, params: Record<string, string>): Promise<ProviderResponse<T>> {
+  // Retries retryable failures against ONE route with exponential backoff
+  // (plus jitter), honoring a 429 response's Retry-After header when
+  // present. Permanent failures (unauthorized, malformed request) return on
+  // the first attempt — never retried against the same route/credential.
+  private async requestViaRoute<T>(route: Route, path: string, params: Record<string, string>): Promise<AttemptOutcome<T>> {
     const totalAttempts = this.maxRetries + 1;
     let lastOutcome: AttemptOutcome<T> | null = null;
 
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
-      lastOutcome = await this.attemptRequest<T>(path, params);
+      lastOutcome = await this.attemptRequest<T>(route, path, params);
       const isLastAttempt = attempt === totalAttempts;
       if (!lastOutcome.retryable || isLastAttempt) break;
 
@@ -206,6 +258,7 @@ export class ApiFootballProvider implements FootballDataProvider {
       this.logger?.warn(
         {
           provider: this.name,
+          route: route.label,
           path,
           attempt,
           totalAttempts,
@@ -217,10 +270,41 @@ export class ApiFootballProvider implements FootballDataProvider {
       await this.sleepImpl(delayMs);
     }
 
-    const finalResponse = lastOutcome!.response;
+    return lastOutcome!;
+  }
+
+  // Tries each configured route in order (primary, then the RapidAPI backup
+  // if one is configured), each with its own full retry policy via
+  // requestViaRoute(). Moves to the next route on ANY failure reason — not
+  // just the "retryable" ones — since a route change also means a different
+  // credential, so even an "unauthorized" primary-key failure is worth
+  // retrying against a working backup key. With no backup configured this
+  // degrades to exactly one route, so behavior (and fetch call count) is
+  // unchanged from before this feature existed.
+  private async request<T>(path: string, params: Record<string, string>): Promise<ProviderResponse<T>> {
+    const routes = this.routes();
+    let outcome: AttemptOutcome<T> = { response: this.unavailable("upstream_error", "No route was attempted"), retryable: false, retryAfterMs: null };
+    let usedRoute: Route = routes[0]!;
+
+    for (let i = 0; i < routes.length; i++) {
+      const route = routes[i]!;
+      usedRoute = route;
+      outcome = await this.requestViaRoute<T>(route, path, params);
+      if (outcome.response.ok) break;
+
+      const hasNextRoute = i < routes.length - 1;
+      if (hasNextRoute) {
+        this.logger?.warn(
+          { provider: this.name, path, failedRoute: route.label, reason: outcome.response.ok ? undefined : outcome.response.reason },
+          "API-Football request failed on this route after retries — falling back to the next configured route"
+        );
+      }
+    }
+
+    const finalResponse = outcome.response;
     this.lastRequestStatus = finalResponse.ok
-      ? { ok: true, at: new Date().toISOString() }
-      : { ok: false, reason: finalResponse.reason, at: new Date().toISOString() };
+      ? { ok: true, at: new Date().toISOString(), route: usedRoute.label }
+      : { ok: false, reason: finalResponse.reason, at: new Date().toISOString(), route: usedRoute.label };
     return finalResponse;
   }
 

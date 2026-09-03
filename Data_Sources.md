@@ -63,6 +63,44 @@ semantics, tested against an injected fake `fetch`
 (`backend/src/__tests__/apiFootballProvider.test.ts`), same caveat as
 everything else in this file.
 
+## Optional RapidAPI backup channel
+
+`api-football` is reachable through two separate channels for the exact
+same underlying vendor data: directly against api-sports.io (`x-apisports-key`
+header — the primary channel this class has always used), or proxied
+through RapidAPI (`x-rapidapi-key`/`x-rapidapi-host` headers — see
+[RapidAPI's api-football listing](https://rapidapi.com/api-sports/api/api-football)).
+These are two separate subscriptions with two separate quota pools, even
+though the response shape is identical — which makes RapidAPI a natural
+**failover**, not a second data source: `ApiFootballProvider` can be given
+a `FOOTBALL_DATA_RAPIDAPI_KEY` (`backend/.env.example`) alongside the
+primary `FOOTBALL_DATA_API_KEY`, and every request then tries the primary
+channel first (with its own full retry policy, exactly as before), only
+moving to the RapidAPI channel — with its own full retry policy in turn —
+if the primary channel is still failing once its retries are exhausted.
+
+- **Never a load-balance.** A request that succeeds on the primary channel
+  never touches the backup at all. The backup is tried only after the
+  primary has genuinely failed (any reason — unauthorized, rate limited,
+  timeout, upstream error), since a different channel also means a
+  different credential; an unauthorized primary key is exactly the kind of
+  failure a working backup key can recover from.
+- **`FOOTBALL_DATA_RAPIDAPI_KEY` is optional and off by default.** An empty
+  value (the default) means the provider only ever has one route —
+  behavior, including exact `fetch` call counts, is unchanged from before
+  this option existed. This is the one part of `registry.ts` that
+  intentionally does NOT fail fast at boot the way a missing primary key
+  does: a backup is optional infrastructure, not a required one.
+- **`getRateLimitStatus()`/`getLastRequestStatus()` now report which
+  channel** (`route: "primary" | "backup"`) the most recent observation
+  came from, so `GET /health/api-football` can show whether a failover has
+  actually happened, not just whether one is configured.
+- **Same "never exercised against live data" caveat as everything else in
+  this file** — the RapidAPI channel's exact header casing/rate-limit
+  header names follow published documentation, not a verified live
+  response, and (like the primary channel) is only covered by unit tests
+  against an injected fake `fetch`.
+
 ## The abstraction
 
 `backend/src/providers/types.ts` defines the contracts application code

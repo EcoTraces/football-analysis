@@ -278,6 +278,14 @@ tests. To actually verify it against live data:
    Never commit this file or paste the real key into an issue, a commit
    message, or a log line — `backend/.env` is gitignored, and
    `ApiFootballProvider` never logs the key itself (see `Coding_Rules.md`).
+
+   **Optional**: also set `FOOTBALL_DATA_RAPIDAPI_KEY=<your RapidAPI key>`
+   if you signed up via RapidAPI rather than (or in addition to)
+   api-sports.io directly. This is a **backup**, not a second data source —
+   every request tries the primary `FOOTBALL_DATA_API_KEY` channel first,
+   and only falls over to the RapidAPI channel once the primary has
+   exhausted its own retries. See `Data_Sources.md`'s "Optional RapidAPI
+   backup channel" section for the full behavior.
 3. Start the backend (`npm run dev`) — it fails fast at boot if
    `FOOTBALL_DATA_API_KEY` is empty while `FOOTBALL_DATA_PROVIDER=api-football`,
    rather than silently falling back to fabricated data.
