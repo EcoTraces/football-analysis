@@ -1,7 +1,6 @@
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FootballDataProvider } from "../providers/types.js";
-import { ApiFootballProvider } from "../providers/ApiFootballProvider.js";
+import type { FootballDataProvider, ObservableHttpProvider } from "../providers/types.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
 import { classifyFreshness, type Freshness, type FreshnessDomain } from "../lib/freshness.js";
 
@@ -51,11 +50,20 @@ export async function checkFreshness(supabase: SupabaseClient, check: FreshnessC
   return { domain: check.domain, lastUpdated, status: freshness, color: colorFor(freshness) };
 }
 
+// Duck-typed rather than an `instanceof` check against one concrete class —
+// any real HTTP-backed provider (ApiFootballProvider, FootballDataOrgProvider)
+// exposes the same two methods, so this route (still named /health/api-football
+// for route-path stability — see API.md) reports whichever one is actually
+// configured, not just api-football specifically.
+function isObservableHttpProvider(provider: FootballDataProvider): provider is FootballDataProvider & ObservableHttpProvider {
+  return typeof (provider as Partial<ObservableHttpProvider>).getLastRequestStatus === "function";
+}
+
 export function apiFootballHealthStatus(provider: FootballDataProvider) {
-  if (provider.name !== "api-football" || !(provider instanceof ApiFootballProvider)) {
+  if (!isObservableHttpProvider(provider)) {
     return {
       status: "NOT_CONFIGURED" as const,
-      message: "FOOTBALL_DATA_PROVIDER is not set to api-football — see Data_Sources.md.",
+      message: "FOOTBALL_DATA_PROVIDER is not set to a real HTTP-backed provider (api-football or football-data-org) — see Data_Sources.md.",
       lastRequest: null,
       rateLimit: null
     };

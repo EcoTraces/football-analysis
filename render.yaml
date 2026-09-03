@@ -43,6 +43,12 @@ services:
       # in the Render dashboard to run with no backup.
       - key: FOOTBALL_DATA_RAPIDAPI_KEY
         sync: false
+      # Required only if FOOTBALL_DATA_PROVIDER is switched to
+      # "football-data-org" — a swappable alternative provider, not a
+      # second simultaneous source (see backend/.env.example,
+      # Data_Sources.md, and FootballDataOrgProvider.ts).
+      - key: FOOTBALL_DATA_ORG_API_KEY
+        sync: false
       - key: ALLOWED_ORIGINS
         sync: false
       - key: RATE_LIMIT_WINDOW_MS

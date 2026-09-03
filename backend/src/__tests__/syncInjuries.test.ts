@@ -19,7 +19,7 @@ function injury(overrides: Partial<ProviderInjury> = {}): ProviderInjury {
 }
 
 class FakeProvider implements FootballDataProvider {
-  readonly name = "fake-provider";
+  readonly name = "api-football"; // normalizes to providerRefKey("api-football") === "api_football", matching this file's seeded external_ref: { api_football: ... } fixtures
   public calls: Array<[string, string]> = [];
   constructor(private readonly injuriesByTeam: Record<string, ProviderResponse<ProviderInjury[]>> = {}) {}
 

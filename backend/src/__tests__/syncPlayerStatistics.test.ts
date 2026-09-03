@@ -8,7 +8,7 @@ import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 const silentLogger = pino({ level: "silent" });
 
 class FakeProvider implements FootballDataProvider {
-  readonly name = "fake-provider";
+  readonly name = "api-football"; // normalizes to providerRefKey("api-football") === "api_football", matching this file's seeded external_ref: { api_football: ... } fixtures
   public calls: Array<[string, string, string]> = [];
   constructor(
     private readonly playersByTeam: Record<string, ProviderResponse<ProviderPlayerStatistics[]>> = {}

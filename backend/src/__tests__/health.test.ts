@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ApiFootballProvider } from "../providers/ApiFootballProvider.js";
+import { FootballDataOrgProvider } from "../providers/FootballDataOrgProvider.js";
 import { NullProvider } from "../providers/NullProvider.js";
 import { checkFreshness, colorFor, apiFootballHealthStatus, schedulerHealthStatus, FRESHNESS_CHECKS } from "../routes/health.js";
 import { FakeSupabase } from "./testSupabaseFake.js";
@@ -113,6 +114,15 @@ describe("apiFootballHealthStatus", () => {
     const failingProvider = new ApiFootballProvider("bad-key", "https://example.test", failFetch as unknown as typeof fetch);
     await failingProvider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
     expect(apiFootballHealthStatus(failingProvider).status).toBe("ERROR");
+  });
+
+  it("also reports a real status for FootballDataOrgProvider — duck-typed, not hardcoded to one concrete class", async () => {
+    const okFetch = () => Promise.resolve(new Response(JSON.stringify({ matches: [] }), { status: 200 }));
+    const provider = new FootballDataOrgProvider("test-key", "https://example.test", okFetch as unknown as typeof fetch);
+
+    expect(apiFootballHealthStatus(provider).status).toBe("UNKNOWN");
+    await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+    expect(apiFootballHealthStatus(provider).status).toBe("CONNECTED");
   });
 });
 

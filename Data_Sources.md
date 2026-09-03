@@ -1,37 +1,143 @@
 # Data Sources
 
-## Current state: `ApiFootballProvider` implemented, disabled by default
+## Current state: two real providers implemented, `null` disabled by default
 
 `FOOTBALL_DATA_PROVIDER=null` (the default) uses `NullProvider`
 (`backend/src/providers/NullProvider.ts`), which returns
 `{ ok: false, reason: "not_configured" }` from every method — see
 `Coding_Rules.md` → "No Fake Data Rule."
 
-Setting `FOOTBALL_DATA_PROVIDER=api-football` and a real
-`FOOTBALL_DATA_API_KEY` switches to `ApiFootballProvider`
-(`backend/src/providers/ApiFootballProvider.ts`), a real implementation
-against [api-football](https://www.api-football.com) (api-sports.io) v3.
-Chosen over narrower alternatives (e.g. football-data.org) for its coverage
-outside Europe's top leagues, which the platform's stated scope (Asia,
-South America, etc.) needs.
+Two real providers exist. **Pick exactly one** — see "Two providers, never
+blended" below for why this platform never runs both against the same data
+at once:
 
-**Important caveat:** this class has not been exercised against a live API
-key in development — none was available in the environment it was written
-in. Every request shape and response mapping follows the vendor's published
-v3 documentation, not a verified live response, and is covered by unit
-tests using injected fake HTTP responses (`backend/src/__tests__/apiFootballProvider.test.ts`),
-not live calls. Before relying on it: get a real key, run `POST
-/api/admin/sync?days=1` against a real Supabase project, and check
-`ingestion_runs.error_summary` for anything indicating the mapping needs
-adjusting (the vendor's actual field names/shapes can differ from what's
-documented, or change over time).
+- **`FOOTBALL_DATA_PROVIDER=api-football`** + a real `FOOTBALL_DATA_API_KEY`
+  switches to `ApiFootballProvider` (`backend/src/providers/ApiFootballProvider.ts`),
+  a real implementation against [api-football](https://www.api-football.com)
+  (api-sports.io) v3. Broad coverage outside Europe's top five leagues,
+  which the platform's stated scope (Asia, South America, etc.) needs —
+  but its free tier caps at 100 requests/**day**. Covers fixtures,
+  standings, team/player statistics, injuries, lineups, and odds. An
+  optional RapidAPI backup channel exists for this provider specifically —
+  see "Optional RapidAPI backup channel" below.
+- **`FOOTBALL_DATA_PROVIDER=football-data-org`** + a real
+  `FOOTBALL_DATA_ORG_API_KEY` switches to `FootballDataOrgProvider`
+  (`backend/src/providers/FootballDataOrgProvider.ts`), a real
+  implementation against [football-data.org](https://www.football-data.org)
+  v4. Only 12 major competitions on its free tier, but no daily cap (10
+  requests/**minute** instead) and curated, non-crowd-sourced data. Covers
+  fixtures and standings only — see "football-data.org: a swappable
+  alternative provider" below for exactly what its free tier does and
+  doesn't offer.
 
-If you don't need worldwide coverage, football-data.org's free tier (top
-European competitions, simpler API, no league/season params required for
-most endpoints) may be an easier first integration — it would need its own
-provider class following the same pattern.
+**Important caveat, both providers:** neither class has been exercised
+against a live API key in this environment — none was available in the
+environment either was written in. Every request shape and response
+mapping follows each vendor's published documentation, not a verified live
+response, and is covered by unit tests using injected fake HTTP responses
+(`backend/src/__tests__/apiFootballProvider.test.ts`,
+`backend/src/__tests__/footballDataOrgProvider.test.ts`), not live calls.
+Before relying on either: get a real key, run `POST /api/admin/sync?days=1`
+against a real Supabase project, and check `ingestion_runs.error_summary`
+for anything indicating the mapping needs adjusting (a vendor's actual
+field names/shapes can differ from what's documented, or change over time).
 
-## Retry, backoff, and rate-limit handling
+## Two providers, never blended
+
+`referenceDataService.ts` keys every entity (`countries` excepted — see
+below) by `external_ref->>'<provider_key>'`, where `<provider_key>` is
+derived from the active provider's own `FootballDataProvider.name`
+(`providerRefKey()` — e.g. `"api-football"` → `"api_football"`,
+`"football-data-org"` → `"football_data_org"`). **Nothing in this platform
+resolves "api-football's team 33" and "football-data-org's team 66" as the
+same real Manchester United** — the two vendors use entirely unrelated
+numeric id schemes for the same real-world teams/competitions, and there is
+no fuzzy name-matching entity-resolution layer (deliberately not built —
+see the plan discussion that scoped this feature: a wrong fuzzy match would
+silently corrupt team_statistics/predictions, a worse failure than simply
+not merging).
+
+This is why `FOOTBALL_DATA_PROVIDER` is a single-value switch, not a list:
+**exactly one provider is active in a given deployment/environment.**
+Practical consequences:
+
+- **Switching providers starts fresh entity rows.** If you sync with
+  `api-football` for a while, then switch to `football-data-org`, the next
+  sync creates new `teams`/`competitions`/`seasons`/`fixtures` rows keyed
+  under `football_data_org` — it does not find or update the rows
+  `api-football` already created. Old rows aren't deleted; they just stop
+  being touched by new syncs.
+- **Migrations `0002`/`0003` and `0014` each add their own provider's
+  partial unique indexes** (`external_ref->>'api_football'` /
+  `external_ref->>'football_data_org'` respectively) on the same tables —
+  so the same real-world external id colliding between two providers (e.g.
+  both happening to use `"39"` for the Premier League) never causes a false
+  match; each index only enforces uniqueness within its own provider's key.
+  Verified directly against a real Postgres 16 instance: two rows with the
+  same external id under different provider keys coexist safely, while a
+  genuine duplicate within one provider's key is correctly rejected.
+- **`countries` is the one exception** — every provider matches/creates
+  countries by name (`upsertCountryByName`), not external_ref, since a
+  country has no stable, comparable external id worth keying on across
+  vendors anyway (a name collision here, e.g. "England", is actually the
+  correct match). `0002`'s `uq_countries_external_api_football` index (and
+  `0014` deliberately does *not* add a football-data-org equivalent) is
+  unused dead schema for this reason, same as it always was.
+
+## football-data.org: a swappable alternative provider
+
+`FootballDataOrgProvider` implements the full `FootballDataProvider`
+interface, but its free tier genuinely only supports two of the nine
+capabilities that interface declares:
+
+| Capability | Support |
+|---|---|
+| `getFixturesForDateRange` / `getResultsSince` | **Real.** `GET /v4/matches?dateFrom=&dateTo=` — and unlike `ApiFootballProvider`, this vendor's endpoint genuinely accepts a multi-day range in one call, no single-UTC-day workaround needed. |
+| `getStandings` | **Real.** `GET /v4/competitions/{id}/standings`. |
+| `getTeamStatistics`, `getPlayerStatistics`, `getInjuries`, `getLineup`, `getOdds`, `getFixtureStatistics` | **`reason: "not_configured"`, always** — this vendor's free tier has no endpoint for any of these. Same "never fabricate, no data no market" contract `NullProvider` already establishes for an unconfigured provider entirely — a sync job calling one of these against `football-data-org` simply logs a per-item skip/failure and moves on, exactly as it already does for any other real provider failure. |
+
+Two mapping decisions worth calling out:
+
+- **The season external id is the season's start year, not the vendor's
+  opaque `season.id`.** football-data.org's `/standings` endpoint takes an
+  optional `?season=<year>` query param (e.g. `2026`) — using that same
+  year as this platform's season external id means `getStandings` can
+  forward `seasonExternalId` straight through with no separate id-to-year
+  lookup, and it happens to match api-football's own convention of using
+  the year as its season external id too.
+- **`SUSPENDED` maps to this schema's `"abandoned"` status** — the closest
+  available match; football-data.org's status enum has no "will resume
+  later" distinction from "stopped for good," same reasoning
+  `ApiFootballProvider`'s own `ABD → abandoned` mapping uses.
+
+**Rate-limit tracking is a different shape from api-football's.**
+football-data.org's documented response headers
+(https://docs.football-data.org/general/v4/lookup_tables.html) are
+`X-RequestsAvailable` (remaining requests before being blocked) and
+`X-RequestCounter-Reset` (seconds until reset) — no header for the total
+limit itself, unlike api-football's paired limit+remaining headers. So
+`FootballDataOrgProvider.getRateLimitStatus().limit` is always `null` —
+never guessed at from the documented "10/minute free tier" figure, since a
+different plan would make that wrong.
+
+**Error handling.** football-data.org's documented error statuses are
+400/403/404/429, with no separate 401 — both a missing and an invalid token
+report as 403 "restricted resource," so 401 and 403 are both mapped to
+`unauthorized` here (matching `ApiFootballProvider`'s own 401‖403 handling),
+and neither is retried on the same channel. The error body itself is a flat
+`{ error: string }` (or `{ message: string }`) — a different envelope shape
+from api-football's `{ response, errors }`.
+
+**`GET /health/api-football` now reports whichever HTTP-backed provider is
+actually configured**, not just `api-football` specifically — it duck-types
+against a small `ObservableHttpProvider` interface (`getRateLimitStatus()`/
+`getLastRequestStatus()`) rather than an `instanceof` check against one
+concrete class, so `football-data-org`'s connectivity/rate-limit status
+shows up there too. The route path itself stays `/health/api-football` for
+URL stability (see `API.md`) even though it's no longer literally
+api-football-specific.
+
+## Retry, backoff, and rate-limit handling (ApiFootballProvider)
 
 `ApiFootballProvider`'s private `request()` method retries a bounded number
 of times (default 3, plus the initial attempt — configurable via the
@@ -636,10 +742,18 @@ what was missing was simply reading them back through an endpoint.
    attribution requirements, and terms of service before writing code
    against it.
 2. Implement a class satisfying `FootballDataProvider`, following
-   `ApiFootballProvider.ts`'s pattern: injectable `fetch` and timeout for
-   testability, explicit mapping to `ProviderFixture` (etc.), and
-   `{ ok: false, reason: "upstream_error", ... }` on any failure rather than
-   throwing or returning partial/guessed data.
+   `ApiFootballProvider.ts`'s pattern (broad coverage, every capability
+   real) or `FootballDataOrgProvider.ts`'s (narrower free tier — some
+   methods honestly return `{ ok: false, reason: "not_configured", ... }`
+   rather than pretending to support what the vendor's plan doesn't
+   offer): injectable `fetch` and timeout for testability, explicit mapping
+   to `ProviderFixture` (etc.), and `{ ok: false, reason: "upstream_error",
+   ... }` on any failure rather than throwing or returning partial/guessed
+   data. Decide up front whether the new provider is meant to be a
+   **swappable alternative** (the pattern both existing providers follow —
+   see "Two providers, never blended" above) or something that shares
+   entity identity with an existing one; the latter needs real
+   cross-provider entity resolution, not just a new provider class.
 3. Add its required env vars to `backend/.env.example` and
    `backend/src/config/env.ts` (extend the `FOOTBALL_DATA_PROVIDER` enum).
 4. Register it in `backend/src/providers/registry.ts` — fail fast at boot

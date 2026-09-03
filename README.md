@@ -260,11 +260,16 @@ project's anon key — the access token in the response is what you pass as
 backend-only secret with no associated user, and `auth.getUser()` would
 reject it anyway.
 
-## Configuring a live API-Football key
+## Configuring a live football data provider
 
 No real football data has ever flowed through this application — every
 sync job has only been tested against fake HTTP responses injected in unit
-tests. To actually verify it against live data:
+tests. Two real providers exist; pick **one** (see `Data_Sources.md`'s "Two
+providers, never blended" section for why they're swappable alternatives,
+not a combined source — switching later starts fresh entity rows rather
+than merging).
+
+### Option A: api-football (broad coverage, 100 requests/day free)
 
 1. Get a key from [api-football.com](https://www.api-football.com/) (direct
    api-sports.io signup) or via [RapidAPI](https://rapidapi.com/api-sports/api/api-football).
@@ -306,12 +311,32 @@ tests. To actually verify it against live data:
    a confirmed live response, and is expected to need adjustment the first
    time it sees real data (see `Data_Sources.md`).
 
+### Option B: football-data.org (12 major competitions, no daily cap — 10/minute)
+
+1. Register at [football-data.org](https://www.football-data.org/client/register)
+   and copy your token.
+2. Set in `backend/.env`:
+   ```
+   FOOTBALL_DATA_PROVIDER=football-data-org
+   FOOTBALL_DATA_ORG_API_KEY=<your real key>
+   ```
+3. Start the backend (`npm run dev`) — same fail-fast-at-boot behavior as
+   Option A if the key is empty.
+4. Same verification chain as Option A, steps 4–5 above, works unchanged —
+   `GET /health/api-football` reports football-data-org's status too (it's
+   provider-agnostic despite the route name — see `Data_Sources.md`).
+   `POST /admin/team-statistics/sync` and every other capability this
+   provider's free tier doesn't support (team/player statistics, injuries,
+   lineups, odds) will report `409`/skipped rather than fabricate anything
+   — see `Data_Sources.md`'s "football-data.org: a swappable alternative
+   provider" section for exactly what is and isn't real here.
+
 None of this can be done from this development environment — there is no
-real API-Football account or key available here, and creating one requires
-a human to sign up with a real account. Everything above is otherwise
-finished and ready to run the moment a key is configured, including retry/
-backoff and rate-limit tracking (`Data_Sources.md`) and the job-history/
-health endpoints to verify the result.
+real account or key for either provider available here, and creating one
+requires a human to sign up with a real account. Everything above is
+otherwise finished and ready to run the moment a key is configured,
+including retry/backoff and rate-limit tracking (`Data_Sources.md`) and the
+job-history/health endpoints to verify the result.
 
 ## Documentation
 

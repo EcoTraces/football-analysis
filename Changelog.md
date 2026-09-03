@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-09-03 — football-data.org: a second, swappable data provider
+
+Added `FootballDataOrgProvider` (`FOOTBALL_DATA_PROVIDER=football-data-org`)
+as a real alternative to api-football — swappable, not blended: the two
+vendors use unrelated external-id namespaces for the same real teams and
+competitions, so this platform runs exactly one at a time and switching
+starts fresh entity rows rather than merging. Chosen for a genuinely
+different tradeoff than api-football's: only 12 major competitions on its
+free tier, but no daily request cap (10/minute instead of 100/day) and
+curated, non-crowd-sourced data. Implements real `getFixturesForDateRange`/
+`getResultsSince`/`getStandings` against football-data.org's v4 API;
+`getTeamStatistics`, `getPlayerStatistics`, `getInjuries`, `getLineup`,
+`getOdds`, and `getFixtureStatistics` honestly return `not_configured` —
+this vendor's free tier has no endpoint for any of them, same
+never-fabricate contract `NullProvider` already establishes.
+
+- **A real refactor, not just an addition.** `referenceDataService.ts`
+  used to hardcode a single `PROVIDER_KEY = "api_football"` constant for
+  every entity lookup/insert — every sync job now threads a
+  `providerRefKey(provider.name)`-derived key through instead, so a second
+  provider's rows are correctly keyed under their own
+  `external_ref->>'football_data_org'` rather than silently mislabeled as
+  `api_football`. Touched all 8 sync jobs and their tests; 43 existing
+  `ApiFootballProvider` tests and every sync-job test needed only their
+  fake provider's `.name` corrected to `"api-football"` (previously
+  `"fake-provider"`, which the old hardcoded constant never actually
+  checked) — no behavioral changes to the api-football path itself.
+- **New migration** `0014_football_data_org_external_refs.sql` — partial
+  unique indexes for the new provider key on `seasons`/`fixtures`/`teams`/
+  `competitions` (not `countries` or `players` — see the migration's own
+  comment for why). Verified against a real local Postgres 16 instance:
+  applied `0001`–`0014` in order, then confirmed two rows sharing the same
+  external id under different provider keys coexist safely while a genuine
+  duplicate within one provider's key is correctly rejected.
+- **`GET /health/api-football` generalized** from an `instanceof
+  ApiFootballProvider` check to duck-typing against a new
+  `ObservableHttpProvider` interface (`getRateLimitStatus()`/
+  `getLastRequestStatus()`), so football-data-org's connectivity/rate-limit
+  status shows up there too — the route path itself stays
+  `/health/api-football` for URL stability even though it's no longer
+  api-football-specific.
+- Documented in `Data_Sources.md` (new "Two providers, never blended" and
+  "football-data.org: a swappable alternative provider" sections),
+  `Database.md` (new "Two providers, one external_ref column" section),
+  `README.md` (Option A/B setup), `backend/.env.example`, `render.yaml`,
+  `docker-compose.yml`.
+- 29 new tests (`footballDataOrgProvider.test.ts`, `health.test.ts`), plus
+  3 new `referenceDataService.test.ts` tests proving two provider keys
+  never collide. Backend test count: 329/329 (was 297).
+  `tsc`/`eslint`/build clean.
+- Same "never exercised against a live key" caveat as `ApiFootballProvider`
+  — every request shape and response mapping follows football-data.org's
+  published v4 documentation, not a verified live response.
+
 ## 2026-09-03 — Optional RapidAPI backup channel for ApiFootballProvider
 
 `api-football` is reachable through two channels for the exact same

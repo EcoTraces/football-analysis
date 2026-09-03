@@ -123,7 +123,7 @@
   `FOOTBALL_DATA_API_KEY` configured anywhere in it, and obtaining one
   requires signing up for a third-party service (api-football.com or
   RapidAPI) with a real account, which only the project owner can do. See
-  README.md → "Configuring a live API-Football key" for the exact steps
+  README.md → "Configuring a live football data provider" for the exact steps
   and the commands to run once a key exists.
 - [x] Build the fixture ingestion job — `syncFixtures.ts`, idempotent via
   the fixture's own external id (not the natural key — a postponed fixture

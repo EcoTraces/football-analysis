@@ -11,7 +11,9 @@ self-escalation gap in the 0001 RLS policies — see "Access control" below)
 Football Analyst / Accumulator Engine — Elo ratings, admin-editable
 config, ensemble prediction history, and accumulator recommendations; see
 "AI Football Analyst / Accumulator Engine tables" below and `ML_Model.md`'s
-"Ensemble model" section). Dev-only synthetic seed:
+"Ensemble model" section) and `0014_football_data_org_external_refs.sql`
+(a second provider's own external-id uniqueness — see "Two providers, one
+external_ref column" below). Dev-only synthetic seed:
 `supabase/seed/dev_seed_synthetic.sql`.
 
 ## Design conventions
@@ -28,13 +30,16 @@ config, ensemble prediction history, and accumulator recommendations; see
 - **Idempotent ingestion.** `fixtures` has a unique index on
   `(competition_id, season_id, home_team_id, away_team_id, kickoff_utc)`
   from 0001, plus a partial unique index on `external_ref->>'api_football'`
-  from 0002 — the one real ingestion job (`syncFixtures.ts`) actually
-  upserts against the latter, since a postponed-and-rescheduled fixture
-  keeps its provider id but changes kickoff time (the natural key would
-  treat that as a new row). `teams` and `competitions` got the same
-  external-id uniqueness in 0002. `seasons`' external id is scoped by
-  `competition_id` — a season's provider id like "2026" repeats across
-  every competition, so global uniqueness there would be wrong.
+  from 0002 (and, since this platform gained a second swappable provider,
+  an equivalent `external_ref->>'football_data_org'` index from 0014 — see
+  "Two providers, one external_ref column" below) — the one real ingestion
+  job (`syncFixtures.ts`) actually upserts against the active provider's
+  own key, since a postponed-and-rescheduled fixture keeps its provider id
+  but changes kickoff time (the natural key would treat that as a new row).
+  `teams` and `competitions` got the same external-id uniqueness in 0002
+  (and 0014). `seasons`' external id is scoped by `competition_id` — a
+  season's provider id like "2026" repeats across every competition, so
+  global uniqueness there would be wrong.
   `team_statistics`'s uniqueness (`team_id, season_id, scope`),
   `standings`'s (`season_id, team_id`), and `lineups`'s (`fixture_id,
   team_id`), by contrast, are genuine plain-column constraints from 0001,
@@ -134,6 +139,50 @@ worth calling out here specifically:
   Poisson/gradient-boosting output — the same reasoning that gave
   `competition_rho` its own table instead of folding into
   `league_calibration`.
+
+## Two providers, one external_ref column
+
+`0014_football_data_org_external_refs.sql` added `football-data.org` as a
+second, real, **swappable-alternative** `FootballDataProvider`
+(`FOOTBALL_DATA_PROVIDER=football-data-org` — see `Data_Sources.md`'s "Two
+providers, never blended" section for the full reasoning). Rather than a
+new column or a new table, it reuses the existing `external_ref jsonb`
+column every entity table already has (from 0001/0002/0003), keyed by a
+second jsonb key: `external_ref->>'football_data_org'`, alongside
+`external_ref->>'api_football'`. A row can in principle carry both keys at
+once (nothing prevents it), but in practice a row is only ever written by
+whichever single provider was active at the time — there is no
+cross-provider merge step.
+
+`referenceDataService.ts`'s `providerRefKey()` derives the jsonb key from
+whichever provider is actually running (`FootballDataProvider.name`, e.g.
+`"api-football"` → `"api_football"`), so every `upsertX`/`externalId` call
+in every sync job (`syncFixtures.ts`, `syncTeamStatistics.ts`, etc.) is
+parameterized by it — none of them hardcode a provider's key anymore. This
+was a real refactor, not just additive: before this feature,
+`referenceDataService.ts` hardcoded a single `PROVIDER_KEY = "api_football"`
+constant used by every function, which would have silently mislabeled
+football-data.org-sourced rows as `api_football` ones had it not been
+generalized — a real correctness bug this migration's own indexes would not
+have caught, since the jsonb *key itself* would have been wrong, not just
+its uniqueness.
+
+`0014` adds `football_data_org` partial unique indexes on `seasons`,
+`fixtures`, `teams`, and `competitions` — the same four tables 0002/0003
+cover for `api_football`, **deliberately excluding `countries` and
+`players`**: countries are matched by name for every provider (see
+`upsertCountryByName` — 0002's own `api_football` countries index is
+unused dead schema for the identical reason), and football-data.org's free
+tier has no player-level endpoint at all, so nothing will ever populate
+`players.external_ref->>'football_data_org'`.
+
+Verified directly against a real local Postgres 16 instance (unlike most
+migrations in this file — see "Known gaps" below): applied `0001`–`0014` in
+order against a fresh database, then confirmed two rows with the *same*
+external id under *different* provider keys (e.g. both `"39"`, one keyed
+`api_football`, one `football_data_org`) coexist without a false collision,
+while inserting a genuine duplicate within one provider's key correctly
+raises a unique-constraint violation.
 
 ## Known gaps
 

@@ -219,3 +219,32 @@ export interface FootballDataProvider
     PlayerStatsProvider {
   readonly name: string;
 }
+
+// Last-observed HTTP rate-limit status, for a health/monitoring endpoint to
+// report without needing to know the calling route. Not every provider
+// tracks this (NullProvider has nothing to track), so this is a separate,
+// optional capability rather than part of FootballDataProvider itself —
+// checked via a duck-typed "does this provider implement it" test (see
+// routes/health.ts's isObservableHttpProvider), not an `instanceof` against
+// one specific concrete class, so any real HTTP-backed provider (currently
+// ApiFootballProvider and FootballDataOrgProvider) can plug into the same
+// health endpoint.
+export interface ProviderRateLimitStatus {
+  limit: number | null;
+  remaining: number | null;
+  observedAt: string;
+}
+
+// Outcome of the most recently *completed* request (after retries and any
+// failover), same "optional capability" reasoning as ProviderRateLimitStatus
+// above.
+export interface ProviderLastRequestStatus {
+  ok: boolean;
+  reason?: ProviderUnavailable["reason"];
+  at: string;
+}
+
+export interface ObservableHttpProvider {
+  getRateLimitStatus(): ProviderRateLimitStatus | null;
+  getLastRequestStatus(): ProviderLastRequestStatus | null;
+}

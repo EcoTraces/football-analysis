@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderFixture } from "../providers/types.js";
 import {
-  PROVIDER_KEY,
+  providerRefKey,
   upsertCompetition,
   upsertCountryByName,
   upsertSeason,
@@ -26,7 +26,9 @@ function* utcDaysInRange(fromIso: string, toIso: string): Generator<string> {
   }
 }
 
-async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture, provider: string): Promise<void> {
+async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture, providerName: string): Promise<void> {
+  const providerKey = providerRefKey(providerName);
+
   // Teams' own nationality isn't in this payload (only the competition's
   // country is) — inferring it from the competition would be actively
   // wrong for continental competitions (a Champions League entrant isn't
@@ -34,10 +36,10 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
   // team.country_id is intentionally left unset here pending a dedicated
   // team-info sync (see Task.md).
   const countryId = fixture.countryName ? await upsertCountryByName(supabase, fixture.countryName) : null;
-  const competitionId = await upsertCompetition(supabase, fixture.competitionExternalId, fixture.competitionName, countryId);
-  const seasonId = await upsertSeason(supabase, competitionId, fixture.seasonExternalId, fixture.seasonLabel);
-  const homeTeamId = await upsertTeam(supabase, fixture.homeTeamExternalId, fixture.homeTeamName, null);
-  const awayTeamId = await upsertTeam(supabase, fixture.awayTeamExternalId, fixture.awayTeamName, null);
+  const competitionId = await upsertCompetition(supabase, providerKey, fixture.competitionExternalId, fixture.competitionName, countryId);
+  const seasonId = await upsertSeason(supabase, providerKey, competitionId, fixture.seasonExternalId, fixture.seasonLabel);
+  const homeTeamId = await upsertTeam(supabase, providerKey, fixture.homeTeamExternalId, fixture.homeTeamName, null);
+  const awayTeamId = await upsertTeam(supabase, providerKey, fixture.awayTeamExternalId, fixture.awayTeamName, null);
 
   const sourceTimestamp = new Date().toISOString();
   const row = {
@@ -52,7 +54,7 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
     away_score: fixture.awayScore,
     home_score_ht: fixture.homeScoreHt,
     away_score_ht: fixture.awayScoreHt,
-    source: provider,
+    source: providerName,
     source_timestamp: sourceTimestamp,
     is_synthetic: false
   };
@@ -60,7 +62,7 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
   const { data: existing, error: findError } = await supabase
     .from("fixtures")
     .select("id")
-    .eq(`external_ref->>${PROVIDER_KEY}`, fixture.externalId)
+    .eq(`external_ref->>${providerKey}`, fixture.externalId)
     .maybeSingle();
   if (findError) throw new Error(`Failed to look up fixture ${fixture.externalId}: ${findError.message}`);
 
@@ -72,7 +74,7 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
 
   const { error: insertError } = await supabase
     .from("fixtures")
-    .insert({ ...row, external_ref: { [PROVIDER_KEY]: fixture.externalId } });
+    .insert({ ...row, external_ref: { [providerKey]: fixture.externalId } });
   if (insertError) throw new Error(`Failed to insert fixture ${fixture.externalId}: ${insertError.message}`);
 }
 

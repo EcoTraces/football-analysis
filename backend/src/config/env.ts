@@ -6,15 +6,24 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   ML_SERVICE_URL: z.string().url().default("http://localhost:8000"),
-  FOOTBALL_DATA_PROVIDER: z.enum(["null", "api-football"]).default("null"),
+  // "football-data-org" is a SWAPPABLE ALTERNATIVE to api-football, not a
+  // second simultaneous source — see Data_Sources.md and
+  // FootballDataOrgProvider.ts's module comment for why this platform only
+  // ever runs one FootballDataProvider at a time.
+  FOOTBALL_DATA_PROVIDER: z.enum(["null", "api-football", "football-data-org"]).default("null"),
   FOOTBALL_DATA_API_KEY: z.string().optional().default(""),
   // Optional backup credential for the SAME vendor (API-Football), accessed
   // via RapidAPI instead of the direct api-sports.io channel — a separate
   // subscription/quota pool, used only as a failover when the primary
   // channel fails (see ApiFootballProvider.ts). Empty by default, meaning
   // "no backup configured" — the provider then behaves exactly as it did
-  // before this option existed.
+  // before this option existed. Only meaningful when
+  // FOOTBALL_DATA_PROVIDER=api-football.
   FOOTBALL_DATA_RAPIDAPI_KEY: z.string().optional().default(""),
+  // Required (fails fast at boot, same pattern as FOOTBALL_DATA_API_KEY)
+  // when FOOTBALL_DATA_PROVIDER=football-data-org — see
+  // FootballDataOrgProvider.ts.
+  FOOTBALL_DATA_ORG_API_KEY: z.string().optional().default(""),
   SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

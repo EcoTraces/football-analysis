@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderLineup } from "../providers/types.js";
-import { PROVIDER_KEY, upsertPlayer, upsertTeam } from "../services/referenceDataService.js";
+import { providerRefKey, upsertPlayer, upsertTeam } from "../services/referenceDataService.js";
 
 export interface SyncLineupsResult {
   runId: string;
@@ -44,15 +44,16 @@ async function upsertLineup(
   supabase: SupabaseClient,
   fixtureId: string,
   lineup: ProviderLineup,
-  provider: string
+  providerName: string
 ): Promise<void> {
-  const teamId = await upsertTeam(supabase, lineup.teamExternalId, lineup.teamName, null);
+  const providerKey = providerRefKey(providerName);
+  const teamId = await upsertTeam(supabase, providerKey, lineup.teamExternalId, lineup.teamName, null);
 
   const startingPlayerIds = await Promise.all(
-    lineup.startingPlayers.map((p) => upsertPlayer(supabase, p.externalId, p.name, teamId))
+    lineup.startingPlayers.map((p) => upsertPlayer(supabase, providerKey, p.externalId, p.name, teamId))
   );
   const substitutePlayerIds = await Promise.all(
-    lineup.substitutePlayers.map((p) => upsertPlayer(supabase, p.externalId, p.name, teamId))
+    lineup.substitutePlayers.map((p) => upsertPlayer(supabase, providerKey, p.externalId, p.name, teamId))
   );
 
   const { error } = await supabase.from("lineups").upsert(
@@ -70,7 +71,7 @@ async function upsertLineup(
       formation: lineup.formation,
       starting_players: startingPlayerIds,
       substitute_players: substitutePlayerIds,
-      source: provider,
+      source: providerName,
       source_timestamp: new Date().toISOString(),
       is_synthetic: false
     },
@@ -96,6 +97,7 @@ export async function syncLineups(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
+  const providerKey = providerRefKey(provider.name);
   const fixtures = await loadFixturesInWindow(supabase, windowHours);
 
   let fixturesSkipped = 0;
@@ -106,7 +108,7 @@ export async function syncLineups(
   const errors: string[] = [];
 
   for (const fixture of fixtures) {
-    const fixtureExternalId = fixture.external_ref?.[PROVIDER_KEY];
+    const fixtureExternalId = fixture.external_ref?.[providerKey];
     if (typeof fixtureExternalId !== "string") {
       fixturesSkipped += 1; // No provider id to call with — not an error.
       continue;

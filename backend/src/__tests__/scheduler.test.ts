@@ -186,7 +186,7 @@ describe("scheduler", () => {
       { id: "fx-soon", external_ref: { api_football: "1" }, is_synthetic: false, status: "scheduled", kickoff_utc: new Date(now + 2 * 3600_000).toISOString() },
       { id: "fx-far", external_ref: { api_football: "2" }, is_synthetic: false, status: "scheduled", kickoff_utc: new Date(now + 30 * 3600_000).toISOString() }
     ]);
-    const provider = new StubProvider("fake-provider");
+    const provider = new StubProvider("api-football");
     const calls: string[] = [];
     provider.getLineup = (fixtureExternalId: string) => {
       calls.push(fixtureExternalId);
@@ -205,7 +205,7 @@ describe("scheduler", () => {
       { id: "fx-soon", external_ref: { api_football: "1" }, is_synthetic: false, status: "scheduled", kickoff_utc: new Date(now + 2 * 3600_000).toISOString() },
       { id: "fx-far", external_ref: { api_football: "2" }, is_synthetic: false, status: "scheduled", kickoff_utc: new Date(now + 30 * 3600_000).toISOString() }
     ]);
-    const provider = new StubProvider("fake-provider");
+    const provider = new StubProvider("api-football");
     const calls: string[] = [];
     provider.getOdds = (fixtureExternalId: string) => {
       calls.push(fixtureExternalId);
@@ -243,7 +243,7 @@ describe("scheduler", () => {
         kickoff_utc: new Date(now - 100 * 3600_000).toISOString()
       }
     ]);
-    const provider = new StubProvider("fake-provider");
+    const provider = new StubProvider("api-football");
     const calls: string[] = [];
     provider.getFixtureStatistics = (fixtureExternalId: string) => {
       calls.push(fixtureExternalId);

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderInjury } from "../providers/types.js";
-import { externalId, loadExternalRefs, upsertPlayer } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs, providerRefKey, upsertPlayer } from "../services/referenceDataService.js";
 
 export interface SyncInjuriesResult {
   runId: string;
@@ -29,7 +29,7 @@ interface LoadedCombinations {
 // pair actually sent to the provider, since two internal season_id rows for
 // the same team (one per competition) can share the same external season
 // id (e.g. both "2026") and would otherwise trigger a redundant call.
-async function loadCombinations(supabase: SupabaseClient): Promise<LoadedCombinations> {
+async function loadCombinations(supabase: SupabaseClient, providerKey: string): Promise<LoadedCombinations> {
   const { data: fixtures, error } = await supabase
     .from("fixtures")
     .select("home_team_id, away_team_id, season_id")
@@ -55,8 +55,8 @@ async function loadCombinations(supabase: SupabaseClient): Promise<LoadedCombina
   let skipped = 0;
   for (const pair of teamSeasonPairs) {
     const [teamId, seasonId] = pair.split("|") as [string, string];
-    const teamExternalId = externalId(teams.get(teamId));
-    const seasonExternalId = externalId(seasons.get(seasonId));
+    const teamExternalId = externalId(teams.get(teamId), providerKey);
+    const seasonExternalId = externalId(seasons.get(seasonId), providerKey);
     if (!teamExternalId || !seasonExternalId) {
       skipped += 1; // No provider id to call with for this pair — not an error.
       continue;
@@ -103,7 +103,8 @@ export async function syncInjuries(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
-  const { combinations, skipped: combinationsSkipped } = await loadCombinations(supabase);
+  const providerKey = providerRefKey(provider.name);
+  const { combinations, skipped: combinationsSkipped } = await loadCombinations(supabase, providerKey);
 
   let playersProcessed = 0;
   let playersRejected = 0;
@@ -121,7 +122,7 @@ export async function syncInjuries(
 
     for (const injury of mostRecentPerPlayer(result.data)) {
       try {
-        const playerId = await upsertPlayer(supabase, injury.playerExternalId, injury.playerName, combo.teamId);
+        const playerId = await upsertPlayer(supabase, providerKey, injury.playerExternalId, injury.playerName, combo.teamId);
         const sourceTimestamp = new Date().toISOString();
         const { error } = await supabase.from("injuries").upsert(
           {

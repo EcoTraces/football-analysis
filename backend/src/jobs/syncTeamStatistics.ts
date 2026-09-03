@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderTeamStatistics } from "../providers/types.js";
-import { externalId, loadExternalRefs } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs, providerRefKey } from "../services/referenceDataService.js";
 
 export interface SyncTeamStatisticsResult {
   runId: string;
@@ -103,6 +103,7 @@ export async function syncTeamStatistics(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
+  const providerKey = providerRefKey(provider.name);
   const combinations = await loadCombinations(supabase);
   const teams = await loadExternalRefs(supabase, "teams", [...new Set(combinations.map((c) => c.teamId))]);
   const competitions = await loadExternalRefs(supabase, "competitions", [...new Set(combinations.map((c) => c.competitionId))]);
@@ -114,9 +115,9 @@ export async function syncTeamStatistics(
   const errors: string[] = [];
 
   for (const combo of combinations) {
-    const teamExternalId = externalId(teams.get(combo.teamId));
-    const competitionExternalId = externalId(competitions.get(combo.competitionId));
-    const seasonExternalId = externalId(seasons.get(combo.seasonId));
+    const teamExternalId = externalId(teams.get(combo.teamId), providerKey);
+    const competitionExternalId = externalId(competitions.get(combo.competitionId), providerKey);
+    const seasonExternalId = externalId(seasons.get(combo.seasonId), providerKey);
 
     if (!teamExternalId || !competitionExternalId || !seasonExternalId) {
       // Can't call the provider without its own ids for all three — most

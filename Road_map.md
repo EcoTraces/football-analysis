@@ -9,7 +9,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 2. PRD | ✅ Done | `PRD.md` |
 | 3. Architecture | ✅ Done | `Architecture.md` |
 | 4. Database design | ✅ Done | `Database.md`, `supabase/migrations/0001_init.sql` |
-| 5. Data providers | 🟡 Implemented, unverified — BLOCKED on a real key | `ApiFootballProvider` against api-football v3, with retry/backoff and rate-limit tracking; not yet exercised against a live key — no `FOOTBALL_DATA_API_KEY` exists anywhere in this development environment (see `Data_Sources.md` and README.md → "Configuring a live API-Football key") |
+| 5. Data providers | 🟡 Implemented, unverified — BLOCKED on a real key | `ApiFootballProvider` against api-football v3, with retry/backoff and rate-limit tracking; not yet exercised against a live key — no `FOOTBALL_DATA_API_KEY` exists anywhere in this development environment (see `Data_Sources.md` and README.md → "Configuring a live football data provider") |
 | 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds, schedulable | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert); all six plus predictions can now run on a cron via `SCHEDULER_ENABLED=true` (`scheduler.ts`) instead of manual admin calls, assuming a single backend instance |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
@@ -32,7 +32,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 **Steps 1–5 below are BLOCKED on a real `FOOTBALL_DATA_API_KEY`.** No such
 key exists anywhere in this development environment, and creating one
 requires a human to sign up with a real API-Football/RapidAPI account —
-see README.md → "Configuring a live API-Football key" for the exact steps
+see README.md → "Configuring a live football data provider" for the exact steps
 and the commands to run the moment a key is configured. Everything these
 steps need (the client, retry/rate-limit handling, the sync jobs, the
 scheduler, the observability endpoints) is already built and tested

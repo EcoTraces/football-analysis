@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider, ProviderPlayerStatistics } from "../providers/types.js";
-import { externalId, loadExternalRefs, upsertPlayer } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs, providerRefKey, upsertPlayer } from "../services/referenceDataService.js";
 
 export interface SyncPlayerStatisticsResult {
   runId: string;
@@ -43,13 +43,14 @@ async function loadCombinations(supabase: SupabaseClient): Promise<TeamCompetiti
 
 async function upsertPlayerStatistics(
   supabase: SupabaseClient,
+  providerKey: string,
   teamId: string,
   seasonId: string,
   stats: ProviderPlayerStatistics,
   provider: string,
   sourceTimestamp: string
 ): Promise<void> {
-  const playerId = await upsertPlayer(supabase, stats.playerExternalId, stats.playerName, teamId);
+  const playerId = await upsertPlayer(supabase, providerKey, stats.playerExternalId, stats.playerName, teamId);
 
   const { error } = await supabase.from("player_statistics").upsert(
     {
@@ -85,6 +86,7 @@ export async function syncPlayerStatistics(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
+  const providerKey = providerRefKey(provider.name);
   const combinations = await loadCombinations(supabase);
   const teams = await loadExternalRefs(supabase, "teams", [...new Set(combinations.map((c) => c.teamId))]);
   const competitions = await loadExternalRefs(supabase, "competitions", [...new Set(combinations.map((c) => c.competitionId))]);
@@ -97,9 +99,9 @@ export async function syncPlayerStatistics(
   const errors: string[] = [];
 
   for (const combo of combinations) {
-    const teamExternalId = externalId(teams.get(combo.teamId));
-    const competitionExternalId = externalId(competitions.get(combo.competitionId));
-    const seasonExternalId = externalId(seasons.get(combo.seasonId));
+    const teamExternalId = externalId(teams.get(combo.teamId), providerKey);
+    const competitionExternalId = externalId(competitions.get(combo.competitionId), providerKey);
+    const seasonExternalId = externalId(seasons.get(combo.seasonId), providerKey);
 
     if (!teamExternalId || !competitionExternalId || !seasonExternalId) {
       skipped += 1; // Same "not an error" reasoning as syncTeamStatistics.ts.
@@ -118,7 +120,7 @@ export async function syncPlayerStatistics(
       const sourceTimestamp = new Date().toISOString();
       for (const playerStats of result.data) {
         try {
-          await upsertPlayerStatistics(supabase, combo.teamId, combo.seasonId, playerStats, provider.name, sourceTimestamp);
+          await upsertPlayerStatistics(supabase, providerKey, combo.teamId, combo.seasonId, playerStats, provider.name, sourceTimestamp);
           playersProcessed += 1;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

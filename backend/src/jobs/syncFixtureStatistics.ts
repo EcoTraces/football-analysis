@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider } from "../providers/types.js";
-import { externalId, loadExternalRefs, PROVIDER_KEY } from "../services/referenceDataService.js";
+import { externalId, loadExternalRefs, providerRefKey } from "../services/referenceDataService.js";
 
 export interface SyncFixtureStatisticsResult {
   runId: string;
@@ -67,6 +67,7 @@ export async function syncFixtureStatistics(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
+  const providerKey = providerRefKey(provider.name);
   const fixtures = await loadFinishedFixturesInWindow(supabase, windowHours);
   const teamIds = [...new Set(fixtures.flatMap((f) => [f.home_team_id, f.away_team_id]))];
   const teamRefs = await loadExternalRefs(supabase, "teams", teamIds);
@@ -79,7 +80,7 @@ export async function syncFixtureStatistics(
   const touchedTeamSeasons = new Map<string, { teamId: string; seasonId: string }>();
 
   for (const fixture of fixtures) {
-    const fixtureExternalId = fixture.external_ref?.[PROVIDER_KEY];
+    const fixtureExternalId = fixture.external_ref?.[providerKey];
     if (typeof fixtureExternalId !== "string") {
       fixturesSkipped += 1; // No provider id to call with — not an error.
       continue;
@@ -90,8 +91,8 @@ export async function syncFixtureStatistics(
     // single flipped-around global map, since a team's external id is only
     // meaningful in relation to a specific team, not something to search
     // for accidentally colliding with an unrelated team.
-    const homeExternalId = externalId(teamRefs.get(fixture.home_team_id));
-    const awayExternalId = externalId(teamRefs.get(fixture.away_team_id));
+    const homeExternalId = externalId(teamRefs.get(fixture.home_team_id), providerKey);
+    const awayExternalId = externalId(teamRefs.get(fixture.away_team_id), providerKey);
     const byExternalId = new Map<string, string>();
     if (homeExternalId) byExternalId.set(homeExternalId, fixture.home_team_id);
     if (awayExternalId) byExternalId.set(awayExternalId, fixture.away_team_id);

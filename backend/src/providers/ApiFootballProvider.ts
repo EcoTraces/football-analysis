@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type {
   FootballDataProvider,
+  ObservableHttpProvider,
   ProviderFixture,
   ProviderFixtureStatistics,
   ProviderInjury,
@@ -100,7 +101,7 @@ interface AttemptOutcome<T> {
   retryAfterMs: number | null;
 }
 
-export class ApiFootballProvider implements FootballDataProvider {
+export class ApiFootballProvider implements FootballDataProvider, ObservableHttpProvider {
   readonly name = "api-football";
   private lastRateLimitStatus: RateLimitStatus | null = null;
   private lastRequestStatus: LastRequestStatus | null = null;

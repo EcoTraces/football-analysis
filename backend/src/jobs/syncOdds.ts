@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider } from "../providers/types.js";
-import { PROVIDER_KEY } from "../services/referenceDataService.js";
+import { providerRefKey } from "../services/referenceDataService.js";
 
 export interface SyncOddsResult {
   runId: string;
@@ -64,6 +64,7 @@ export async function syncOdds(
   if (runError) throw new Error(`Failed to create ingestion_runs row: ${runError.message}`);
   const runId = run.id as string;
 
+  const providerKey = providerRefKey(provider.name);
   const fixtures = await loadFixturesInWindow(supabase, windowHours);
 
   let fixturesSkipped = 0;
@@ -74,7 +75,7 @@ export async function syncOdds(
   const errors: string[] = [];
 
   for (const fixture of fixtures) {
-    const fixtureExternalId = fixture.external_ref?.[PROVIDER_KEY];
+    const fixtureExternalId = fixture.external_ref?.[providerKey];
     if (typeof fixtureExternalId !== "string") {
       fixturesSkipped += 1; // No provider id to call with — not an error.
       continue;
