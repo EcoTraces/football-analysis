@@ -13,12 +13,12 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds, schedulable | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert); all six plus predictions can now run on a cron via `SCHEDULER_ENABLED=true` (`scheduler.ts`) instead of manual admin calls, assuming a single backend instance |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
-| 9. Prediction engine | 🟡 Baseline only | Poisson/Dixon-Coles; no ensemble, no other algorithms yet |
+| 9. Prediction engine | 🟡 Poisson/Dixon-Coles + gradient boosting + a real ensemble | `poisson-baseline` (with fitted-RHO support, global and per-competition) and `gradient-boosting` for 1x2; a genuine ensemble now also exists (Elo + Poisson + Form + Home/Away + Injuries + Market, weighted and admin-tunable — see `ML_Model.md`'s "Ensemble model" section) — none of the three has been exercised against real, non-synthetic match history yet |
 | 10. Model training/backtesting | ⬜ Not started | No historical dataset loaded; `model_evaluations` has no writer |
 | 11. Frontend | 🟡 Core pages + auth + admin dashboard done | Fixtures today + match detail, both now sign-in-gated; sign-in/sign-up pages, an admin sync/jobs dashboard, and a Users panel exist (Supabase Auth); no search UI |
 | 12. Analytics dashboard | ⬜ Not started | |
 | 13. Daily analysis | ⬜ Not started | |
-| 14. Accumulator research | ⬜ Not started | |
+| 14. Accumulator research | 🟡 Phase 1 done | A real accumulator optimizer exists — 5/7/10/15/20-odds targets, greedy leg selection by selection score, same-team correlation penalty, "best overall" flag, and an honest "no high-confidence accumulator today" empty state — see `ML_Model.md`'s "Accumulator optimizer" section. Not yet exercised against real fixture/odds history |
 | 15. Notifications | ⬜ Not started | Schema exists (`notifications` table); no delivery |
 | 16. Admin dashboard (UI) | ✅ Done | `/admin` (provider connectivity, scheduler status, per-dataset freshness, job history, manual sync triggers) and `/admin/users` (promote/demote) both have a frontend now — no admin action is curl-only anymore |
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
@@ -81,3 +81,34 @@ against fakes; only the live verification itself is outstanding.
    cross-process locking) — either a distributed lock, or moving scheduling
    to an external trigger (e.g. Cloud Scheduler) hitting the existing admin
    endpoints instead of an in-process cron.
+
+## AI Football Analyst & Accumulator Engine — Phase 2+ (deferred from Phase 1)
+
+Phase 1 (Elo, a real ensemble, EV/edge, selection scoring, 5-tier risk,
+Top 20 / Matches to Avoid, the accumulator optimizer, and admin-editable
+config — see `ML_Model.md`'s "Ensemble model" section) is done. Named here,
+not silently assumed, per the plan the user approved for this feature:
+
+- A second, xG-capable data provider — this platform has no xG/xGA/shots/
+  possession data at all today (see `Data_Sources.md`), so Phase 1 dropped
+  that ensemble component and redistributed its weight across the rest.
+- Live odds-movement/CLV (closing-line-value) tracking — `odds_snapshots`
+  is already a time series (see `Database.md`), but nothing analyzes
+  movement over time yet.
+- Settling `ensemble_predictions`/`accumulator_recommendations` against
+  actual results, a P&L computation, and the Performance/ROI/Brier/
+  calibration dashboard the spec described — there is no settled
+  prediction history yet, so building this now would be premature. The
+  versioning (`generated_at`/`superseded_at`) is already shaped to support
+  this without a future breaking migration.
+- A dedicated Prediction History UI page.
+- A dedicated Settings page — Phase 1's admin config lives in
+  `AdminDashboard.tsx` alongside everything else.
+- Squad/lineup tactical modeling beyond the current simple key-absence
+  count (no minutes-played/starting-XI/position data exists yet).
+- Fuller natural-language explanations beyond the existing short `factors`
+  labels.
+- Turning the scheduler on and verifying the live api-football key — this
+  was an explicit, separate decision the user made when scoping Phase 1
+  (build now against manual-sync/demo-data capability; verify live data
+  independently), not a Phase 1 blocker.

@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-09-03 — AI Football Analyst & Accumulator Engine (Phase 1)
+
+The user submitted a 38-section spec for a full quant-style prediction/
+accumulator platform. A repo audit surfaced two real gaps that shaped
+scope: this platform has no xG/xGA/shots/possession data anywhere (the
+spec's largest-weighted ensemble component), and production has never run
+live (scheduler off, no verified key, minimal real ingested history). Per
+the user's own explicit choices (asked via `AskUserQuestion` before writing
+any code), Phase 1 drops xG and redistributes its weight across the real
+components, and is built now against the existing manual-sync/demo-data
+capability rather than waiting on the scheduler/live key. See
+`ML_Model.md`'s "Ensemble model" section for the full design and its
+explicitly-named Phase 2+ deferrals (settling + P&L + a Performance
+dashboard, live odds-movement/CLV, a second xG-capable provider, dedicated
+Prediction History/Settings pages, turning the scheduler on).
+
+- **Database** (`0009`–`0013`): `team_elo_ratings`; `competition_allowlist`
+  (ships empty by design); `ensemble_config`/`screening_config`/
+  `accumulator_targets` (the first genuinely admin-*edited*, not
+  admin-computed, config in this schema); `ensemble_predictions` (a full
+  prediction-history table, versioned like `predictions`); and
+  `accumulator_recommendations`. Applied and smoke-tested against a local
+  Postgres 16 instance with a stubbed `auth` schema.
+- **ml-service**: `models/elo.py` (`/predict/elo` — Elo ratings with a
+  Gaussian draw-probability carve-out) and `models/ensemble.py`
+  (`/predict/ensemble` — weighted combination of whichever of six
+  components are actually present, de-vigged market odds, an
+  explicitly-unvalidated injuries nudge, consensus-level grading, EV/edge,
+  the 0-100 selection score, and the 5-tier elite/strong/medium/high_risk/
+  avoid risk classification). 36 new tests.
+- **Backend**: `computeEloRatings.ts` (chronological Elo replay);
+  `adminConfigService.ts` + new admin config routes;
+  `generateEnsemblePredictions.ts` (gathers Elo/Poisson/Form/Home-Away/
+  Injuries/Market per fixture, freshness-gates injuries, picks a single
+  bookmaker's complete odds triple, never mixes prices across
+  bookmakers); `screeningService.ts` + `GET /top20` / `GET
+  /matches-to-avoid` / `GET /accumulators`; `buildAccumulators.ts` (greedy
+  leg selection within the spec's own leg-count bands per target,
+  same-team correlation penalty, a `usedFixtureIds` safeguard against
+  double-booking a fixture, "best overall" flagged across all targets in
+  one run). Three new scheduler stages, in dependency order:
+  `compute_elo_ratings` → `predictions_ensemble` → `build_accumulators`.
+- **Frontend**: `Top20.tsx`, `MatchesToAvoid.tsx`, `Accumulators.tsx`
+  (three new sign-in-gated pages); `RiskTierBadge`; five new
+  `AdminDashboard.tsx` config sections; `lib/bannedPhrases.ts` — extends
+  the existing No Guarantee Policy phrase list with accumulator-specific
+  hype terms, and every new page's rendered copy is scanned against it in
+  its own test suite. All three empty states are honest, never a forced
+  pick: "No high-confidence opportunities today," "Nothing flagged right
+  now," and the spec's own explicit "No high-confidence accumulator
+  today."
+- A couple of real bugs caught by tests along the way: a
+  `ZeroDivisionError` in `devig_market_probabilities` on degenerate
+  `{0,0,0}` odds (now a proper `422`), and `selectAccumulatorLegs`
+  originally trusting its caller to never pass two candidates for the same
+  fixture rather than actually enforcing it — both fixed.
+- Test counts: backend 292/292, frontend 81/81, ml-service 104/104.
+  `tsc`/`eslint`/build clean across all three. Not exercised against real,
+  non-synthetic match or odds history — every new fixed constant (Elo's
+  `HOME_ADVANTAGE`, the accumulator's `TEAM_OVERLAP_PENALTY`, every
+  default weight/threshold) is a documented placeholder, same "plausible,
+  not fitted" honesty as this project's existing `RHO`/`CARDS_LINE`-style
+  constants.
+
 ## 2026-08-29 — Favicon, /matches/:id test coverage, CI security-scanning gate
 
 Three smaller, independent follow-ups after the redesign above.

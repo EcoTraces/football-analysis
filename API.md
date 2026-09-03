@@ -78,6 +78,29 @@ Standings for a season (`leagueId` is actually a `season_id` — see
 backed by real data once `POST /admin/standings/sync` has been run for
 that season — before that, returns an empty list, not a fabricated table.
 
+### `GET /top20`
+The current, non-superseded ensemble prediction per fixture (see
+`ML_Model.md`'s "Ensemble model" section), one entry per fixture, sorted by
+`selection_score` descending, excluding `avoid` risk tier. `?limit=N`
+(default/max 20). Returns `{ data: [...], meta: { count } }` — `data` is
+`[]`, never a forced/padded pick, when nothing qualifies (e.g. no
+competitions are allowlisted yet, or no fixture clears the `avoid`
+threshold).
+
+### `GET /matches-to-avoid`
+Current ensemble predictions flagged `risk_tier in ('high_risk',
+'avoid')`, `consensus_level = 'conflicting'`, or `data_quality =
+'insufficient'` — every applicable reason is included, not just the first
+match. Returns `{ data: [...], meta: { count } }`.
+
+### `GET /accumulators?legs=N`
+Current accumulator recommendations (see `ML_Model.md`'s "Accumulator
+optimizer" section). Omit `legs` for every target's current recommendation;
+pass `legs` (one of the configured targets, default `5/7/10/15/20`) to
+fetch just that target's. Returns `{ data: [...], meta: { count } }` — a
+target with no qualifying legs is simply absent from `data`, never a
+forced/padded accumulator.
+
 ## Admin
 
 Every route below requires `Authorization: Bearer <supabase-jwt>` for a
@@ -336,6 +359,65 @@ and is what makes the scheduler's multi-day observation period
 Per-`job_name` summary reduced from the most recent 500 `ingestion_runs`
 rows: `{ [job_name]: { lastRun, lastSuccess } }`, where `lastSuccess` is
 `null` if that job has never succeeded in the sampled window.
+
+### `POST /admin/elo/recompute`
+Recomputes every team's global Elo rating from scratch by replaying its
+finished, non-synthetic fixture history (`computeEloRatings.ts` — see
+`ML_Model.md`'s "Elo ratings" section). No provider call, so no `409
+no_provider_configured`. Also runs daily on the scheduler
+(`compute_elo_ratings`); this route is for an out-of-cycle manual trigger.
+Returns `{ runId, teamsRated, matchesReplayed }` (field names per
+`computeCurrentEloRatings()`'s own result shape).
+
+### `GET /admin/elo/ratings`
+Every team's current Elo rating, joined with its name, ordered highest
+first. Returns `{ id, team_id, teamName, rating, matches_played,
+computed_at }[]`.
+
+### `POST /admin/predictions/ensemble/run`
+Generates the ensemble prediction (Elo + Poisson + Form + Home/Away +
+Injuries + Market) for every upcoming fixture in an allowlisted
+competition (see `ML_Model.md`'s "Ensemble model" section). Same `409
+no_model_version` contract as `/admin/predictions/run` if no `ensemble`
+`model_versions` row exists yet. Returns `{ runId, processed, skipped,
+failed }`. Also runs daily on the scheduler (`predictions_ensemble`),
+right after `compute_elo_ratings`.
+
+### `POST /admin/accumulators/build`
+Builds accumulator recommendations for every enabled target
+(`accumulator_targets`) from the current `ensemble_predictions` pool (see
+`ML_Model.md`'s "Accumulator optimizer" section). No `model_versions`
+gating — this optimizes over already-generated predictions, it isn't
+itself a model. Returns `{ runId, targetsBuilt, targetsSkipped }` —
+`targetsSkipped` counts enabled targets that had too few qualifying legs to
+produce a recommendation (never a padded/forced one). Also runs daily on
+the scheduler (`build_accumulators`), right after `predictions_ensemble`.
+
+### AI Football Analyst admin config
+None of the routes below call an external provider or ml-service, so none
+are rate limited (same reasoning as the read-only calibration routes
+above). Each `PUT`/`POST` validates its body with Zod (weights must sum to
+1; risk thresholds must be descending) and returns the freshly-read config
+on success, same "write, then read back" shape throughout.
+
+- **`GET`/`PUT /admin/config/ensemble-weights`** — the six
+  per-component ensemble weights (`elo, poisson, form, home_away,
+  injuries, market`). Returns `{ ..., isDefault: boolean }` —
+  `isDefault: true` means nobody has ever edited this and the dev-seeded
+  defaults are in effect (same shape `getLeagueAverages()` already uses).
+- **`GET`/`PUT /admin/config/screening`** — the four selection-score
+  weights (`ensemble_confidence, ev, consensus, data_quality`) and four
+  risk-tier thresholds (`elite_min, strong_min, medium_min,
+  high_risk_min`).
+- **`GET /admin/config/accumulator-targets`** / **`PUT
+  /admin/config/accumulator-targets/:legs`** — per-leg-target (5/7/10/15/20)
+  minimum selection score and enabled flag.
+- **`GET /admin/config/competition-allowlist`** / **`POST
+  /admin/config/competition-allowlist/:competitionId`** — which
+  competitions the ensemble/screening pipeline is allowed to consider.
+  Ships with zero rows; `/top20`, `/matches-to-avoid`, and `/accumulators`
+  correctly return empty, not "everything," until an admin explicitly
+  enables at least one competition here.
 
 ## Scheduler (no HTTP surface)
 

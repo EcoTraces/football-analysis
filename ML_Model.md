@@ -628,6 +628,276 @@ prediction is still using the fixed cross-league default in practice,
 `league_calibration` stays empty, and the admin dashboard's "League
 calibration" panel has nothing to show until real data exists.
 
+## Ensemble model: AI Football Analyst & Accumulator Engine (Phase 1)
+
+The user's own 38-section spec asked for a full quant-style prediction
+platform — Elo, an ensemble of multiple models, EV/edge detection, a 0-100
+selection score, 5-tier risk classification, a Top-20 screening engine, an
+accumulator optimizer, and prediction-history tracking. Two real gaps in
+this codebase shaped how Phase 1 was actually built, both resolved by
+explicit user decision rather than silently assumed:
+
+- **No xG/xGA/shots/possession data exists anywhere in this platform** —
+  `ApiFootballProvider` never maps it. The spec's largest-weighted ensemble
+  component (xG, 25%) is simply not buildable here. Per the user's explicit
+  choice, Phase 1 **drops the xG component entirely and redistributes its
+  configured weight proportionally across the components that actually
+  exist** — the ensemble combiner (`ensemble.py::combine_components`) does
+  this generically for *any* missing component, not just xG, so a
+  component being absent for one particular fixture (e.g. no odds
+  available) is handled the same principled way.
+- **Production has never run live** (see `Database.md`'s "Known gaps" and
+  `Data_Sources.md`) — no scheduler, no verified live key, no real ingested
+  history. Per the user's explicit choice, Phase 1 is **built now against
+  the existing manual-sync/demo-data capability**, with honest
+  data-quality/freshness signaling everywhere instead of waiting on the
+  scheduler being turned on. That remains separate follow-up work, not a
+  Phase 1 blocker.
+
+**Explicitly deferred to Phase 2+** (named, not silently out of scope): a
+second, xG-capable data provider; live odds-movement/CLV tracking; settling
+predictions against actual results, P&L computation, and a
+performance/ROI/Brier/calibration dashboard (there is no settled history
+yet — building this now would be premature, see `Database.md`'s note on
+`ensemble_predictions`/`accumulator_recommendations`); a dedicated
+Prediction History UI page; a dedicated Settings page (config lives in
+`AdminDashboard.tsx` for now); squad/lineup tactical modeling beyond a
+simple key-absence count; fuller natural-language explanations beyond the
+existing short `factors` labels; turning the scheduler on or verifying the
+live api-football key.
+
+### Elo ratings
+
+`ml-service/app/models/elo.py` + `backend/src/jobs/computeEloRatings.ts`,
+split deliberately across the two services:
+
+- **Rating maintenance** (chronological replay of every finished,
+  non-synthetic fixture, applying the standard Elo update after each
+  result) lives in the **backend** (`computeEloRatings.ts`) — cheap to do
+  as one in-process pass over already-fetched rows, and prohibitively
+  expensive as one ml-service HTTP call per historical match.
+  `expectedScore()`/`applyMatchResult()` are pure, directly unit-tested
+  functions; `DEFAULT_RATING = 1500`, `K_FACTOR = 24` (fixed, unfitted,
+  same honesty as every other constant in this file).
+  `computeCurrentEloRatings()` recomputes every team's rating from scratch
+  each run and upserts into `team_elo_ratings` (see `Database.md`) — not an
+  incremental update, so there's no drift-correction bug to worry about
+  between runs.
+- **Rating-to-probability conversion**, used once per fixture at screening
+  time, is a stateless ml-service endpoint, `POST /predict/elo`
+  (`elo.py::elo_match_probabilities`) — same shape as `/predict/poisson`.
+  Classic Elo has no notion of a draw; a draw probability is carved out as
+  a function of how close the two (home-advantage-adjusted) ratings are
+  (`MAX_DRAW_PROBABILITY = 0.30` at equal ratings, decaying over
+  `DRAW_RATING_SPREAD = 200` rating points) before splitting the remainder
+  home/away via the standard Elo expected-score formula.
+  `HOME_ADVANTAGE = 60` rating points, fixed and unfitted. A team's rating
+  is treated as unreliable below `MIN_MATCHES_FOR_ELO = 5` matches
+  (`data_quality_for()`: insufficient/limited/strong, same three-tier shape
+  as `poisson.py`'s).
+- **Never actually backtested.** Like `poisson.py`'s `RHO`, these constants
+  are commonly-cited approximations, not values fit against this
+  platform's own results — there is no real match history to fit against
+  in this environment (see "Known limitations" above).
+
+### Ensemble combiner
+
+`ml-service/app/models/ensemble.py`, called once per fixture via
+`POST /predict/ensemble`. Combines up to six components into one
+calibrated 3-way probability:
+
+| Component | Source |
+|---|---|
+| `elo` | `/predict/elo`, gated on `MIN_MATCHES_FOR_ELO` |
+| `poisson` | The existing `/predict/poisson` baseline prediction |
+| `form` | `/predict/poisson` called with each team's last-5-finished-matches goals averages (`computeRecentForm()` in `generateEnsemblePredictions.ts` — structurally the same windowed, point-in-time computation `runBacktest.ts`'s `computePointInTimeStrength()` already does, just capped to 5 matches instead of full season) |
+| `home_away` | `/predict/poisson` called with `team_statistics` rows scoped to `home`/`away` specifically, rather than `overall` |
+| `market` | Derived directly from the latest complete 1x2 odds triple from a single bookmaker (`devig_market_probabilities()` — normalizes out the overround; never mixes best-per-selection prices across different bookmakers, since no bookmaker ever actually quoted that combination) |
+| `injuries` | Derived from `homeKeyAbsences`/`awayKeyAbsences` counts (`injury_adjustment()` — a small, explicitly-unvalidated symmetric nudge off an even 1/3-1/3-1/3 prior, capped at `MAX_ABSENCE_SHIFT = 0.15`) |
+
+**Weighting and missing components.** `combine_components()` takes a
+weighted average of whichever components are actually present for a given
+fixture, redistributing a missing component's configured weight
+proportionally across the rest — it never fabricates a value for a
+component it wasn't given. Weights themselves are not constants in this
+module; they come from the admin-editable `ensemble_config` table (see
+"Admin-editable configuration" below), specifically so they can be tuned or
+backtested later without a code change. The dev-seeded defaults
+(`elo 0.2667, poisson 0.2, form 0.2, home_away 0.1333, injuries 0.1333,
+market 0.0667`, sum to exactly 1.0000) are the spec's own six real-component
+weights after proportionally redistributing the dropped xG component's
+25%.
+
+**Consensus level** (`high`/`moderate`/`low`/`conflicting`) — spec section
+15's "model agreement" — is graded from how tightly the present
+components' probabilities for the combined favourite outcome cluster, and
+whether they even agree on which outcome is favoured at all
+(`consensus_level()`). Fewer than 2 components present is always reported
+as `low`: a single signal can't demonstrate "agreement" with anything.
+
+**Overall data quality** is the *worst* quality among the components
+actually used (`overall_data_quality()`), never the best — one strong
+component can't paper over another built from too little data.
+
+**Injuries gating.** `getInjuriesSyncFreshness()`
+(`generateEnsemblePredictions.ts`) checks the most recent successful
+`sync_injuries` `ingestion_runs` row globally (LIVE/RECENT/STALE/
+UNAVAILABLE, via the existing `classifyFreshness()`) before counting
+absences for *any* fixture — a per-team check can't distinguish "this
+team's injuries were never synced" from "this team is genuinely fully
+fit," since both look like zero rows. A "key absence" is an
+injured/suspended/doubtful player who is an above-team-median goalscorer
+this season (`player_statistics.goals_scored`) — a named, explicitly
+unvalidated Phase 1 simplification (no minutes-played, starting-XI, or
+position data exists in this platform to do better).
+
+### EV, edge, and odds
+
+`compute_ev_and_edge()`: `edge_pct = (probability - implied_probability) *
+100`, `ev = probability * decimal_odds - 1`, where
+`implied_probability = 1 / decimal_odds`. Both are `None` — never
+fabricated — whenever no real odds exist for that fixture/selection ("Never
+fabricate odds. If live odds are unavailable, explicitly display 'Odds
+unavailable.'", per the spec's own No Guarantee Policy). **1x2 only in
+Phase 1** — `syncOdds.ts` also captures BTTS/O-U 2.5, but EV/edge for those
+markets is not wired into the ensemble here; that's deferred, not silently
+missing, matching the existing backtester's own 1x2-only scope.
+
+### Selection score and risk tier
+
+`selection_score()` blends four signals this platform can actually
+compute — not the original spec's fuller 7-component breakdown, since
+several of those (e.g. xG-based "statistical strength," tactical matchup
+data) need data this platform doesn't have:
+
+- **Ensemble confidence** — the combined probability itself, 0-100.
+- **EV** — scaled so `EV_SCORE_SCALE = 0.20` (±20% EV) maps to the 100/0
+  ends of the range; `ev = None` (no real odds) maps to a neutral 50,
+  never a bonus or penalty for lacking odds coverage.
+- **Consensus** — `CONSENSUS_SCORE`: high=100, moderate=65, low=35,
+  conflicting=0.
+- **Data quality** — `DATA_QUALITY_SCORE`: strong=100, limited=55,
+  insufficient=0.
+
+Each signal's weight is admin-editable (`screening_config`, defaults
+`ensemble_confidence 0.4, ev 0.3, consensus 0.2, data_quality 0.1`).
+`risk_tier()` maps the resulting 0-100 score onto a fixed 5-tier ordering
+— elite > strong > medium > high_risk > avoid — against admin-editable
+thresholds (defaults: `elite_min 85, strong_min 70, medium_min 50,
+high_risk_min 30`; below `high_risk_min` is `avoid`). The same ladder is
+implemented identically (intentionally duplicated, not shared code) in
+`buildAccumulators.ts::riskTierForScore()`, since the accumulator builder
+needs to reason about risk tier without a round-trip to ml-service.
+
+### Top 20 / Matches to Avoid
+
+`backend/src/services/screeningService.ts`, reading the versioned
+`ensemble_predictions` table (see `Database.md`):
+
+- **`getTop20()`** — the current, non-superseded ensemble prediction per
+  fixture (one entry per fixture, its own best-scoring selection), sorted
+  by `selection_score` descending, excluding `avoid` tier, capped at 20.
+- **`getMatchesToAvoid()`** — no new table; a filtered read flagging any
+  current prediction with `risk_tier in ('high_risk', 'avoid')`,
+  `consensus_level = 'conflicting'`, or `data_quality = 'insufficient'` —
+  every applicable reason is surfaced, not just the first one found.
+- Both correctly return **empty**, never a forced pick, when nothing
+  qualifies — see `frontend/src/pages/Top20.tsx`'s "No high-confidence
+  opportunities today" / `MatchesToAvoid.tsx`'s "Nothing flagged right
+  now" empty states, and `bannedPhrases.ts` below.
+- Both are also empty by construction until an admin populates
+  `competition_allowlist` — it ships with zero rows (see `Database.md`),
+  so "nothing is eligible yet" is the honest Phase 1 default, never
+  "everything."
+
+### Accumulator optimizer
+
+`backend/src/jobs/buildAccumulators.ts` — a search/ranking problem over
+already-computed rows, so it lives entirely in the backend, not
+ml-service. For each of five odds targets (5/7/10/15/20, admin-editable
+minimum score per target via `accumulator_targets`):
+
+1. **Candidate pool** (`loadAccumulatorCandidatePool()`) — one candidate
+   per fixture (its own best-scoring current selection), requiring real
+   `best_odds` (never a fabricated price) and excluding `avoid` tier.
+2. **Leg selection** (`selectAccumulatorLegs()`, pure and directly
+   unit-tested) — greedily takes candidates by `selection_score`
+   descending, filtered to the target's minimum score, stopping once the
+   combined odds reach the target's approximate leg-count band (matching
+   the user's own spec's ranges verbatim: 5→4-6 legs, 7→5-7, 10→6-9,
+   15→8-12, 20→8-15). A defensive `usedFixtureIds` check inside the loop
+   guarantees no two legs ever come from the same fixture, even though the
+   caller already deduplicates upstream. Returns `null` — never a padded
+   or forced accumulator — when there aren't even the target's minimum
+   number of qualifying legs.
+3. **Correlation control** — a same-team-across-legs penalty
+   (`TEAM_OVERLAP_PENALTY = 0.08` per correlated pair, capped at 1.0),
+   fixed and unfitted like every other placeholder constant in this file,
+   discounting the accumulator's `composite_score`.
+4. **Best overall** — across all five targets built in one run, the single
+   highest-`composite_score` row is flagged `is_best_overall: true`
+   (`accumulator_recommendations`, see `Database.md`).
+
+When no target produces a qualifying accumulator, the frontend shows "No
+high-confidence accumulator today" (`Accumulators.tsx`) — the spec's own
+explicit "NO HIGH-CONFIDENCE ACCUMULATOR TODAY" requirement, never a forced
+selection to fill the page.
+
+### Admin-editable configuration
+
+A genuinely new pattern in this codebase: existing tables like
+`league_calibration`/`competition_rho` are admin-*computed* (a job writes
+them); `ensemble_config`, `screening_config`, `accumulator_targets`, and
+`competition_allowlist` are admin-*edited* directly.
+`backend/src/services/adminConfigService.ts` exposes `getX()`/`upsertX()`
+pairs, each `getX()` returning `{..., isDefault: boolean}` — the same
+shape `getLeagueAverages()` already uses to signal "falling back to a
+default, not a real computed value." Weight-sums-to-1 and
+descending-risk-threshold validation happen in the route layer's Zod
+schemas (`routes/admin.ts`), not a DB constraint — there's no precedent in
+this schema for that, and rounding makes a DB-level check on summed
+floats brittle. Surfaced in `AdminDashboard.tsx` as four new sections
+(ensemble weights, score weights/risk thresholds, accumulator targets,
+competition allowlist) — no dedicated Settings page yet (see "deferred"
+list above).
+
+### Scheduler
+
+Three new always-scheduled jobs, each depending on the previous stage's
+output, all UTC (`scheduler.ts`): `compute_elo_ratings` (03:20) →
+`predictions_ensemble` (03:25) → `build_accumulators` (03:30), running
+after the existing `predictions` job (03:15). Manual admin triggers also
+exist for each (`POST /admin/elo/recompute`, `/admin/predictions/ensemble/run`,
+`/admin/accumulators/build` — see `API.md`).
+
+### Banned-phrase policy
+
+`frontend/src/lib/bannedPhrases.ts` extends `Coding_Rules.md`/`PRD.md`'s
+No Guarantee Policy list ("100% sure," "guaranteed win," "fixed match,"
+"banker," "risk-free") with accumulator-specific hype terms ("lock of the
+day," "can't lose," "sure thing"). `findBannedPhrases()`/
+`assertNoBannedPhrases()` are unit-tested directly, and every new
+screening page's rendered copy (`Top20.tsx`, `MatchesToAvoid.tsx`,
+`Accumulators.tsx`) is scanned for these phrases as part of its own test
+suite. Deliberately scoped to this feature's own generated/static copy —
+**not** `ResponsibleGamblingFooter.tsx`, which legitimately quotes several
+of these phrases in order to explicitly disclaim them.
+
+### Caveats — same discipline as everything else in this file
+
+None of this has been exercised against real, non-synthetic match or odds
+history: no live API-Football key has ever been connected in this
+environment (see `Database.md`'s "Known gaps"), so Elo ratings, the
+ensemble's component probabilities, EV/edge, and the accumulator pool are
+all only as good as whatever demo/manually-synced data exists at the time.
+Every constant introduced here (`HOME_ADVANTAGE`, `MAX_DRAW_PROBABILITY`,
+`DRAW_RATING_SPREAD`, `K_FACTOR`, `KEY_ABSENCE_IMPACT`,
+`MAX_ABSENCE_SHIFT`, `EV_SCORE_SCALE`, `TEAM_OVERLAP_PENALTY`, and every
+default weight/threshold) is a documented, plausible placeholder, not a
+value fit against this platform's own results. Turning the scheduler on
+and verifying the live api-football key — the two gaps that shaped Phase
+1's scope — remain the user's own separate, explicit follow-up.
+
 ## Adding a new model
 
 1. Implement it in `ml-service/app/models/` — see `gradient_boosting.py`

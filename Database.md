@@ -7,7 +7,11 @@ countries/seasons/fixtures/teams/competitions), and
 plus a uniqueness constraint on `injuries` that 0001 didn't anticipate
 needing), and `0004_user_profiles_role_guard.sql` (closes a role
 self-escalation gap in the 0001 RLS policies — see "Access control" below)
-— each added once a real need showed up. Dev-only synthetic seed:
+— each added once a real need showed up, through `0009`–`0013` (the AI
+Football Analyst / Accumulator Engine — Elo ratings, admin-editable
+config, ensemble prediction history, and accumulator recommendations; see
+"AI Football Analyst / Accumulator Engine tables" below and `ML_Model.md`'s
+"Ensemble model" section). Dev-only synthetic seed:
 `supabase/seed/dev_seed_synthetic.sql`.
 
 ## Design conventions
@@ -107,6 +111,29 @@ never does.
 | `predictions` | Market probabilities per fixture, with confidence/data_quality/factors |
 | `user_profiles`, `notifications` | User-owned data, RLS-protected |
 | `ingestion_runs`, `data_quality_flags` | Observability for sync jobs and data validation |
+| `team_elo_ratings` (0009) | One row per team — global Elo rating, recomputed from scratch and upserted on each run of `computeEloRatings.ts` |
+| `competition_allowlist` (0010) | Which competitions the screening/ensemble pipeline is allowed to consider — ships empty by design; see "Known gaps" below |
+| `ensemble_config`, `screening_config`, `accumulator_targets` (0011) | Admin-editable weights/thresholds — per-component ensemble weights, selection-score weights + risk-tier thresholds, and per-leg-target minimum score, respectively. The first genuinely admin-*edited* config in this schema, distinct from admin-*computed* tables like `league_calibration`/`competition_rho` |
+| `ensemble_predictions` (0012) | Prediction history for the ensemble model — combined probability, which components were present vs. missing, consensus level, 0-100 selection score, 5-tier risk classification, EV/edge against real odds, data quality. Same never-overwrite/`superseded_at` versioning as `predictions` |
+| `accumulator_recommendations` (0013) | One row per built accumulator (per target leg count, per run) — a self-describing snapshot of its legs (`leg_selections` jsonb) so the row stays meaningful even after the underlying `ensemble_predictions` rows are superseded, plus combined odds/probability, correlation penalty, composite score, and an `is_best_overall` flag |
+
+## AI Football Analyst / Accumulator Engine tables
+
+Migrations `0009`–`0013` back the ensemble/screening/accumulator feature
+described in `ML_Model.md`'s "Ensemble model" section. Two design points
+worth calling out here specifically:
+
+- **No new table for "Matches to Avoid."** It's a filtered read of
+  `ensemble_predictions` (`risk_tier in ('high_risk','avoid')` or
+  `consensus_level = 'conflicting'` or `data_quality = 'insufficient'`) —
+  see `screeningService.ts`'s `getMatchesToAvoid()`.
+- **The 5-tier risk scheme (elite/strong/medium/high_risk/avoid) got its
+  own column on `ensemble_predictions` rather than reusing
+  `predictions.risk_classification`**, whose check constraint
+  (`'low'|'moderate'|'high'`) is already load-bearing for the existing
+  Poisson/gradient-boosting output — the same reasoning that gave
+  `competition_rho` its own table instead of folding into
+  `league_calibration`.
 
 ## Known gaps
 
@@ -203,3 +230,26 @@ never does.
   on a tight schedule grows the table with duplicate-valued history. A
   future version could skip inserting a selection whose price matches its
   immediately preceding snapshot — not implemented yet (see `Task.md`).
+- `0009`–`0013` (Elo ratings, admin config, ensemble predictions,
+  accumulator recommendations) have been applied and smoke-tested against a
+  local Postgres 16 instance with a stubbed `auth` schema, unlike most
+  migrations in this list — but never against a real Supabase project, so
+  RLS/service-role behavior and any Supabase-specific trigger semantics
+  remain unverified the same as everything else here.
+- `competition_allowlist` (0010) ships with zero rows by design — an admin
+  has to explicitly enable competitions before the ensemble/screening
+  pipeline will consider any fixture. Until that happens, `/top20`,
+  `/matches-to-avoid`, and `/accumulators` all correctly return empty, not
+  "everything" — see `ML_Model.md`'s "Competition allowlist" note.
+- The ensemble/accumulator feature depends on `model_versions` having an
+  `'ensemble'` row, exactly like `poisson-baseline`/`gradient-boosting`
+  before it — seeded in dev (`dev_seed_synthetic.sql`), but a real
+  deployment needs the same one-time manual SQL insert described above for
+  `model_versions`.
+- `ensemble_predictions`/`accumulator_recommendations` have no settling
+  logic yet — nothing writes a result/outcome back onto a row after its
+  fixture finishes. The versioning (`generated_at`/`superseded_at`) is
+  deliberately shaped so a future settling job can find "the row that was
+  live at kickoff" without a breaking migration, but that job, a P&L
+  computation, and the Performance/ROI dashboard it would feed are all
+  deferred to Phase 2 (see `Road_map.md`).
