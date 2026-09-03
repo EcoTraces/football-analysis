@@ -33,8 +33,16 @@ services:
         sync: false
       - key: ML_SERVICE_URL
         sync: false
+      # football-data-org — a real, live-verified provider (see
+      # Changelog.md's "First live verification" entry) — is the default
+      # here rather than "null" or "api-football": no live api-football key
+      # has ever been available in this project, while football-data-org
+      # has actually been exercised against real data. Requires
+      # FOOTBALL_DATA_ORG_API_KEY (below) to be set BEFORE this deploys —
+      # registry.ts fails fast at boot otherwise, by design, rather than
+      # silently falling back to fabricated data.
       - key: FOOTBALL_DATA_PROVIDER
-        value: "null"
+        value: "football-data-org"
       - key: FOOTBALL_DATA_API_KEY
         sync: false
       # Optional backup for FOOTBALL_DATA_API_KEY — a RapidAPI key for the
@@ -43,8 +51,8 @@ services:
       # in the Render dashboard to run with no backup.
       - key: FOOTBALL_DATA_RAPIDAPI_KEY
         sync: false
-      # Required only if FOOTBALL_DATA_PROVIDER is switched to
-      # "football-data-org" — a swappable alternative provider, not a
+      # Required — FOOTBALL_DATA_PROVIDER above defaults to
+      # "football-data-org", a swappable alternative to api-football, not a
       # second simultaneous source (see backend/.env.example,
       # Data_Sources.md, and FootballDataOrgProvider.ts).
       - key: FOOTBALL_DATA_ORG_API_KEY
@@ -55,8 +63,13 @@ services:
         value: "60000"
       - key: RATE_LIMIT_MAX
         value: "120"
+      # On by default — this Blueprint targets a single backend instance
+      # (plan: free, no autoscaling configured), matching the scheduler's
+      # own single-instance assumption (no cross-process locking — see
+      # Data_Sources.md). Revisit before ever running more than one
+      # replica.
       - key: SCHEDULER_ENABLED
-        value: "false"
+        value: "true"
 
   # Stateless — no database, no external calls, no env vars of its own to
   # configure. Once deployed, copy its public URL into the backend

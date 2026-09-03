@@ -9,7 +9,7 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 2. PRD | ✅ Done | `PRD.md` |
 | 3. Architecture | ✅ Done | `Architecture.md` |
 | 4. Database design | ✅ Done | `Database.md`, `supabase/migrations/0001_init.sql` |
-| 5. Data providers | 🟡 Implemented, unverified — BLOCKED on a real key | `ApiFootballProvider` against api-football v3, with retry/backoff and rate-limit tracking; not yet exercised against a live key — no `FOOTBALL_DATA_API_KEY` exists anywhere in this development environment (see `Data_Sources.md` and README.md → "Configuring a live football data provider") |
+| 5. Data providers | 🟡 football-data-org partially live-verified; api-football still blocked | Two real providers exist (`Data_Sources.md`). `FootballDataOrgProvider` has been run against a real key and live data (`Changelog.md`'s "First live verification" entry) — fixture/standings mapping confirmed correct, one real bug (a rate-limit header name) found and fixed. `ApiFootballProvider` remains unexercised against a live key — no `FOOTBALL_DATA_API_KEY` exists anywhere in this development environment. Neither has been verified end-to-end against a real Supabase project (the database-writing half of the live check above couldn't run — no reachable Supabase project in this environment either) — see README.md → "Configuring a live football data provider" |
 | 6. Ingestion pipeline | 🟡 Fixtures + team stats + injuries + standings + lineups + odds, schedulable | `syncFixtures.ts`, `syncTeamStatistics.ts`, `syncInjuries.ts`, `syncStandings.ts`, `syncLineups.ts` are idempotent and tested; `syncOdds.ts` is tested but deliberately append-only (a real time series, not idempotent-by-upsert); all six plus predictions can now run on a cron via `SCHEDULER_ENABLED=true` (`scheduler.ts`) instead of manual admin calls, assuming a single backend instance |
 | 7. Data normalization | 🟡 Partial | Reference-data upsert (country/competition/season/team) by external id done; team nationality and competition type not yet correctly populated |
 | 8. Backend API | ✅ Core routes done | fixtures/matches/teams/competitions/standings/health/admin |
@@ -24,19 +24,28 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
 | 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; the entire app (not just `/api/admin/*`) now requires a signed-in user, admin routes additionally require the admin role (unverified against a real project — see Task.md); a real signup + admin-promotion UI now exists, closing the "no signup/role-assignment UI" gap; a role self-escalation RLS gap was found and fixed (`0004_user_profiles_role_guard.sql`, also unverified against a live project); still no admin-action audit log |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
-| 20. Production deployment | 🟡 Backend deploy config only | `render.yaml` Blueprint for the backend exists (`Deployment.md`); not yet actually deployed anywhere (no hosting account connected in this environment) — ML service and frontend still have no concrete hosting target |
+| 20. Production deployment | 🟡 Backend deploy config only | `render.yaml` Blueprint for the backend exists (`Deployment.md`), now defaulting to `FOOTBALL_DATA_PROVIDER=football-data-org` and `SCHEDULER_ENABLED=true` (only `FOOTBALL_DATA_ORG_API_KEY` and the Supabase secrets need entering at deploy time); not yet actually deployed anywhere (no hosting account connected in this environment) — ML service and frontend still have no concrete hosting target |
 | 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
 
 ## Immediate next steps (see Task.md for details)
 
-**Steps 1–5 below are BLOCKED on a real `FOOTBALL_DATA_API_KEY`.** No such
-key exists anywhere in this development environment, and creating one
-requires a human to sign up with a real API-Football/RapidAPI account —
-see README.md → "Configuring a live football data provider" for the exact steps
-and the commands to run the moment a key is configured. Everything these
-steps need (the client, retry/rate-limit handling, the sync jobs, the
-scheduler, the observability endpoints) is already built and tested
-against fakes; only the live verification itself is outstanding.
+**Steps 1 and 3–5 below are now BLOCKED ONLY on a real Supabase project**,
+not on a data-provider key — `FOOTBALL_DATA_ORG_API_KEY` is real and has
+already verified `FootballDataOrgProvider`'s own HTTP mapping directly (see
+`Changelog.md`'s "First live verification" entry), but no Supabase project
+is reachable from this environment to also verify the
+database-writing/reference-data side, `requireAdmin` against real JWTs, or
+the scheduler running unattended. `render.yaml` now defaults to
+`FOOTBALL_DATA_PROVIDER=football-data-org` and `SCHEDULER_ENABLED=true`,
+ready to deploy the moment a Supabase project and a Render account are
+connected — see `Deployment.md`. Step 2 (api-football specifically) is
+still additionally blocked on a real `FOOTBALL_DATA_API_KEY`, which remains
+unavailable in this environment. Creating either requires a human with a
+real account — see README.md → "Configuring a live football data provider"
+for the exact steps. Everything these steps need (the client, retry/
+rate-limit handling, the sync jobs, the scheduler, the observability
+endpoints) is already built and tested against fakes; only the live
+verification itself is outstanding for the pieces above.
 
 1. Test `requireAdmin` against a real Supabase project (create an admin
    user per README.md, get a real JWT, confirm `/api/admin/*` accepts it

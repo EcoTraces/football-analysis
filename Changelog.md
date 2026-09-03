@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-03 — render.yaml defaults to football-data-org + scheduler on
+
+Prepared the deployment config for the eventual first real deploy, per the
+user's request to "turn the scheduler on and use football-data-org in
+production." Not itself a live production change — this repo has never
+been deployed anywhere (confirmed with the user directly rather than
+assumed), and this session has no Render/hosting credentials to deploy
+with — but `render.yaml` now defaults `FOOTBALL_DATA_PROVIDER` to
+`"football-data-org"` (the one provider actually verified against live
+data — see the entry below) and `SCHEDULER_ENABLED` to `"true"` (safe for
+this Blueprint's single free-tier instance, matching the scheduler's own
+single-instance assumption). `FOOTBALL_DATA_ORG_API_KEY` stays `sync: false`
+— never written to this file — and now required at deploy time, since the
+new default provider fails fast at boot without it, by design. Updated
+`Deployment.md`'s Render walkthrough and `Road_map.md`'s status/next-steps
+to match: what's actually still blocking a real deploy is a reachable
+Supabase project and a Render account, not a data-provider key.
+
 ## 2026-09-03 — First live verification of a real provider: football-data.org
 
 The user provided a real football-data.org API key, letting

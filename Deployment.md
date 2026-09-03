@@ -55,11 +55,20 @@ configure).
    creating the service:
    - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — from your Supabase
      project's API settings.
-   - `FOOTBALL_DATA_API_KEY` — leave blank for now if you don't have one
-     yet; the service boots fine with `FOOTBALL_DATA_PROVIDER=null`
-     (already set as the default in `render.yaml`) and simply won't sync
-     real data until both are set. Set `FOOTBALL_DATA_PROVIDER=api-football`
-     in the Environment tab once you add a real key.
+   - `FOOTBALL_DATA_ORG_API_KEY` — **required**, since `render.yaml`
+     defaults `FOOTBALL_DATA_PROVIDER` to `"football-data-org"` (the one
+     provider that's actually been exercised against live data — see
+     `Changelog.md`'s "First live verification" entry). Get a free key at
+     https://www.football-data.org/client/register. Leaving this blank
+     makes the service fail fast at boot by design (`registry.ts`) rather
+     than silently running with no data — it will NOT deploy successfully
+     without this set.
+   - `FOOTBALL_DATA_API_KEY` (and optionally `FOOTBALL_DATA_RAPIDAPI_KEY`)
+     — leave blank unless you'd rather run api-football instead; if so, get
+     a key (see README.md → "Configuring a live football data provider",
+     Option A) and switch `FOOTBALL_DATA_PROVIDER` to `"api-football"` in
+     the Environment tab. The two providers are swappable alternatives, not
+     both-at-once (see `Data_Sources.md`'s "Two providers, never blended").
    - `ML_SERVICE_URL` — leave as `http://localhost:8000` (or blank; that's
      the app's own default) if you haven't deployed `ml-service` anywhere
      yet. `POST /admin/predictions/run` will fail until this points to a
@@ -69,6 +78,13 @@ configure).
      (comma-separated if more than one). Leave as `http://localhost:5173`
      for now; this only affects browser-based CORS, not curl/Postman/the
      admin dashboard's own requests to itself.
+
+   `SCHEDULER_ENABLED` defaults to `"true"` in `render.yaml` — this
+   Blueprint deploys a single `plan: free` instance with no autoscaling, so
+   that's safe as-is (see "Backend (Node/Express)" above for why more than
+   one replica with the scheduler on would be wrong). Note Render's
+   free-tier spin-down behavior below before relying on it for real
+   unattended syncing.
 4. Deploy. Render builds the Docker image and starts the service; watch
    the build logs in the dashboard (again, works fine from a phone
    browser).
