@@ -13,6 +13,7 @@ import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
+import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
 
 export interface SchedulerDeps {
   supabase: SupabaseClient;
@@ -39,6 +40,7 @@ export const STANDINGS_SYNC_CRON = "0 3 * * *";
 export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions — a finished match's corners don't change once posted, so once a day is enough (unlike lineups/odds, nothing about it needs to be "closer to kickoff").
 export const LEAGUE_CALIBRATION_CRON = "12 3 * * *"; // Between fixture-statistics and predictions — predictions should read the freshest per-competition calibration, not yesterday's.
 export const PREDICTIONS_CRON = "15 3 * * *";
+export const ELO_RATINGS_CRON = "20 3 * * *"; // After predictions — the ensemble predictions job (once wired) reads today's Elo ratings, so this runs before that, not before the (still 1x2/Poisson-only) predictions job it currently sits after.
 export const LINEUPS_SYNC_CRON = "0,15,30,45 * * * *";
 export const ODDS_SYNC_CRON = "5,20,35,50 * * * *";
 
@@ -118,6 +120,16 @@ export async function runPredictions(deps: SchedulerDeps): Promise<void> {
   deps.logger.info({ job: "predictions", result }, "Scheduled predictions run finished");
 }
 
+// Reads/writes only fixtures and team_elo_ratings already in the database
+// (no provider call, no ml-service call — see computeEloRatings.ts's
+// module docstring for why rating maintenance is in-process) — same
+// reasoning as runLeagueCalibrationSync for why this isn't gated behind
+// isProviderConfigured.
+export async function runEloRatings(deps: SchedulerDeps): Promise<void> {
+  const result = await computeCurrentEloRatings(deps.supabase, deps.logger);
+  deps.logger.info({ job: "compute_elo_ratings", result }, "Scheduled Elo rating computation finished");
+}
+
 // Wraps a scheduled job so a thrown/rejected error is logged, not left to
 // surface as an unhandled rejection inside node-cron's own timer callback —
 // one job failing must never stop the process or block later scheduled
@@ -188,6 +200,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   // should read the freshest per-competition calibration, not stale data.
   add("calibrate_leagues", LEAGUE_CALIBRATION_CRON, () => runLeagueCalibrationSync(deps));
   add("predictions", PREDICTIONS_CRON, () => runPredictions(deps));
+  add("compute_elo_ratings", ELO_RATINGS_CRON, () => runEloRatings(deps));
 
   const jobs = entries.map((e) => e.name);
   deps.logger.info({ jobs }, "Scheduler started");

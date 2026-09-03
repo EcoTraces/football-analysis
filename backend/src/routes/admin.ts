@@ -8,6 +8,7 @@ import { runLatestBacktestJob, type BacktestableModel } from "../jobs/runBacktes
 import { runLatestGradientBoostingTrainingJob } from "../jobs/trainGradientBoosting.js";
 import { runLatestDixonColesRhoFitJob } from "../jobs/fitDixonColesRho.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
+import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
 import { PredictionClient } from "../services/predictionClient.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
@@ -601,6 +602,45 @@ export function createAdminRouter(
         throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_body");
       }
       res.json({ data: await updateUserRole(supabase, req.params.id as string, parsed.data.role) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Recomputes every team's global Elo rating from scratch by replaying
+  // its finished, non-synthetic fixture history (computeEloRatings.ts) —
+  // no provider call, so no requireProvider() guard, same reasoning as
+  // /admin/league-calibration/run. Also runs daily on the scheduler
+  // (compute_elo_ratings); this route is for an out-of-cycle manual
+  // trigger, e.g. right after a fixtures backfill.
+  router.post("/admin/elo/recompute", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      const result = await computeCurrentEloRatings(supabase, logger);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Reads back every team's current Elo rating, joined with its name —
+  // small enough (one row per team that has ever played a real fixture)
+  // that no pagination/limit param is needed yet, same as
+  // /admin/league-calibration/results.
+  router.get("/admin/elo/ratings", async (_req, res, next) => {
+    try {
+      const [{ data: ratings, error }, { data: teams, error: teamsError }] = await Promise.all([
+        supabase.from("team_elo_ratings").select("id, team_id, rating, matches_played, computed_at").order("rating", { ascending: false }),
+        supabase.from("teams").select("id, name")
+      ]);
+      if (error) throw new Error(error.message);
+      if (teamsError) throw new Error(teamsError.message);
+
+      const teamNameById = new Map((teams ?? []).map((t) => [t.id as string, t.name as string]));
+      const enriched = (ratings ?? []).map((row) => ({
+        ...row,
+        teamName: teamNameById.get(row.team_id as string) ?? null
+      }));
+      res.json({ data: enriched });
     } catch (err) {
       next(err);
     }

@@ -12,6 +12,7 @@ import {
   runFixtureStatisticsSync,
   runLeagueCalibrationSync,
   runPredictions,
+  runEloRatings,
   guarded,
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
@@ -22,7 +23,8 @@ import {
   ODDS_SYNC_CRON,
   FIXTURE_STATISTICS_SYNC_CRON,
   LEAGUE_CALIBRATION_CRON,
-  PREDICTIONS_CRON
+  PREDICTIONS_CRON,
+  ELO_RATINGS_CRON
 } from "../scheduler/scheduler.js";
 
 function notConfigured(name: string): Promise<ProviderResponse<never>> {
@@ -62,7 +64,8 @@ describe("scheduler", () => {
       ODDS_SYNC_CRON,
       FIXTURE_STATISTICS_SYNC_CRON,
       LEAGUE_CALIBRATION_CRON,
-      PREDICTIONS_CRON
+      PREDICTIONS_CRON,
+      ELO_RATINGS_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
@@ -88,7 +91,8 @@ describe("scheduler", () => {
         "sync_odds",
         "sync_fixture_statistics",
         "calibrate_leagues",
-        "predictions"
+        "predictions",
+        "compute_elo_ratings"
       ].sort()
     );
     expect(logger.warn).not.toHaveBeenCalled();
@@ -105,7 +109,7 @@ describe("scheduler", () => {
       logger
     });
 
-    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions"].sort());
+    expect(scheduler.jobs.sort()).toEqual(["calibrate_leagues", "predictions", "compute_elo_ratings"].sort());
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no football data provider configured"));
 
     scheduler.stop();
@@ -283,6 +287,20 @@ describe("scheduler", () => {
     );
     expect(logger.error).not.toHaveBeenCalled();
     expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "calibrate_leagues" });
+  });
+
+  it("runEloRatings runs the real job and logs its result", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+
+    await runEloRatings({ supabase: fakeClient(fake), provider: new StubProvider("fake-provider"), mlServiceUrl: "http://localhost:8000", logger });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "compute_elo_ratings" }),
+      "Scheduled Elo rating computation finished"
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "compute_elo_ratings" });
   });
 
   it("guarded() catches a thrown error and logs it instead of propagating", async () => {

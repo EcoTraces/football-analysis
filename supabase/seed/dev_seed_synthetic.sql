@@ -70,5 +70,13 @@ insert into model_versions (id, name, version, algorithm, trained_at, notes) val
   -- POST /admin/model/gradient-boosting/train against real fixture data
   -- before this row's trained_at/training_dataset_version/notes are filled in.
   ('00000000-0000-0000-0000-000000000302', 'gradient-boosting', '0.1.0-dev', 'gradient-boosted-trees',
-   null, 'Development-only model version row. Untrained — see comment above.')
+   null, 'Development-only model version row. Untrained — see comment above.'),
+  -- The AI Football Analyst ensemble (elo + poisson + form + home/away +
+  -- injuries + market, weights in ensemble_config) is a deterministic
+  -- weighted combination, not a trained model — trained_at is set to now()
+  -- like poisson-baseline, not left null like gradient-boosting above.
+  -- Production needs the equivalent row inserted manually before
+  -- generateEnsemblePredictions.ts can run — see ML_Model.md.
+  ('00000000-0000-0000-0000-000000000303', 'ensemble', '0.1.0-dev', 'weighted-ensemble',
+   now(), 'Development-only model version used for synthetic seed data.')
 on conflict (name, version) do nothing;

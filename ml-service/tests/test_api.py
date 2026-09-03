@@ -225,6 +225,112 @@ def test_predict_poisson_rejects_invalid_input():
     assert res.status_code == 422
 
 
+def test_predict_elo_returns_1x2_only():
+    payload = {
+        "homeTeam": {"rating": 1620, "matchesPlayed": 25},
+        "awayTeam": {"rating": 1480, "matchesPlayed": 22},
+    }
+    res = client.post("/predict/elo", json=payload)
+    assert res.status_code == 200
+
+    body = res.json()
+    assert body["modelName"] == "elo"
+    assert body["dataQuality"] in {"insufficient", "limited", "strong"}
+
+    markets = {(p["market"], p["selection"]) for p in body["predictions"]}
+    assert markets == {("1x2", "home"), ("1x2", "draw"), ("1x2", "away")}
+
+    total = sum(p["probability"] for p in body["predictions"])
+    assert total == pytest.approx(1.0, abs=1e-6)
+
+
+def test_predict_elo_stronger_home_rating_favoured():
+    payload = {
+        "homeTeam": {"rating": 1750, "matchesPlayed": 25},
+        "awayTeam": {"rating": 1400, "matchesPlayed": 25},
+    }
+    res = client.post("/predict/elo", json=payload)
+    body = res.json()
+    by_selection = {p["selection"]: p["probability"] for p in body["predictions"]}
+    assert by_selection["home"] > by_selection["away"]
+
+
+def test_predict_elo_rejects_missing_fields():
+    res = client.post("/predict/elo", json={"homeTeam": {"rating": 1500, "matchesPlayed": 10}})
+    assert res.status_code == 422
+
+
+ENSEMBLE_WEIGHTS = {"elo": 0.2667, "poisson": 0.2, "form": 0.2, "homeAway": 0.1333, "injuries": 0.1333, "market": 0.0667}
+ENSEMBLE_SCORE_WEIGHTS = {"ensembleConfidence": 0.4, "ev": 0.3, "consensus": 0.2, "dataQuality": 0.1}
+ENSEMBLE_RISK_THRESHOLDS = {"eliteMin": 85, "strongMin": 70, "mediumMin": 50, "highRiskMin": 30}
+
+
+def test_predict_ensemble_full_components_and_odds():
+    payload = {
+        "components": {
+            "elo": {"home": 0.5, "draw": 0.25, "away": 0.25},
+            "poisson": {"home": 0.48, "draw": 0.27, "away": 0.25},
+            "form": {"home": 0.45, "draw": 0.3, "away": 0.25},
+            "home_away": {"home": 0.5, "draw": 0.2, "away": 0.3},
+        },
+        "componentDataQuality": {"elo": "strong", "poisson": "strong", "form": "limited", "home_away": "strong"},
+        "weights": ENSEMBLE_WEIGHTS,
+        "scoreWeights": ENSEMBLE_SCORE_WEIGHTS,
+        "riskThresholds": ENSEMBLE_RISK_THRESHOLDS,
+        "decimalOdds": {"home": 2.1, "draw": 3.4, "away": 3.6},
+        "homeKeyAbsences": 0,
+        "awayKeyAbsences": 1,
+    }
+    res = client.post("/predict/ensemble", json=payload)
+    assert res.status_code == 200
+
+    body = res.json()
+    assert body["modelName"] == "ensemble"
+    assert body["market"] == "1x2"
+    assert body["missingComponents"] == []
+    assert body["dataQuality"] == "limited"  # worst of strong/strong/limited/strong/limited/strong
+
+    selections = {s["selection"]: s for s in body["selections"]}
+    assert set(selections) == {"home", "draw", "away"}
+    total_probability = sum(s["probability"] for s in selections.values())
+    assert total_probability == pytest.approx(1.0, abs=1e-6)
+    for selection in selections.values():
+        assert selection["ev"] is not None
+        assert selection["edgePct"] is not None
+        assert 0 <= selection["selectionScore"] <= 100
+        assert selection["riskTier"] in {"elite", "strong", "medium", "high_risk", "avoid"}
+
+
+def test_predict_ensemble_missing_components_reported_and_odds_optional():
+    payload = {
+        "components": {"elo": {"home": 0.4, "draw": 0.3, "away": 0.3}},
+        "componentDataQuality": {"elo": "limited"},
+        "weights": ENSEMBLE_WEIGHTS,
+        "scoreWeights": ENSEMBLE_SCORE_WEIGHTS,
+        "riskThresholds": ENSEMBLE_RISK_THRESHOLDS,
+    }
+    res = client.post("/predict/ensemble", json=payload)
+    assert res.status_code == 200
+
+    body = res.json()
+    assert set(body["missingComponents"]) == {"poisson", "form", "home_away", "injuries", "market"}
+    for selection in body["selections"]:
+        assert selection["ev"] is None
+        assert selection["edgePct"] is None
+
+
+def test_predict_ensemble_rejects_no_components_at_all():
+    payload = {
+        "components": {},
+        "componentDataQuality": {},
+        "weights": ENSEMBLE_WEIGHTS,
+        "scoreWeights": ENSEMBLE_SCORE_WEIGHTS,
+        "riskThresholds": ENSEMBLE_RISK_THRESHOLDS,
+    }
+    res = client.post("/predict/ensemble", json=payload)
+    assert res.status_code == 422
+
+
 STRONG_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 2.5, "goalsConcededAvg": 0.5}
 WEAK_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 0.5, "goalsConcededAvg": 2.5}
 EVEN_TEAM = {"matchesPlayed": 20, "goalsScoredAvg": 1.2, "goalsConcededAvg": 1.2}

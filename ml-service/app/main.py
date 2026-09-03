@@ -1,6 +1,16 @@
 from fastapi import FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
+from app.models.elo import (
+    TeamElo,
+)
+from app.models.elo import data_quality_for as elo_data_quality_for
+from app.models.elo import elo_match_probabilities
+from app.models.elo import explain_factors as elo_explain_factors
+from app.models.ensemble import combine_components, compute_ev_and_edge, consensus_level
+from app.models.ensemble import explain_factors as ensemble_explain_factors
+from app.models.ensemble import devig_market_probabilities, injury_adjustment, overall_data_quality, risk_tier
+from app.models.ensemble import selection_score as ensemble_selection_score
 from app.models.gradient_boosting import (
     GradientBoostingOneXTwoModel,
     NotTrainedError,
@@ -32,6 +42,11 @@ from app.models.rho_fitting import RhoFittingRow, fit_rho
 from app.schemas import (
     DixonColesRhoFitRequest,
     DixonColesRhoFitResponse,
+    EloPredictionRequest,
+    EloPredictionResponse,
+    EnsemblePredictRequest,
+    EnsemblePredictResponse,
+    EnsembleSelection,
     Factor,
     GradientBoostingPredictionResponse,
     GradientBoostingPredictRequest,
@@ -49,6 +64,12 @@ MODEL_VERSION = "0.1.0"
 
 GRADIENT_BOOSTING_MODEL_NAME = "gradient-boosting"
 GRADIENT_BOOSTING_MODEL_VERSION = "0.1.0"
+
+ELO_MODEL_NAME = "elo"
+ELO_MODEL_VERSION = "0.1.0"
+
+ENSEMBLE_MODEL_NAME = "ensemble"
+ENSEMBLE_MODEL_VERSION = "0.1.0"
 
 
 def _anytime_goalscorer_predictions(
@@ -467,6 +488,105 @@ def predict_gradient_boosting(payload: GradientBoostingPredictRequest) -> Gradie
         # apply regardless of which model is answering.
         data_quality=data_quality_for(home, away),
         predictions=predictions,
+    )
+
+
+@app.post("/predict/elo", response_model=EloPredictionResponse)
+def predict_elo(payload: EloPredictionRequest) -> EloPredictionResponse:
+    home = TeamElo(rating=payload.home_team.rating, matches_played=payload.home_team.matches_played)
+    away = TeamElo(rating=payload.away_team.rating, matches_played=payload.away_team.matches_played)
+
+    probs = elo_match_probabilities(home, away)
+    raw_factors = elo_explain_factors(home, away)
+    # Same directional-flip convention as predict_poisson: a factor written
+    # from the home side's perspective is inverted for the away selection
+    # unless it's a caveat (data-quality warning), which applies unchanged.
+    home_leaning = [Factor(direction=f["direction"], label=f["label"]) for f in raw_factors]
+    away_leaning = [
+        Factor(
+            direction=("negative" if f["direction"] == "positive" else "positive")
+            if f["kind"] == "directional"
+            else f["direction"],
+            label=f["label"],
+        )
+        for f in raw_factors
+    ]
+
+    predictions = [
+        MarketProbability(market="1x2", selection="home", probability=probs["home"], factors=home_leaning),
+        MarketProbability(market="1x2", selection="draw", probability=probs["draw"], factors=[]),
+        MarketProbability(market="1x2", selection="away", probability=probs["away"], factors=away_leaning),
+    ]
+
+    return EloPredictionResponse(
+        model_name=ELO_MODEL_NAME,
+        model_version=ELO_MODEL_VERSION,
+        data_quality=elo_data_quality_for(home, away),
+        predictions=predictions,
+    )
+
+
+@app.post("/predict/ensemble", response_model=EnsemblePredictResponse)
+def predict_ensemble(payload: EnsemblePredictRequest) -> EnsemblePredictResponse:
+    component_probabilities = {
+        name: {"home": c.home, "draw": c.draw, "away": c.away} for name, c in payload.components.items()
+    }
+    component_data_quality = dict(payload.component_data_quality)
+
+    if payload.decimal_odds is not None:
+        try:
+            component_probabilities["market"] = devig_market_probabilities(payload.decimal_odds)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        component_data_quality["market"] = "strong"  # real bookmaker prices, not a heuristic.
+
+    if payload.home_key_absences is not None and payload.away_key_absences is not None:
+        component_probabilities["injuries"] = injury_adjustment(payload.home_key_absences, payload.away_key_absences)
+        component_data_quality["injuries"] = "limited"  # a documented heuristic nudge, never "strong" on its own.
+
+    weights = payload.weights.model_dump()
+    try:
+        combined, weights_used = combine_components(component_probabilities, weights)
+        quality = overall_data_quality(component_data_quality)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    missing_components = sorted(set(weights.keys()) - set(component_probabilities.keys()))
+    consensus = consensus_level(component_probabilities, combined)
+    factors = [
+        Factor(direction=f["direction"], label=f["label"])
+        for f in ensemble_explain_factors(consensus, missing_components)
+    ]
+
+    score_weights = payload.score_weights.model_dump()
+    risk_thresholds = payload.risk_thresholds.model_dump()
+
+    selections = []
+    for outcome in ("home", "draw", "away"):
+        odds_for_outcome = payload.decimal_odds[outcome] if payload.decimal_odds else None
+        ev, edge_pct = compute_ev_and_edge(combined[outcome], odds_for_outcome)
+        score = ensemble_selection_score(combined[outcome], ev, consensus, quality, score_weights)
+        selections.append(
+            EnsembleSelection(
+                selection=outcome,
+                probability=combined[outcome],
+                ev=ev,
+                edge_pct=edge_pct,
+                selection_score=score,
+                risk_tier=risk_tier(score, risk_thresholds),
+                factors=factors,
+            )
+        )
+
+    return EnsemblePredictResponse(
+        model_name=ENSEMBLE_MODEL_NAME,
+        model_version=ENSEMBLE_MODEL_VERSION,
+        market="1x2",
+        data_quality=quality,
+        consensus_level=consensus,
+        component_weights_used=weights_used,
+        missing_components=missing_components,
+        selections=selections,
     )
 
 

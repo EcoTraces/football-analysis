@@ -74,6 +74,98 @@ class PoissonPredictionResponse(CamelModel):
     predictions: list[MarketProbability]
 
 
+class TeamEloInput(CamelModel):
+    rating: float
+    matches_played: int = Field(ge=0)
+
+
+class EloPredictionRequest(CamelModel):
+    home_team: TeamEloInput
+    away_team: TeamEloInput
+
+
+# Same field names/shape as PoissonPredictionResponse — see
+# GradientBoostingPredictionResponse's comment below for why this repo
+# reuses one response shape across every single-model prediction endpoint
+# rather than defining a parallel one per model.
+class EloPredictionResponse(CamelModel):
+    model_name: str
+    model_version: str
+    data_quality: str
+    predictions: list[MarketProbability]
+
+
+class EnsembleComponentInput(CamelModel):
+    home: float = Field(ge=0, le=1)
+    draw: float = Field(ge=0, le=1)
+    away: float = Field(ge=0, le=1)
+
+
+class EnsembleWeightsInput(CamelModel):
+    elo: float = Field(ge=0)
+    poisson: float = Field(ge=0)
+    form: float = Field(ge=0)
+    home_away: float = Field(ge=0)
+    injuries: float = Field(ge=0)
+    market: float = Field(ge=0)
+
+
+class ScoreWeightsInput(CamelModel):
+    ensemble_confidence: float = Field(ge=0)
+    ev: float = Field(ge=0)
+    consensus: float = Field(ge=0)
+    data_quality: float = Field(ge=0)
+
+
+class RiskThresholdsInput(CamelModel):
+    elite_min: float
+    strong_min: float
+    medium_min: float
+    high_risk_min: float
+
+
+class EnsemblePredictRequest(CamelModel):
+    # Only components actually available for this fixture are included —
+    # a component absent from this dict (not merely zeroed) means
+    # "unavailable," and its configured weight is redistributed among the
+    # rest rather than guessed (see ensemble.combine_components). Expected
+    # keys are a subset of {"elo", "poisson", "form", "home_away"} — market
+    # and injuries are derived here from decimal_odds/key-absence counts
+    # instead, since neither has its own standalone prediction endpoint.
+    components: dict[str, EnsembleComponentInput]
+    component_data_quality: dict[str, str]  # same keys as components
+    weights: EnsembleWeightsInput
+    score_weights: ScoreWeightsInput
+    risk_thresholds: RiskThresholdsInput
+    # 1x2 only in Phase 1 — matches this platform's existing backtester's
+    # own 1x2-only scope. None (not zeros) when odds coverage is missing
+    # for this fixture; never fabricated.
+    decimal_odds: dict[str, float] | None = None
+    home_key_absences: int | None = Field(default=None, ge=0)
+    away_key_absences: int | None = Field(default=None, ge=0)
+
+
+class EnsembleSelection(CamelModel):
+    selection: str
+    probability: float
+    ev: float | None
+    edge_pct: float | None
+    selection_score: float
+    risk_tier: str
+    factors: list[Factor]
+
+
+class EnsemblePredictResponse(CamelModel):
+    model_name: str
+    model_version: str
+    market: str
+    data_quality: str
+    consensus_level: str
+    component_weights_used: dict[str, float]
+    missing_components: list[str]
+    selections: list[EnsembleSelection]
+
+
 class GradientBoostingPredictRequest(CamelModel):
     home_team: TeamStrengthInput
     away_team: TeamStrengthInput
