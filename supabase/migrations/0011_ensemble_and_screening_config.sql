@@ -17,7 +17,7 @@
 -- constant in this codebase (poisson.py's RHO, main.py's CARDS_LINE),
 -- these are a documented starting point, not a fitted/optimal answer —
 -- backtesting these weights is future work.
-create table ensemble_config (
+create table if not exists ensemble_config (
   key text primary key default 'default',
   elo_weight numeric not null default 0.2667,
   poisson_weight numeric not null default 0.2000,
@@ -28,7 +28,7 @@ create table ensemble_config (
   updated_at timestamptz not null default now(),
   updated_by uuid references user_profiles(id)
 );
-insert into ensemble_config (key) values ('default');
+insert into ensemble_config (key) values ('default') on conflict (key) do nothing;
 
 -- Selection-score weights (0-100 score) and risk-tier score cutoffs used by
 -- ml-service's ensemble.selection_score()/risk_tier(). Deliberately only 4
@@ -39,7 +39,7 @@ insert into ensemble_config (key) values ('default');
 -- are exactly the 4 signals Phase 1 actually computes: the ensemble's own
 -- combined probability/confidence, EV against real odds, model agreement,
 -- and data quality.
-create table screening_config (
+create table if not exists screening_config (
   key text primary key default 'default',
   score_weight_ensemble_confidence numeric not null default 0.40,
   score_weight_ev numeric not null default 0.30,
@@ -52,12 +52,12 @@ create table screening_config (
   updated_at timestamptz not null default now(),
   updated_by uuid references user_profiles(id)
 );
-insert into screening_config (key) values ('default');
+insert into screening_config (key) values ('default') on conflict (key) do nothing;
 
 -- Accumulator combined-odds targets (Task.md's "Accumulator Engine"
 -- section) — one row per target, admin-editable min-selection-score floor
 -- for a leg to be eligible for that target's accumulator.
-create table accumulator_targets (
+create table if not exists accumulator_targets (
   id uuid primary key default gen_random_uuid(),
   legs integer not null,
   min_selection_score numeric not null,
@@ -71,4 +71,5 @@ insert into accumulator_targets (legs, min_selection_score) values
   (7, 65),
   (10, 70),
   (15, 75),
-  (20, 80);
+  (20, 80)
+on conflict (legs) do nothing;

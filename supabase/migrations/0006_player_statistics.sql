@@ -11,7 +11,7 @@
 -- Keeping the name here avoids that gap entirely, at the cost of a name
 -- that could drift from players.name if a player is ever renamed (not
 -- expected to happen in practice, and not worth a sync step to guard).
-create table player_statistics (
+create table if not exists player_statistics (
   id uuid primary key default gen_random_uuid(),
   player_id uuid not null references players(id) on delete cascade,
   team_id uuid not null references teams(id),
@@ -27,4 +27,4 @@ create table player_statistics (
   unique (player_id, team_id, season_id)
 );
 
-create index idx_player_statistics_team_season on player_statistics (team_id, season_id);
+create index if not exists idx_player_statistics_team_season on player_statistics (team_id, season_id);

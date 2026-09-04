@@ -24,7 +24,7 @@
 -- home_away, injuries, market) were actually available and what weight
 -- each got after redistribution — so a selection score can always be
 -- explained/audited without guessing.
-create table ensemble_predictions (
+create table if not exists ensemble_predictions (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   ensemble_version_id uuid not null references model_versions(id),
@@ -48,6 +48,6 @@ create table ensemble_predictions (
   created_at timestamptz not null default now()
 );
 
-create index idx_ensemble_predictions_fixture on ensemble_predictions (fixture_id, market);
-create index idx_ensemble_predictions_current on ensemble_predictions (fixture_id) where superseded_at is null;
-create index idx_ensemble_predictions_score on ensemble_predictions (selection_score desc) where superseded_at is null;
+create index if not exists idx_ensemble_predictions_fixture on ensemble_predictions (fixture_id, market);
+create index if not exists idx_ensemble_predictions_current on ensemble_predictions (fixture_id) where superseded_at is null;
+create index if not exists idx_ensemble_predictions_score on ensemble_predictions (selection_score desc) where superseded_at is null;

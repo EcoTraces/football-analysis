@@ -11,7 +11,7 @@
 -- competition with too little real history yet simply has no row here;
 -- getLeagueAverages() falls back to the fixed cross-league default in that
 -- case rather than calibrating off too little data.
-create table league_calibration (
+create table if not exists league_calibration (
   id uuid primary key default gen_random_uuid(),
   competition_id uuid not null references competitions(id) on delete cascade,
   league_avg_home_goals numeric not null,

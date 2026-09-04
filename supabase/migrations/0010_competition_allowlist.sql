@@ -9,7 +9,7 @@
 -- 8-country/11-competition list here. An empty table is an explicit
 -- "nothing allowlisted yet" state: the screening engine must treat that as
 -- "no eligible fixtures," never as "allow everything unfiltered."
-create table competition_allowlist (
+create table if not exists competition_allowlist (
   id uuid primary key default gen_random_uuid(),
   competition_id uuid not null references competitions(id) on delete cascade,
   enabled boolean not null default true,

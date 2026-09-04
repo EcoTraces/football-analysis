@@ -9,7 +9,7 @@
 -- get superseded by a later run — needed for later settling/P&L (Phase 2)
 -- without having to reconstruct "what did this accumulator actually
 -- contain at the time" from possibly-overwritten state.
-create table accumulator_recommendations (
+create table if not exists accumulator_recommendations (
   id uuid primary key default gen_random_uuid(),
   target_legs integer not null,
   leg_fixture_ids uuid[] not null,
@@ -25,4 +25,4 @@ create table accumulator_recommendations (
   created_at timestamptz not null default now()
 );
 
-create index idx_accumulator_recommendations_target on accumulator_recommendations (target_legs) where superseded_at is null;
+create index if not exists idx_accumulator_recommendations_target on accumulator_recommendations (target_legs) where superseded_at is null;

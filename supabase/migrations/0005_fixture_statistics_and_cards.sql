@@ -8,8 +8,8 @@
 -- interval breakdown gets summed into a single season total. Only the
 -- 'overall' scope row gets a value (same as clean_sheets/failed_to_score
 -- already do) — the vendor's cards breakdown isn't split by home/away.
-alter table team_statistics add column yellow_cards numeric;
-alter table team_statistics add column red_cards numeric;
+alter table team_statistics add column if not exists yellow_cards numeric;
+alter table team_statistics add column if not exists red_cards numeric;
 
 -- Corners: NOT available from /teams/statistics at all — api-football only
 -- exposes it per fixture, via /fixtures/statistics. This table stores one
@@ -18,7 +18,7 @@ alter table team_statistics add column red_cards numeric;
 -- an average over these rows by syncFixtureStatistics.ts, the same way the
 -- vendor pre-aggregates goals for us but corners has to be aggregated here
 -- instead.
-create table fixture_statistics (
+create table if not exists fixture_statistics (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   team_id uuid not null references teams(id),
@@ -31,4 +31,4 @@ create table fixture_statistics (
   unique (fixture_id, team_id)
 );
 
-create index idx_fixture_statistics_team_season on fixture_statistics (team_id, season_id);
+create index if not exists idx_fixture_statistics_team_season on fixture_statistics (team_id, season_id);

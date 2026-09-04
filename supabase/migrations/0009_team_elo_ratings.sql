@@ -9,7 +9,7 @@
 -- Per-competition Elo is out of scope for Phase 1 (see competition_rho for
 -- the precedent of a genuinely per-competition table, added only once a
 -- per-competition version of *this* was actually needed).
-create table team_elo_ratings (
+create table if not exists team_elo_ratings (
   id uuid primary key default gen_random_uuid(),
   team_id uuid not null references teams(id) on delete cascade,
   rating numeric not null,

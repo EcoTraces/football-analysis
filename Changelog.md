@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-04 — Make migrations 0005-0013 safely re-runnable
+
+The user's real Supabase project deployment surfaced a genuine bug: this
+project has no migration-tracking tool (`Database.md`'s own "Known gaps"
+already noted migrations are applied manually), and `0005`'s
+`alter table team_statistics add column yellow_cards numeric;` (no `if not
+exists`) failed with `column "yellow_cards" ... already exists` when
+re-run against a project where it had partially applied before — aborting
+the whole script and leaving `0006`-`0014` (all the AI Football Analyst
+Phase 1 tables: `accumulator_targets`, `ensemble_config`,
+`screening_config`, `competition_allowlist`, etc.) never applied. That
+single gap was the direct cause of the live deployment's config-panel 500s
+and `build_accumulators`'s `Could not find the table 'public.
+accumulator_targets'` error.
+
+Fixed by making every `create table`/`create index`/`add column`
+statement across `0005`-`0013` use `if not exists` (most already did —
+only a handful didn't), and the three seed `insert`s in `0011`
+(`ensemble_config`/`screening_config`/`accumulator_targets`) use
+`on conflict do nothing`. Verified against a real local Postgres 16
+instance: applied `0001`, manually pre-added `team_statistics.
+yellow_cards`/`red_cards` to simulate the user's exact partial state, then
+ran the corrected `0002`-`0014` combined script twice back-to-back —
+both runs succeeded cleanly (`NOTICE: ... already exists, skipping` on
+the parts already there, real `CREATE`/`INSERT` on the rest, `INSERT 0 0`
+confirming no duplicate seed rows on the second pass), with the config
+tables correctly seeded (`accumulator_targets`: 5 rows; `ensemble_config`
+weights summing to exactly 1.0).
+
 ## 2026-09-03 — render.yaml defaults to football-data-org + scheduler on
 
 Prepared the deployment config for the eventual first real deploy, per the

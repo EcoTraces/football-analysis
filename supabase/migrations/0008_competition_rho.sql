@@ -9,7 +9,7 @@
 -- (competition_id, value) shape — rho fitting is a model calibration
 -- record tied to one specific model version, not a cross-model
 -- observational stat the way a league's raw average goals is.
-create table competition_rho (
+create table if not exists competition_rho (
   id uuid primary key default gen_random_uuid(),
   model_version_id uuid not null references model_versions(id) on delete cascade,
   competition_id uuid not null references competitions(id) on delete cascade,
