@@ -28,7 +28,6 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  ODDS_API_KEY: z.string().optional().default(""),
   WEATHER_API_KEY: z.string().optional().default(""),
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60_000),

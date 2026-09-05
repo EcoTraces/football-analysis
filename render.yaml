@@ -33,6 +33,14 @@ services:
         sync: false
       - key: ML_SERVICE_URL
         sync: false
+      # Shared with football-analysis-ml-service's own ML_SERVICE_API_KEY
+      # below — both must be set to the identical value. Without this, the
+      # ml-service's public Render URL accepts prediction/training requests
+      # from anyone on the internet, not just this backend (see
+      # ml-service/app/security.py). Generate any random string (e.g.
+      # `openssl rand -hex 32`); it's a shared secret, not a vendor key.
+      - key: ML_SERVICE_API_KEY
+        sync: false
       # football-data-org — a real, live-verified provider (see
       # Changelog.md's "First live verification" entry) — is the default
       # here rather than "null" or "api-football": no live api-football key
@@ -71,10 +79,10 @@ services:
       - key: SCHEDULER_ENABLED
         value: "true"
 
-  # Stateless — no database, no external calls, no env vars of its own to
-  # configure. Once deployed, copy its public URL into the backend
-  # service's own ML_SERVICE_URL (Environment tab) so
-  # POST /admin/predictions/run can actually reach it.
+  # Stateless — no database, no external calls. Once deployed, copy its
+  # public URL into the backend service's own ML_SERVICE_URL (Environment
+  # tab) so POST /admin/predictions/run can actually reach it, and set
+  # ML_SERVICE_API_KEY below to the same value as the backend's.
   - type: web
     name: football-analysis-ml-service
     runtime: docker
@@ -83,3 +91,11 @@ services:
     plan: free
     region: oregon
     healthCheckPath: /health
+    envVars:
+      # /health (Render's own healthCheckPath above) never checks this — see
+      # security.py — so setting it can't break the health check itself.
+      # Leaving it unset works too (no enforcement, matching local dev/CI)
+      # but means anyone with this service's public Render URL can call its
+      # prediction/training endpoints directly, for free, unlimited.
+      - key: ML_SERVICE_API_KEY
+        sync: false

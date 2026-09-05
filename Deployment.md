@@ -74,6 +74,13 @@ configure).
      yet. `POST /admin/predictions/run` will fail until this points to a
      real, reachable ML service — everything else (fixtures, standings,
      the admin dashboard, sign-in) works without it.
+   - `ML_SERVICE_API_KEY` — any random string (e.g. `openssl rand -hex
+     32`), set to the **same value** on this service and on
+     `football-analysis-ml-service` below. Without it, ml-service's public
+     Render URL accepts prediction/training requests from anyone on the
+     internet, not just this backend (see `ml-service/app/security.py`).
+     Leaving both unset still works (no enforcement) but isn't recommended
+     once ml-service has a real public URL.
    - `ALLOWED_ORIGINS` — the frontend's deployed URL, once it has one
      (comma-separated if more than one). Leave as `http://localhost:5173`
      for now; this only affects browser-based CORS, not curl/Postman/the
@@ -132,7 +139,11 @@ syncing on Render's free tier.
 Containerized via `ml-service/Dockerfile`. Stateless — no database, no
 external calls — so it scales horizontally with no special configuration.
 Deploy anywhere that runs a container and set `ML_SERVICE_URL` on the
-backend to point at it.
+backend to point at it. Set `ML_SERVICE_API_KEY` here to the same value as
+the backend's own — every route except `/health` then rejects requests
+without a matching `X-API-Key` header (`app/security.py`), since this
+service otherwise has no auth of its own and would be directly callable by
+anyone who has its public URL.
 
 ## Frontend (React/Vite)
 

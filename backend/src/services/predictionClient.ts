@@ -207,7 +207,26 @@ export interface RhoStatus {
 // Thin HTTP client for the Python ML service. Kept separate from route
 // handlers so the timeout/error-mapping policy lives in exactly one place.
 export class PredictionClient {
-  constructor(private readonly baseUrl: string, private readonly timeoutMs = 5000) {}
+  // Defaults from process.env rather than being threaded through every
+  // caller's constructor args — every one of this class's ~10 call sites
+  // across the job files already just forwards a bare mlServiceUrl string
+  // with no other per-call config, so this is a single-file fix for
+  // ml-service/app/security.py's auth requirement instead of adding a new
+  // parameter to every function between here and config/env.ts. Explicit
+  // apiKey still wins when a caller does pass one (tests do, to avoid
+  // depending on process.env). Unset (the default) sends no header at all,
+  // matching ml-service's own "no configured key means no enforcement".
+  private readonly apiKey?: string;
+
+  constructor(private readonly baseUrl: string, apiKey?: string, private readonly timeoutMs = 5000) {
+    this.apiKey = apiKey ?? process.env.ML_SERVICE_API_KEY;
+  }
+
+  private requestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.apiKey) headers["X-API-Key"] = this.apiKey;
+    return headers;
+  }
 
   async predictPoisson(payload: PoissonPredictionRequest): Promise<PoissonPredictionResponse | null> {
     return this.predictOrNull<PoissonPredictionResponse>("/predict/poisson", payload);
@@ -238,7 +257,7 @@ export class PredictionClient {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.requestHeaders(),
         body: JSON.stringify(payload),
         signal: controller.signal
       });
@@ -276,7 +295,7 @@ export class PredictionClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(`${this.baseUrl}/rho_status`, { signal: controller.signal });
+      const res = await fetch(`${this.baseUrl}/rho_status`, { headers: this.requestHeaders(), signal: controller.signal });
       if (!res.ok) throw new Error(`rho_status request failed with status ${res.status}`);
       return (await res.json()) as RhoStatus;
     } finally {
@@ -290,7 +309,7 @@ export class PredictionClient {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: this.requestHeaders(),
         body: JSON.stringify(payload),
         signal: controller.signal
       });

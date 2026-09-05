@@ -3,6 +3,7 @@ import { PredictionClient } from "../services/predictionClient.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("PredictionClient.predictGradientBoosting", () => {
@@ -122,5 +123,58 @@ describe("PredictionClient.getRhoStatus", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     const client = new PredictionClient("http://ml-service.invalid");
     await expect(client.getRhoStatus()).rejects.toThrow("rho_status request failed with status 500");
+  });
+});
+
+// ml-service/app/security.py rejects any /predict/*, /fit/*, or /train/*
+// request without a matching X-API-Key header once ML_SERVICE_API_KEY is
+// configured there — these confirm this client actually sends one.
+describe("PredictionClient X-API-Key header", () => {
+  it("sends no X-API-Key header when no key is configured anywhere", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ fittedRho: null, defaultRho: -0.1 }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new PredictionClient("http://ml-service.invalid");
+    await client.getRhoStatus();
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBeUndefined();
+  });
+
+  it("sends the explicitly constructed key as X-API-Key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ fittedRho: null, defaultRho: -0.1 }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new PredictionClient("http://ml-service.invalid", "explicit-key");
+    await client.getRhoStatus();
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBe("explicit-key");
+  });
+
+  it("falls back to ML_SERVICE_API_KEY from the environment when no key is passed explicitly", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ fittedRho: null, defaultRho: -0.1 }) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("ML_SERVICE_API_KEY", "env-key");
+
+    const client = new PredictionClient("http://ml-service.invalid");
+    await client.getRhoStatus();
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBe("env-key");
+  });
+
+  it("sends the header on POST endpoints too", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ modelName: "elo", modelVersion: "0.1.0", dataQuality: "strong", predictions: [] })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new PredictionClient("http://ml-service.invalid", "explicit-key");
+    await client.predictElo({ homeTeam: { rating: 1500, matchesPlayed: 10 }, awayTeam: { rating: 1500, matchesPlayed: 10 } });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBe("explicit-key");
   });
 });

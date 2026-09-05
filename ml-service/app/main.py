@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 
 from app.models.count_markets import total_over_under
 from app.models.elo import (
@@ -58,6 +58,7 @@ from app.schemas import (
     PoissonPredictionResponse,
     RhoStatusResponse,
 )
+from app.security import require_internal_api_key
 
 MODEL_NAME = "poisson-baseline"
 MODEL_VERSION = "0.1.0"
@@ -114,6 +115,13 @@ HANDICAP_HOME_LINE = -1.5  # Half-integer so there's no push case; see poisson.p
 
 app = FastAPI(title="Football Analysis ML Service", version=MODEL_VERSION)
 
+# Every route below except /health goes through this — see security.py's
+# module docstring for why. Declared as its own router (rather than
+# `FastAPI(dependencies=[...])`, which would also gate /health) so Render's
+# unauthenticated health-check probe keeps working regardless of whether
+# ML_SERVICE_API_KEY is configured.
+protected = APIRouter(dependencies=[Depends(require_internal_api_key)])
+
 # Process-local, in-memory only — see gradient_boosting.py's module
 # docstring. A restart of this service loses whatever was trained; the
 # backend must retrain (POST /admin/model/gradient-boosting/train) after
@@ -149,7 +157,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/predict/poisson", response_model=PoissonPredictionResponse)
+@protected.post("/predict/poisson", response_model=PoissonPredictionResponse)
 def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionResponse:
     home = TeamStrength(
         matches_played=payload.home_team.matches_played,
@@ -417,7 +425,7 @@ def predict_poisson(payload: PoissonPredictionRequest) -> PoissonPredictionRespo
     )
 
 
-@app.post("/train/gradient_boosting", response_model=GradientBoostingTrainResponse)
+@protected.post("/train/gradient_boosting", response_model=GradientBoostingTrainResponse)
 def train_gradient_boosting(payload: GradientBoostingTrainRequest) -> GradientBoostingTrainResponse:
     rows = [
         TrainingRow(
@@ -448,7 +456,7 @@ def train_gradient_boosting(payload: GradientBoostingTrainRequest) -> GradientBo
     )
 
 
-@app.post("/predict/gradient_boosting", response_model=GradientBoostingPredictionResponse)
+@protected.post("/predict/gradient_boosting", response_model=GradientBoostingPredictionResponse)
 def predict_gradient_boosting(payload: GradientBoostingPredictRequest) -> GradientBoostingPredictionResponse:
     home = TeamStrength(
         matches_played=payload.home_team.matches_played,
@@ -491,7 +499,7 @@ def predict_gradient_boosting(payload: GradientBoostingPredictRequest) -> Gradie
     )
 
 
-@app.post("/predict/elo", response_model=EloPredictionResponse)
+@protected.post("/predict/elo", response_model=EloPredictionResponse)
 def predict_elo(payload: EloPredictionRequest) -> EloPredictionResponse:
     home = TeamElo(rating=payload.home_team.rating, matches_played=payload.home_team.matches_played)
     away = TeamElo(rating=payload.away_team.rating, matches_played=payload.away_team.matches_played)
@@ -526,7 +534,7 @@ def predict_elo(payload: EloPredictionRequest) -> EloPredictionResponse:
     )
 
 
-@app.post("/predict/ensemble", response_model=EnsemblePredictResponse)
+@protected.post("/predict/ensemble", response_model=EnsemblePredictResponse)
 def predict_ensemble(payload: EnsemblePredictRequest) -> EnsemblePredictResponse:
     component_probabilities = {
         name: {"home": c.home, "draw": c.draw, "away": c.away} for name, c in payload.components.items()
@@ -590,7 +598,7 @@ def predict_ensemble(payload: EnsemblePredictRequest) -> EnsemblePredictResponse
     )
 
 
-@app.post("/fit/dixon_coles_rho", response_model=DixonColesRhoFitResponse)
+@protected.post("/fit/dixon_coles_rho", response_model=DixonColesRhoFitResponse)
 def fit_dixon_coles_rho(payload: DixonColesRhoFitRequest) -> DixonColesRhoFitResponse:
     rows = []
     for row in payload.rows:
@@ -626,6 +634,9 @@ def fit_dixon_coles_rho(payload: DixonColesRhoFitRequest) -> DixonColesRhoFitRes
     )
 
 
-@app.get("/rho_status", response_model=RhoStatusResponse)
+@protected.get("/rho_status", response_model=RhoStatusResponse)
 def rho_status() -> RhoStatusResponse:
     return RhoStatusResponse(fitted_rho=_fitted_rho, default_rho=RHO)
+
+
+app.include_router(protected)
