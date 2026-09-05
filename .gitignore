@@ -28,3 +28,6 @@ npm-debug.log*
 coverage/
 .pytest_cache/
 *.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

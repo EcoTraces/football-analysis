@@ -100,3 +100,25 @@ jobs:
       - run: npm run build
       # Same production-only rationale as the backend job above.
       - run: npm audit --omit=dev
+
+  # Real-browser smoke tests (Road_map.md Phase 17's "no frontend E2E"
+  # gap) — separate job from `frontend` above so a slow browser install
+  # never blocks the fast unit-test feedback loop. Scoped honestly: no
+  # live Supabase project is reachable from CI, so this exercises the
+  # unconfigured-auth fallback, dark/light mode, and responsive layout —
+  # see frontend/e2e/README.md for exactly what this does and doesn't cover.
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
