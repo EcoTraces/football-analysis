@@ -83,18 +83,20 @@ severity:
     concurrent user for 60 seconds).
 11. **`competition_type` was hardcoded to `'league'`** for every synced
     competition regardless of what the provider actually reported.
-12. **Two production-blocking gaps this environment cannot fix itself**
+12. **Two production-blocking gaps this environment couldn't fix itself**
     (see Section L): no `model_versions` row for `ensemble` in production
     (causing a `409` on every prediction run), and `ML_SERVICE_URL` likely
     still at its `localhost` default in the Render dashboard (causing
-    `500`s on anything that calls the ml-service in production).
+    `500`s on anything that calls the ml-service in production). **Both
+    fixed by the user directly, same day** — see Section L.
 
 ---
 
 ## C. Fixes implemented
 
 All of B1–B11 above were fixed, tested, and shipped to `main` in this
-engagement (B12 is explicitly a user-actioned item — see Section L):
+engagement; B12's two gaps were user-actioned directly against production
+(see Section L):
 
 - **B1**: `loadExternalRefs` now chunks ids into batches of 100
   (`EXTERNAL_REF_LOOKUP_CHUNK_SIZE`, `referenceDataService.ts`).
@@ -169,11 +171,12 @@ production**: the B1 fix (chunked id lookups) directly unblocks
 `team-statistics`/`player-statistics` syncing, which the ensemble's
 Home/Away and Form components depend on; the competition_type fix (B11)
 improves the accuracy of competition classification the screening
-allowlist depends on. The two items in Section L (`model_versions` seed
-row, `ML_SERVICE_URL`) are the actual remaining blockers to the model
-pipeline running end-to-end in production — both are one-line fixes,
-neither of which this environment can apply itself (see Section L for
-exactly why).
+allowlist depends on. The two remaining blockers to the model pipeline
+running end-to-end in production (`model_versions` seed row,
+`ML_SERVICE_URL`) were both one-line fixes this environment couldn't
+apply itself — both are now fixed by the user directly (see Section L);
+end-to-end confirmation that a prediction run actually completes is the
+one step still pending.
 
 ---
 
@@ -306,45 +309,64 @@ confirmed deployment also showed `standings`/`teamStatistics`/
 freshness report — none of those datasets has ever successfully populated
 in production. Manually triggering the underlying jobs during this
 engagement surfaced the real bugs listed in Section B, most now fixed;
-the two that remain are both one-line configuration fixes this
-environment cannot apply itself (Section L). `Road_map.md`'s "Live
-status" note carries the exact, dated evidence for all of this — read it
-before trusting any older phase-status text in the same file, which
-mostly still describes this repository's dev/CI sandbox rather than the
-live deployment.
+the two production-configuration gaps that remained (Section L) — both
+one-line fixes this environment couldn't apply itself — are now fixed by
+the user directly: `model_versions` is seeded and `ML_SERVICE_URL` points
+at the real ml-service, both confirmed live. `fixtures`/`standings` are
+confirmed populating for real (444 fixtures, `RECENT`); `predictions`
+still awaits its next scheduled run or a manual trigger to confirm the
+full pipeline end-to-end. `Road_map.md`'s "Live status" note carries the
+exact, dated evidence for all of this — read it before trusting any older
+phase-status text in the same file, which mostly still describes this
+repository's dev/CI sandbox rather than the live deployment.
 
 ---
 
 ## L. Remaining risks and explicitly blocked items
 
-**Blocked on the user — nothing below can be resolved from this
+**Resolved by the user, same day, after this report's first draft:**
+both of the items below were blocked-on-the-user findings; the user
+fixed both directly against production before this report was finalized.
+
+1. ~~No `model_versions` row for `'ensemble'`/`'poisson-baseline'` in
+   production~~ — fixed: both rows now exist (verified via a live
+   `select` against the production Supabase project: `poisson-baseline`/
+   `dixon-coles-poisson` and `ensemble`/`ensemble-combiner`, both with
+   `trained_at: null`, which the prediction jobs' lookup doesn't require).
+2. ~~`ML_SERVICE_URL` likely still at its `localhost` default~~ — fixed:
+   now points at the real `football-analysis-ml-service` Render URL,
+   confirmed reachable (`GET /health` returns `{"status":"ok"}`).
+
+**Not yet confirmed end-to-end**: `GET /health/data` still reports
+`predictions: UNAVAILABLE` as of this update — expected, since the
+`predictions`/`predictions_ensemble` scheduler jobs weren't due again
+until their next cron firing at the time both fixes landed. `fixtures`
+and `standings` are confirmed `RECENT` with 444 real fixtures, so the
+pipeline is demonstrably working end-to-end for the jobs that have run
+since these fixes. Verifying `predictions` needs either waiting for the
+next scheduled run or using the admin dashboard's manual trigger buttons.
+
+**Still blocked on the user — nothing below can be resolved from this
 environment**, because each requires either a real third-party account,
 Render dashboard access, or production Supabase SQL access this
 environment has never had:
 
-1. **No `model_versions` row for `'ensemble'` (or `'poisson-baseline'`)
-   in production** — every prediction run returns `409 no_model_version`
-   until a one-time SQL insert is run against the real Supabase project.
-   See `ML_Model.md` for the exact statement to run.
-2. **`ML_SERVICE_URL` likely still at its `localhost` default** in the
-   Render dashboard for the backend service — causes `500`s on every
-   backend call into the ml-service in production. See `Deployment.md`.
-3. **No live API-Football key has ever been verified** — every
+1. **No live API-Football key has ever been verified** — every
    provider-mapping fix in this engagement (and the prior session's) is
    implemented from vendor documentation, not confirmed against a real
    response. `GET /health/api-football` currently reports the
    football-data.org provider as the active one, not api-football, so
    this may be moot if football-data.org remains the chosen provider —
    but if api-football is ever switched to, its mapping is unverified.
-4. **The scheduler's cross-process lock (B4) has never been exercised
+2. **The scheduler's cross-process lock (B4) has never been exercised
    against actually-concurrent replicas** — this is still a single
    `plan: free` Render instance, so the lock is real, tested infrastructure
    ahead of need, not yet proven under real concurrency.
-5. **Token revocation/expiry, email-confirmation UX** — both depend on
+3. **Token revocation/expiry, email-confirmation UX** — both depend on
    the real Supabase project's actual Auth configuration, which this
    environment cannot inspect or exercise (`Task.md`'s "BLOCKED ON THE
    USER" section has the full list).
-6. **The 72-hour scheduler cadence observation period** has not run —
+4. **The 72-hour scheduler cadence observation period** has not run —
    the cron schedules are implemented and unit-tested, but nobody has
    watched them fire correctly against a live clock for 72 hours yet.
 
@@ -387,9 +409,14 @@ Every concrete, fixable bug this audit found — twelve of them, listed in
 Section B — was fixed, tested, and shipped to `main`, each independently
 verified through the full lint/typecheck/test/build gate and a green CI
 run (including two brand-new CI jobs added specifically to catch this
-class of bug earlier next time). What's left is exactly two kinds of
-thing: work that requires credentials or dashboard access only the
-project owner has (Section L's first six items — genuinely blocked, not
-skipped), and unbuilt features that were never bugs to begin with
-(Section L's remaining items — real, named, and honestly out of scope for
+class of bug earlier next time). Of the two remaining production-blocking
+gaps (Section L), both were resolved by the user directly the same day
+this report was drafted: `model_versions` is seeded and `ML_SERVICE_URL`
+is correctly pointed, confirmed live; only end-to-end confirmation that a
+prediction run actually completes is still pending the next scheduled
+firing or a manual trigger. What's left after that is exactly two kinds
+of thing: work that requires credentials or dashboard access only the
+project owner has (Section L's remaining items — genuinely blocked, not
+skipped), and unbuilt features that were never bugs to begin with (the
+"Deliberately deferred" list — real, named, and honestly out of scope for
 an audit-and-fix engagement rather than a feature-build one).

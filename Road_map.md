@@ -25,12 +25,26 @@ production. Manually triggering the underlying jobs surfaced real bugs,
 some now fixed this session (see `Changelog.md`): an unbounded `.in()`
 query that could exceed a request-length limit at real data volumes
 (fixed); no `model_versions` row for `poisson-baseline`/`ensemble` in
-production, causing `409` on every prediction run (still needs a one-time
-SQL insert — see `ML_Model.md`); `ML_SERVICE_URL` likely still at its
-`localhost` default rather than the real ml-service URL, causing `500`s on
-anything that calls it (still needs a Render dashboard fix — see
-`Deployment.md`). Read phases 5/6/9/14/17/18/19/21 below with this in
-mind rather than their original (pre-deployment) wording alone.
+production, causing `409` on every prediction run; `ML_SERVICE_URL`
+likely still at its `localhost` default rather than the real ml-service
+URL, causing `500`s on anything that calls it. Read phases 5/6/9/14/17/
+18/19/21 below with this in mind rather than their original
+(pre-deployment) wording alone.
+
+**Update, same day**: both of the above are now fixed by the user
+directly against production — `model_versions` has real `poisson-baseline`
+(`dixon-coles-poisson`) and `ensemble` (`ensemble-combiner`) rows (verified
+via a live `select` against the production project), and the backend's
+`ML_SERVICE_URL` now points at the real `football-analysis-ml-service`
+Render URL (verified reachable: `GET /health` on it returns `{"status":
+"ok"}`). `GET /health/data` still shows `predictions: UNAVAILABLE` as of
+this note — expected, since `predictions`/`predictions_ensemble` aren't
+due on the scheduler until their next cron firing (2026-09-06 03:15/03:25
+UTC); this isn't yet exercised end-to-end. `fixtures`/`standings` are
+confirmed `RECENT` with 444 real fixtures. Next actual verification step:
+either wait for the next scheduled run, or use the admin dashboard's
+manual "Run predictions"/"Run ensemble predictions" buttons to confirm
+sooner.
 
 | Phase | Status | Notes |
 |---|---|---|
@@ -53,7 +67,7 @@ mind rather than their original (pre-deployment) wording alone.
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client. CI now has a real-Postgres integration test (`db-migrations` job): every migration applies twice, back to back, against a throwaway Postgres 16 container — see `Database.md`'s "Known gaps" for exactly what that does and doesn't verify (schema/DDL validity, not RLS/PostgREST/real-auth behavior). CI also now has a real-browser E2E job (`frontend-e2e`, Playwright): the unconfigured-auth fallback, dark/light mode + persistence, responsive layout at 390px/1280px, and SPA routing — see `frontend/e2e/README.md` for why a real sign-in flow isn't attempted (no live Supabase project reachable from CI). Still no test against an actual Supabase project |
 | 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; the entire app (not just `/api/admin/*`) now requires a signed-in user, admin routes additionally require the admin role (unverified against a real project — see Task.md); a real signup + admin-promotion UI now exists, closing the "no signup/role-assignment UI" gap; a role self-escalation RLS gap was found and fixed (`0004_user_profiles_role_guard.sql`, also unverified against a live project); still no admin-action audit log |
 | 19. Performance optimization | 🟡 Started | An in-process TTL cache (`lib/ttlCache.ts`) now sits in front of every meaningfully-read, rarely-changing endpoint — `GET /leagues` (10 min), `GET /fixtures/today` and `GET /fixtures` (60s, the latter keyed on its full filter set so a lower cache-hit rate than `/today`'s single key is still a net win), `GET /teams/:id` (5 min), and the three AI Football Analyst screening views `/top20`/`/matches-to-avoid`/`/accumulators` (5 min each). Time-based expiry only, no active invalidation on write (see that file's module comment for why that's an acceptable tradeoff here); process-local, not shared across replicas, since this app is still a single Render instance |
-| 20. Production deployment | 🟡 Live, not fully operational | `render.yaml` Blueprint deployed for real: `football-analysis-backend` and `football-analysis-ml-service` are both live on Render, a real Supabase project is connected, `FOOTBALL_DATA_PROVIDER=football-data-org` is `CONNECTED`, and `SCHEDULER_ENABLED=true` is `RUNNING` (see the live-status note above). Not fully operational yet, though: `ML_SERVICE_URL` on the backend service likely still needs pointing at the real ml-service URL, and production's `model_versions` table needs its one-time manual seed — see the live-status note above and `Deployment.md`/`ML_Model.md`. |
+| 20. Production deployment | 🟡 Live, verification in progress | `render.yaml` Blueprint deployed for real: `football-analysis-backend` and `football-analysis-ml-service` are both live on Render, a real Supabase project is connected, `FOOTBALL_DATA_PROVIDER=football-data-org` is `CONNECTED`, and `SCHEDULER_ENABLED=true` is `RUNNING` (see the live-status note above). `ML_SERVICE_URL` is now pointed at the real ml-service URL and `model_versions` has real `poisson-baseline`/`ensemble` rows — both fixed by the user directly. Not yet confirmed end-to-end: `predictions` still reports `UNAVAILABLE` pending the next scheduled run or a manual admin-dashboard trigger — see the "Update, same day" note above. |
 | 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
 
 ## Immediate next steps (see Task.md for details)
