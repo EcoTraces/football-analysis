@@ -18,14 +18,19 @@ export default defineConfig({
     trace: "on-first-retry"
   },
   webServer: {
-    command: "npm run dev -- --port 5173 --strictPort",
+    // --host 127.0.0.1 is load-bearing, not cosmetic: without an explicit
+    // host, vite binds whatever "localhost" resolves to via Node's DNS
+    // order, which on some CI runners is ::1 (IPv6-only) — leaving nothing
+    // listening on the literal 127.0.0.1 this config's url polls. That
+    // produced a silent "Timed out waiting Nms from config.webServer" with
+    // no crash and no useful log (the actual CI failure this replaced),
+    // since the request just never connects rather than erroring loudly.
+    command: "npm run dev -- --host 127.0.0.1 --port 5173 --strictPort",
     url: "http://127.0.0.1:5173",
     reuseExistingServer: !process.env.CI,
-    // 30s was enough locally (warm vite cache) but timed out in CI's first
-    // real run: a fresh checkout means vite's dependency pre-bundling has
-    // no cache to reuse, and a shared CI runner is slower than a dev
-    // machine. 60s covers a cold start with margin.
-    timeout: 60_000
+    timeout: 30_000,
+    stdout: "pipe",
+    stderr: "pipe"
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }]
 });
