@@ -203,5 +203,27 @@ export async function upsertPlayer(
   name: string,
   teamId: string | null
 ): Promise<string> {
+  const { data: existing, error: findError } = await supabase
+    .from("players")
+    .select("id, team_id")
+    .eq(`external_ref->>${providerKey}`, externalId)
+    .maybeSingle();
+  if (findError) throw new Error(`Failed to look up player ${externalId}: ${findError.message}`);
+
+  if (existing) {
+    // Unlike findOrCreateByExternalRef's other callers, a player's team_id
+    // is kept in sync on every sync — a transfer is a real, common event
+    // (unlike e.g. a competition's type changing), and a stale team_id
+    // would silently mis-attribute a player to their old club for anyone
+    // reading players.team_id directly. player_statistics itself needs no
+    // such fix: it's already correctly keyed by player_id/team_id/season_id,
+    // so a transfer gets its own row there regardless of this update.
+    if (existing.team_id !== teamId) {
+      const { error: updateError } = await supabase.from("players").update({ team_id: teamId }).eq("id", existing.id as string);
+      if (updateError) throw new Error(`Failed to update player ${externalId}'s team: ${updateError.message}`);
+    }
+    return existing.id as string;
+  }
+
   return findOrCreateByExternalRef(supabase, "players", providerKey, externalId, { name, team_id: teamId });
 }

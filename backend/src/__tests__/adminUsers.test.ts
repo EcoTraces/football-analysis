@@ -28,6 +28,17 @@ describe("listUsersWithRoles", () => {
     const fake = new FakeSupabase();
     expect(await listUsersWithRoles(fakeClient(fake))).toEqual([]);
   });
+
+  it("pages through every account rather than truncating at the first page's 200", async () => {
+    const fake = new FakeSupabase();
+    const seeded = Array.from({ length: 250 }, (_, i) => ({ id: `user-${i}`, email: `user${i}@example.com` }));
+    fake.seedAuthUsers(seeded);
+
+    const users = await listUsersWithRoles(fakeClient(fake));
+
+    expect(users).toHaveLength(250);
+    expect(users.find((u) => u.id === "user-249")).toBeDefined(); // on the second page
+  });
 });
 
 describe("updateUserRole", () => {

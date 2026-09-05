@@ -8,6 +8,7 @@ import {
   providerRefKey,
   upsertCompetition,
   upsertCountryByName,
+  upsertPlayer,
   upsertSeason,
   upsertTeam
 } from "../services/referenceDataService.js";
@@ -207,5 +208,42 @@ describe("loadExternalRefs", () => {
 
     expect(refs.size).toBe(0);
     expect(fromSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("upsertPlayer", () => {
+  it("creates a player on first call and reuses it on the next", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+
+    const firstId = await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-a");
+    const secondId = await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-a");
+
+    expect(firstId).toBe(secondId);
+    expect(fake.rows("players")).toHaveLength(1);
+  });
+
+  it("updates an existing player's team_id when a later sync reports a transfer", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+
+    const id = await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-a");
+    const idAfterTransfer = await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-b");
+
+    expect(idAfterTransfer).toBe(id); // Same row — updated, not duplicated.
+    expect(fake.rows("players")).toHaveLength(1);
+    expect(fake.rows("players")[0]?.team_id).toBe("team-b");
+  });
+
+  it("does not issue an update when the team is unchanged", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-a");
+    const fromSpy = vi.spyOn(fake, "from");
+
+    await upsertPlayer(client, PROVIDER_KEY, "player-1", "Alex Player", "team-a");
+
+    // Only the lookup .from("players") call — no update() call on top of it.
+    expect(fromSpy).toHaveBeenCalledTimes(1);
   });
 });

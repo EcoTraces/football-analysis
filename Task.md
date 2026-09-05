@@ -92,9 +92,12 @@
   should reject an expired or revoked token, but this hasn't been verified
   against Supabase's actual token lifecycle (only against the test fake,
   which has no concept of expiry).
-- [ ] `GET /admin/users` fetches only the first 200 accounts (no
-  pagination) — fine until this platform has a real user base, not a
-  long-term design.
+- [x] `GET /admin/users` used to fetch only the first 200 accounts — the
+  admin API's default page size, hit with no pagination loop. `admin.ts`'s
+  `listUsersWithRoles` now walks every page of `auth.admin.listUsers()`
+  until a short page signals the end (capped at 100 pages as a runaway-loop
+  guard, not a real expected limit). New test seeds 250 accounts and
+  confirms all are returned, not just the first 200.
 - [ ] No email-confirmation-required UX has been tested against a real
   Supabase project — `SignUp.tsx` handles both cases (immediate session vs.
   "check your email") based on whether `signUp()` returns a session, but
@@ -365,11 +368,13 @@
   every provider mapping in this file; in particular the exact shape of a
   multi-stint `/players` response (same team, two competitions) is
   unconfirmed.
-- [ ] `upsertPlayer` (`referenceDataService.ts`) doesn't update an existing
-  player's `players.team_id` on a repeat call — a transferred player's row
-  can go stale. `player_statistics` itself is correctly keyed by
-  `player_id, team_id, season_id` so a transfer gets its own row there;
-  only direct reads of `players.team_id` are affected. See `Database.md`.
+- [x] `upsertPlayer` (`referenceDataService.ts`) now updates an existing
+  player's `players.team_id` when a later sync reports a different team —
+  a transfer is common and real (unlike e.g. a competition's type
+  changing, which `upsertCompetition` still deliberately leaves as a
+  known "find never updates" gap). `player_statistics` itself needed no
+  fix: it's already correctly keyed by `player_id, team_id, season_id`, so
+  a transfer gets its own row there regardless. See `Database.md`.
 
 ## Model
 

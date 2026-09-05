@@ -36,8 +36,11 @@ export class FakeSupabase {
       return { data: { user }, error: null };
     },
     admin: {
-      listUsers: async (_opts?: { page?: number; perPage?: number }) => {
-        return { data: { users: this.authAdminUsers }, error: null };
+      listUsers: async (opts?: { page?: number; perPage?: number }) => {
+        const page = opts?.page ?? 1;
+        const perPage = opts?.perPage ?? 200;
+        const start = (page - 1) * perPage;
+        return { data: { users: this.authAdminUsers.slice(start, start + perPage) }, error: null };
       }
     }
   };

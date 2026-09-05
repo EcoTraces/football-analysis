@@ -233,15 +233,13 @@ behavioral one). Those still need a real Supabase project.
   upserts actually behave as documented (partial column update on conflict,
   not a full-row overwrite) before relying on it.
 - `0006_player_statistics.sql` (new `player_statistics` table) — same
-  unrun-against-a-real-project caveat. Also worth confirming once a live
-  project exists: `upsertPlayer` (`referenceDataService.ts`) creates a new
-  `players` row keyed by external id but never updates `team_id` on an
-  existing row, so a player transferred mid-season will show their
-  `players.team_id` as whichever team `syncPlayerStatistics.ts` (or
-  `syncLineups.ts`) happened to see them under first — `player_statistics`
-  itself is unaffected (it's keyed by `player_id, team_id, season_id`, so a
-  transfer correctly gets its own row), but anything reading `players.team_id`
-  directly should know it can be stale.
+  unrun-against-a-real-project caveat. `upsertPlayer` (`referenceDataService.ts`)
+  now updates `players.team_id` on an existing row whenever a sync
+  (`syncPlayerStatistics.ts` or `syncLineups.ts`) reports a different team
+  for a known player, so a mid-season transfer is reflected rather than
+  frozen at whichever team was seen first. `player_statistics` needed no
+  such fix — it's keyed by `player_id, team_id, season_id`, so a transfer
+  already got its own row there.
 - `0007_league_calibration.sql` (new `league_calibration` table) — same
   unrun-against-a-real-project caveat as every migration in this file. Its
   writer (`calibrateLeagues.ts`) and reader (`getLeagueAverages()`) are

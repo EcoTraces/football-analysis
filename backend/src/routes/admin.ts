@@ -166,11 +166,34 @@ export interface AdminUserSummary {
 
 export const roleUpdateSchema = z.object({ role: z.enum(["user", "admin"]) });
 
+const LIST_USERS_PAGE_SIZE = 200;
+// A hard ceiling on how many pages will ever be walked — protects against a
+// runaway loop if the admin API's "last page" signal (a short page) is ever
+// wrong, not a real expected limit. 100 pages * 200/page = 20,000 accounts,
+// comfortably above anything this platform has today.
+const LIST_USERS_MAX_PAGES = 100;
+
+// Walks every page of auth.users rather than trusting the first page alone
+// — the admin API paginates at 200/request by default, so a single
+// unpaginated call silently truncated the account list once the platform
+// passed 200 signups.
+async function listAllAuthUsers(
+  supabase: SupabaseClient
+): Promise<Array<{ id: string; email?: string; created_at: string }>> {
+  const all: Array<{ id: string; email?: string; created_at: string }> = [];
+  for (let page = 1; page <= LIST_USERS_MAX_PAGES; page += 1) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: LIST_USERS_PAGE_SIZE });
+    if (error) throw new Error(`Failed to list auth users (page ${page}): ${error.message}`);
+    all.push(...data.users);
+    if (data.users.length < LIST_USERS_PAGE_SIZE) break; // Short page — this was the last one.
+  }
+  return all;
+}
+
 // Pure and exported for direct unit testing — joins auth.users (via the
 // admin API, the only way to read it) with user_profiles' role/display_name.
 export async function listUsersWithRoles(supabase: SupabaseClient): Promise<AdminUserSummary[]> {
-  const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
-  if (authError) throw new Error(`Failed to list auth users: ${authError.message}`);
+  const authUsers = await listAllAuthUsers(supabase);
 
   const { data: profiles, error: profilesError } = await supabase
     .from("user_profiles")
@@ -179,7 +202,7 @@ export async function listUsersWithRoles(supabase: SupabaseClient): Promise<Admi
 
   const profileById = new Map((profiles ?? []).map((p) => [p.id as string, p]));
 
-  return authUsers.users.map((u: { id: string; email?: string; created_at: string }) => {
+  return authUsers.map((u: { id: string; email?: string; created_at: string }) => {
     const profile = profileById.get(u.id);
     return {
       id: u.id,
