@@ -30,6 +30,7 @@ import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
 import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
+import { matchFixturesToSecondaryProvider } from "../jobs/matchFixturesToSecondaryProvider.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
@@ -264,7 +265,12 @@ export function createAdminRouter(
   supabase: SupabaseClient,
   provider: FootballDataProvider,
   mlServiceUrl: string,
-  logger: Logger
+  logger: Logger,
+  // Used only for injuries/lineups/odds sync + the fixture-matching job
+  // ahead of them (see scheduler.ts's oddsProvider()/matchFixturesToSecondaryProvider.ts).
+  // Optional and defaulting to `provider` so every existing caller/test
+  // that doesn't pass one keeps behaving exactly as before this existed.
+  secondaryProvider: FootballDataProvider = provider
 ): Router {
   const router = Router();
   router.use(createRequireAdmin(supabase));
@@ -311,8 +317,8 @@ export function createAdminRouter(
 
   router.post("/admin/injuries/sync", syncTriggerLimit, async (_req, res, next) => {
     try {
-      requireProvider(provider);
-      const result = await syncInjuries(supabase, provider, logger);
+      requireProvider(secondaryProvider);
+      const result = await syncInjuries(supabase, secondaryProvider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);
@@ -331,12 +337,12 @@ export function createAdminRouter(
 
   router.post("/admin/lineups/sync", syncTriggerLimit, async (req, res, next) => {
     try {
-      requireProvider(provider);
+      requireProvider(secondaryProvider);
 
       const hoursParam = Number(req.query.hours ?? 24);
       const hours = Number.isFinite(hoursParam) ? Math.min(Math.max(Math.trunc(hoursParam), 1), MAX_KICKOFF_WINDOW_HOURS) : 24;
 
-      const result = await syncLineups(supabase, provider, logger, hours);
+      const result = await syncLineups(supabase, secondaryProvider, logger, hours);
       res.json({ data: result });
     } catch (err) {
       next(err);
@@ -345,12 +351,26 @@ export function createAdminRouter(
 
   router.post("/admin/odds/sync", syncTriggerLimit, async (req, res, next) => {
     try {
-      requireProvider(provider);
+      requireProvider(secondaryProvider);
 
       const hoursParam = Number(req.query.hours ?? 24);
       const hours = Number.isFinite(hoursParam) ? Math.min(Math.max(Math.trunc(hoursParam), 1), MAX_KICKOFF_WINDOW_HOURS) : 24;
 
-      const result = await syncOdds(supabase, provider, logger, hours);
+      const result = await syncOdds(supabase, secondaryProvider, logger, hours);
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Links each upcoming fixture to its secondaryProvider counterpart (see
+  // matchFixturesToSecondaryProvider.ts) — run this manually before
+  // injuries/lineups/odds if you don't want to wait for the scheduler's
+  // own daily match_fixtures_secondary_provider run.
+  router.post("/admin/fixtures/match-secondary-provider", syncTriggerLimit, async (_req, res, next) => {
+    try {
+      requireProvider(secondaryProvider);
+      const result = await matchFixturesToSecondaryProvider(supabase, secondaryProvider, logger);
       res.json({ data: result });
     } catch (err) {
       next(err);

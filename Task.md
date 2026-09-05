@@ -406,6 +406,33 @@
   either against a real price. Confirm the exact bet-name/value strings
   against a live API-Football response first; nothing in this environment
   has done that yet for any market.
+- [x] **Dual-provider architecture: API-Football as an always-on secondary
+  provider for odds/injuries/lineups, independent of the primary
+  fixtures/results/stats provider.** football-data.org's free tier has no
+  odds/injuries/lineups endpoints at all, so a deployment running it as
+  primary previously had no way to get real odds/injuries/lineups from
+  anywhere. `registry.ts`'s `createSecondaryOddsProvider()` adds a second
+  provider (hardcoded to api-football, the only vendor this app maps these
+  three domains from), reusing the same `FOOTBALL_DATA_API_KEY`/
+  `FOOTBALL_DATA_RAPIDAPI_KEY` env vars (no new config). A new
+  `matchFixturesToSecondaryProvider.ts` job (also `POST
+  /admin/fixtures/match-secondary-provider`) links each upcoming fixture to
+  its secondary-provider counterpart by team-name + kickoff-time matching
+  (`lib/teamNameMatch.ts` — no similarity score, ever: exact match after
+  normalization, unique candidate only, or left unmatched), writing a
+  second `external_ref` key alongside the primary's — never a second
+  fixture row, never touching core entity data (fixtures/results/team-
+  stats/standings stay exactly one provider, as before). `sync_injuries`/
+  `sync_lineups`/`sync_odds` now read this secondary provider. New
+  `GET /health/odds-provider` endpoint and an AdminDashboard panel report
+  its connectivity independently of the primary provider's. Full test
+  coverage: `teamNameMatch.test.ts` (13), `matchFixturesToSecondaryProvider.test.ts`
+  (9), `registry.test.ts` (3), plus updated `scheduler.test.ts`/
+  `referenceDataService.test.ts`/`AdminDashboard.test.tsx`. **Unverified
+  against live data** — the matching logic has never been checked against
+  two real vendors' actual team-name formatting side by side; see
+  `Data_Sources.md`'s "The one exception" for exactly what to verify once a
+  live API-Football key exists.
 - [x] Added `total_cards` and `total_corners` markets — a genuinely
   different, much simpler model from the goals one above, not a derivation
   of it (`ml-service/app/models/count_markets.py`). Each side's own

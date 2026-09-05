@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-09-05 — API-Football as an always-on secondary provider for odds/injuries/lineups
+
+football-data.org's free tier (this deployment's current primary provider)
+has no odds/injuries/lineups endpoints at all — so as long as the platform
+only ever ran one provider, there was no way to get real odds/injuries/
+lineups from anywhere while football-data.org was primary. Fixed without
+touching the "exactly one provider is the source of truth for fixtures/
+results/team-stats/standings" design (`Data_Sources.md`'s "Two providers,
+never blended") — that stays exactly as it was.
+
+Added a second, independently-configured provider used ONLY for odds/
+injuries/lineups (`registry.ts`'s `createSecondaryOddsProvider()`),
+hardcoded to API-Football since it's the only vendor this app maps those
+three domains from with any real fidelity — driven by the same
+`FOOTBALL_DATA_API_KEY`/`FOOTBALL_DATA_RAPIDAPI_KEY` env vars the primary
+`api-football` option already uses, so no new configuration exists. When
+the primary provider is already api-football, the secondary reuses that
+same instance instead of standing up a redundant second one (keeps
+`GET /health/api-football`'s rate-limit tracking accurate); otherwise it's
+a real second HTTP-backed provider, or `NullProvider` when
+`FOOTBALL_DATA_API_KEY` isn't set — a deployment that doesn't want this
+simply doesn't set that key.
+
+Since the two vendors use unrelated id schemes for the same real-world
+fixtures, a new fixture-matching layer (`matchFixturesToSecondaryProvider.ts`,
+run daily by the scheduler and via `POST /admin/fixtures/match-secondary-provider`)
+links each upcoming fixture to its secondary-provider counterpart by
+writing a second `external_ref` key alongside the primary's — never a
+second fixture row. Matching (`lib/teamNameMatch.ts`) is deliberately
+conservative: no similarity score, ever — a link is only written when
+exactly one candidate has both team names identical after normalization
+(lowercased, diacritics stripped, club-suffix words like "FC" removed)
+and a kickoff time within 15 minutes; zero or multiple qualifying
+candidates are both left unmatched (tracked separately as `noCandidate`/
+`ambiguous`), never guessed. `sync_injuries`/`sync_lineups`/`sync_odds`
+then read this second key exactly as they'd read any provider's own.
+
+Added `GET /health/odds-provider` and a matching AdminDashboard panel so
+this second provider's connectivity is observable independently of the
+primary's — without it there'd be no way to tell whether the pipeline is
+actually connecting.
+
+New tests: `teamNameMatch.test.ts` (13), `matchFixturesToSecondaryProvider.test.ts`
+(9), `registry.test.ts` (3); updated `scheduler.test.ts` (secondaryProvider
+fallback/override behavior + the new job's scheduling gate),
+`referenceDataService.test.ts` (`loadTeamNames`), and `AdminDashboard.test.tsx`
+(new panel + mocks). Full backend gate green: lint, typecheck, 403 tests,
+build. Full frontend gate green: lint, typecheck, 83 tests, build.
+
+**Unverified against live data**, same discipline as every other provider
+claim in this codebase — see `Data_Sources.md`'s "The one exception" for
+exactly what to check once a live API-Football key exists (it's the exact
+scenario this feature was built for, since this deployment currently runs
+football-data.org as primary).
+
 ## 2026-09-05 — Platform hardening audit: security, reliability, observability, testing, performance
 
 A broad audit pass across the whole platform, executed as a sequence of

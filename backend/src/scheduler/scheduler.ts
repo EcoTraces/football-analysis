@@ -12,6 +12,7 @@ import { syncLineups } from "../jobs/syncLineups.js";
 import { syncOdds } from "../jobs/syncOdds.js";
 import { syncFixtureStatistics } from "../jobs/syncFixtureStatistics.js";
 import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
+import { matchFixturesToSecondaryProvider } from "../jobs/matchFixturesToSecondaryProvider.js";
 import { runLatestPoissonPredictionsJob } from "../jobs/generatePredictions.js";
 import { runLeagueCalibration } from "../jobs/calibrateLeagues.js";
 import { computeCurrentEloRatings } from "../jobs/computeEloRatings.js";
@@ -21,8 +22,19 @@ import { buildAccumulatorRecommendations } from "../jobs/buildAccumulators.js";
 export interface SchedulerDeps {
   supabase: SupabaseClient;
   provider: FootballDataProvider;
+  // Used only for sync_injuries/sync_lineups/sync_odds and the fixture-
+  // matching job ahead of them (see matchFixturesToSecondaryProvider.ts) —
+  // everything else still reads from `provider`. Optional and defaulting
+  // to `provider` (via oddsProvider() below) so every existing deployment/
+  // test that never wires a distinct secondary keeps behaving exactly as
+  // it did before this field existed.
+  secondaryProvider?: FootballDataProvider;
   mlServiceUrl: string;
   logger: Logger;
+}
+
+function oddsProvider(deps: SchedulerDeps): FootballDataProvider {
+  return deps.secondaryProvider ?? deps.provider;
 }
 
 // All expressions are evaluated in UTC (startScheduler passes
@@ -38,6 +50,11 @@ export interface SchedulerDeps {
 export const FIXTURES_SYNC_CRON = "0 2 * * *";
 export const TEAM_STATISTICS_SYNC_CRON = "30 2 * * *";
 export const PLAYER_STATISTICS_SYNC_CRON = "35 2 * * *"; // Same team/season-scoped shape as team-statistics — grouped right after it.
+// Between team/player-statistics and injuries: needs fixtures already
+// synced (02:00) to have something to match, and must finish before
+// sync_injuries (02:45) and the every-15-minute sync_lineups/sync_odds
+// ticks go looking for a secondary-provider external_ref.
+export const MATCH_FIXTURES_SECONDARY_PROVIDER_CRON = "40 2 * * *";
 export const INJURIES_SYNC_CRON = "45 2 * * *";
 export const STANDINGS_SYNC_CRON = "0 3 * * *";
 export const FIXTURE_STATISTICS_SYNC_CRON = "10 3 * * *"; // Before predictions — a finished match's corners don't change once posted, so once a day is enough (unlike lineups/odds, nothing about it needs to be "closer to kickoff").
@@ -84,7 +101,7 @@ export async function runPlayerStatisticsSync(deps: SchedulerDeps): Promise<void
 }
 
 export async function runInjuriesSync(deps: SchedulerDeps): Promise<void> {
-  const result = await syncInjuries(deps.supabase, deps.provider, deps.logger);
+  const result = await syncInjuries(deps.supabase, oddsProvider(deps), deps.logger);
   deps.logger.info({ job: "sync_injuries", result }, "Scheduled sync finished");
 }
 
@@ -94,13 +111,22 @@ export async function runStandingsSync(deps: SchedulerDeps): Promise<void> {
 }
 
 export async function runLineupsSync(deps: SchedulerDeps): Promise<void> {
-  const result = await syncLineups(deps.supabase, deps.provider, deps.logger, KICKOFF_WINDOW_HOURS);
+  const result = await syncLineups(deps.supabase, oddsProvider(deps), deps.logger, KICKOFF_WINDOW_HOURS);
   deps.logger.info({ job: "sync_lineups", result }, "Scheduled sync finished");
 }
 
 export async function runOddsSync(deps: SchedulerDeps): Promise<void> {
-  const result = await syncOdds(deps.supabase, deps.provider, deps.logger, KICKOFF_WINDOW_HOURS);
+  const result = await syncOdds(deps.supabase, oddsProvider(deps), deps.logger, KICKOFF_WINDOW_HOURS);
   deps.logger.info({ job: "sync_odds", result }, "Scheduled sync finished");
+}
+
+// Runs ahead of sync_injuries/sync_lineups/sync_odds (see their own cron
+// constants below) so a fixture created by `provider`'s own sync earlier
+// this run has a chance to be linked to its `secondaryProvider` counterpart
+// before those three jobs go looking for one.
+export async function runMatchFixturesToSecondaryProvider(deps: SchedulerDeps): Promise<void> {
+  const result = await matchFixturesToSecondaryProvider(deps.supabase, oddsProvider(deps), deps.logger);
+  deps.logger.info({ job: "match_fixtures_secondary_provider", result }, "Scheduled sync finished");
 }
 
 export async function runFixtureStatisticsSync(deps: SchedulerDeps): Promise<void> {
@@ -221,10 +247,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     add("sync_fixtures", FIXTURES_SYNC_CRON, () => runFixturesSync(deps));
     add("sync_team_statistics", TEAM_STATISTICS_SYNC_CRON, () => runTeamStatisticsSync(deps));
     add("sync_player_statistics", PLAYER_STATISTICS_SYNC_CRON, () => runPlayerStatisticsSync(deps));
-    add("sync_injuries", INJURIES_SYNC_CRON, () => runInjuriesSync(deps));
     add("sync_standings", STANDINGS_SYNC_CRON, () => runStandingsSync(deps));
-    add("sync_lineups", LINEUPS_SYNC_CRON, () => runLineupsSync(deps));
-    add("sync_odds", ODDS_SYNC_CRON, () => runOddsSync(deps));
     add("sync_fixture_statistics", FIXTURE_STATISTICS_SYNC_CRON, () => runFixtureStatisticsSync(deps));
   } else {
     // No fabricated syncing against an unconfigured provider — skip
@@ -232,9 +255,25 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
     // no-op every tick) and say why, once, at startup.
     deps.logger.warn(
       "Scheduler starting with no football data provider configured (FOOTBALL_DATA_PROVIDER=null) — " +
-        "fixture/team-statistics/player-statistics/injuries/standings/lineups/odds/fixture-statistics sync " +
-        "jobs will NOT be scheduled. The predictions and league-calibration jobs still run; they read from " +
-        "the database, not the provider."
+        "fixture/team-statistics/player-statistics/standings/fixture-statistics sync jobs will NOT be " +
+        "scheduled. The predictions and league-calibration jobs still run; they read from the database, " +
+        "not the provider."
+    );
+  }
+
+  // Gated on the odds/injuries/lineups provider specifically (defaults to
+  // `provider` when no distinct secondary is configured — see
+  // oddsProvider()), independent of the block above: a deployment can have
+  // fixtures configured but odds/injuries/lineups not, or vice versa.
+  if (isProviderConfigured(oddsProvider(deps))) {
+    add("match_fixtures_secondary_provider", MATCH_FIXTURES_SECONDARY_PROVIDER_CRON, () => runMatchFixturesToSecondaryProvider(deps));
+    add("sync_injuries", INJURIES_SYNC_CRON, () => runInjuriesSync(deps));
+    add("sync_lineups", LINEUPS_SYNC_CRON, () => runLineupsSync(deps));
+    add("sync_odds", ODDS_SYNC_CRON, () => runOddsSync(deps));
+  } else {
+    deps.logger.warn(
+      "Scheduler starting with no odds/injuries/lineups provider configured — match_fixtures_secondary_provider/ " +
+        "sync_injuries/sync_lineups/sync_odds jobs will NOT be scheduled."
     );
   }
 

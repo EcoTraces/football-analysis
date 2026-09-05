@@ -4,6 +4,7 @@ import { FakeSupabase } from "./testSupabaseFake.js";
 import {
   PROVIDER_KEY,
   loadExternalRefs,
+  loadTeamNames,
   normalizeCompetitionType,
   providerRefKey,
   upsertCompetition,
@@ -208,6 +209,51 @@ describe("loadExternalRefs", () => {
 
     expect(refs.size).toBe(0);
     expect(fromSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadTeamNames", () => {
+  it("returns a map of id -> name for the requested ids", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    fake.seed("teams", [
+      { id: "team-1", name: "Arsenal" },
+      { id: "team-2", name: "Chelsea" },
+      { id: "team-3", name: "Not requested" }
+    ]);
+
+    const names = await loadTeamNames(client, ["team-1", "team-2"]);
+
+    expect(names.get("team-1")).toBe("Arsenal");
+    expect(names.get("team-2")).toBe("Chelsea");
+    expect(names.has("team-3")).toBe(false);
+  });
+
+  it("returns an empty map without querying at all for an empty id list", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    const fromSpy = vi.spyOn(fake, "from");
+
+    const names = await loadTeamNames(client, []);
+
+    expect(names.size).toBe(0);
+    expect(fromSpy).not.toHaveBeenCalled();
+  });
+
+  it("chunks a large id list into multiple requests", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    const ids = Array.from({ length: 250 }, (_, i) => `team-${i}`);
+    fake.seed(
+      "teams",
+      ids.map((id) => ({ id, name: `Team ${id}` }))
+    );
+    const fromSpy = vi.spyOn(fake, "from");
+
+    const names = await loadTeamNames(client, ids);
+
+    expect(names.size).toBe(250);
+    expect(fromSpy).toHaveBeenCalledTimes(3);
   });
 });
 

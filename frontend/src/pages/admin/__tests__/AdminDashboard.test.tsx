@@ -27,6 +27,7 @@ describe("AdminDashboard", () => {
   it("shows a loading state before any data resolves", () => {
     vi.spyOn(api, "getDataHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getApiFootballHealth").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getOddsProviderHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getSchedulerHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminJobsSummary").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminJobs").mockReturnValue(new Promise(() => {}));
@@ -54,9 +55,17 @@ describe("AdminDashboard", () => {
       productionFixtureCount: 5,
       provider: "api-football",
       providerConfigured: true,
+      secondaryProvider: "api-football",
+      secondaryProviderConfigured: true,
       freshness: [{ domain: "fixtures", lastUpdated: "2026-08-27T00:00:00Z", status: "LIVE", color: "GREEN" }]
     });
     vi.spyOn(api, "getApiFootballHealth").mockResolvedValue({
+      status: "CONNECTED",
+      message: null,
+      lastRequest: { ok: true, at: "2026-08-27T00:00:00Z" },
+      rateLimit: { limit: 100, remaining: 42, observedAt: "2026-08-27T00:00:00Z" }
+    });
+    vi.spyOn(api, "getOddsProviderHealth").mockResolvedValue({
       status: "CONNECTED",
       message: null,
       lastRequest: { ok: true, at: "2026-08-27T00:00:00Z" },
@@ -91,10 +100,14 @@ describe("AdminDashboard", () => {
 
     renderDashboard();
 
-    await waitFor(() => expect(screen.getByText("CONNECTED")).toBeTruthy());
+    // Both the primary and the odds/injuries/lineups provider panels report
+    // CONNECTED in this test's mocks — asserting exactly two confirms both
+    // panels actually rendered, not just one.
+    await waitFor(() => expect(screen.getAllByText("CONNECTED")).toHaveLength(2));
+    expect(screen.getByText("Odds/injuries/lineups provider")).toBeTruthy();
+    expect(screen.getAllByText(/42 \/ 100/)).toHaveLength(2);
     expect(screen.getByText("RUNNING")).toBeTruthy();
     expect(screen.getByText("reachable")).toBeTruthy();
-    expect(screen.getByText(/42 \/ 100/)).toBeTruthy();
     expect(screen.getByText("fixtures")).toBeTruthy();
   });
 
@@ -105,9 +118,12 @@ describe("AdminDashboard", () => {
       productionFixtureCount: 0,
       provider: "null",
       providerConfigured: false,
+      secondaryProvider: "null",
+      secondaryProviderConfigured: false,
       freshness: []
     });
     vi.spyOn(api, "getApiFootballHealth").mockRejectedValue(new api.ApiRequestError("boom", 500));
+    vi.spyOn(api, "getOddsProviderHealth").mockResolvedValue({ status: "NOT_CONFIGURED", message: null, lastRequest: null, rateLimit: null });
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: "off", jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
@@ -145,9 +161,12 @@ describe("AdminDashboard", () => {
       productionFixtureCount: 0,
       provider: "null",
       providerConfigured: false,
+      secondaryProvider: "null",
+      secondaryProviderConfigured: false,
       freshness: []
     });
     vi.spyOn(api, "getApiFootballHealth").mockResolvedValue({ status: "NOT_CONFIGURED", message: null, lastRequest: null, rateLimit: null });
+    vi.spyOn(api, "getOddsProviderHealth").mockResolvedValue({ status: "NOT_CONFIGURED", message: null, lastRequest: null, rateLimit: null });
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: null, jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     const getAdminJobs = vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
@@ -193,9 +212,12 @@ describe("AdminDashboard", () => {
       productionFixtureCount: 0,
       provider: "null",
       providerConfigured: false,
+      secondaryProvider: "null",
+      secondaryProviderConfigured: false,
       freshness: []
     });
     vi.spyOn(api, "getApiFootballHealth").mockResolvedValue({ status: "NOT_CONFIGURED", message: null, lastRequest: null, rateLimit: null });
+    vi.spyOn(api, "getOddsProviderHealth").mockResolvedValue({ status: "NOT_CONFIGURED", message: null, lastRequest: null, rateLimit: null });
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: null, jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });

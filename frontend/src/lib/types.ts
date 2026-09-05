@@ -90,6 +90,10 @@ export interface DataHealth {
   productionFixtureCount: number;
   provider: string;
   providerConfigured: boolean;
+  // The odds/injuries/lineups provider — can be a different vendor than
+  // `provider` (see Data_Sources.md's "The one exception").
+  secondaryProvider: string;
+  secondaryProviderConfigured: boolean;
   freshness: FreshnessEntry[];
 }
 

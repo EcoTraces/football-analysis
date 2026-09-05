@@ -12,21 +12,32 @@ Liveness check. `{ status: "ok", timestamp }`.
 ### `GET /health/data`
 Database reachability, provider configuration, and per-dataset freshness
 (no secrets). `{ database, databaseError, productionFixtureCount, provider,
-providerConfigured, freshness }`, where `freshness` is an array of `{
-domain, lastUpdated, status, color }` — one entry per dataset (`fixtures`,
-`standings`, `teamStatistics`, `injuries`, `lineups`, `odds`,
-`predictions`), `status` one of `LIVE`/`RECENT`/`STALE`/`UNAVAILABLE`
-(`backend/src/lib/freshness.ts`) and `color` the same thing as
-`GREEN`/`YELLOW`/`RED`/`GRAY` for a dashboard to render directly.
+providerConfigured, secondaryProvider, secondaryProviderConfigured,
+freshness }` — `secondaryProvider`/`secondaryProviderConfigured` describe
+the odds/injuries/lineups provider (see Data_Sources.md's "The one
+exception"), which can be a different vendor than `provider`.
+`freshness` is an array of `{ domain, lastUpdated, status, color }` — one
+entry per dataset (`fixtures`, `standings`, `teamStatistics`, `injuries`,
+`lineups`, `odds`, `predictions`), `status` one of
+`LIVE`/`RECENT`/`STALE`/`UNAVAILABLE` (`backend/src/lib/freshness.ts`) and
+`color` the same thing as `GREEN`/`YELLOW`/`RED`/`GRAY` for a dashboard to
+render directly.
 
 ### `GET /health/api-football`
-Provider connectivity status derived from real request history — does
-**not** make a live call on every hit (that would burn API quota on every
-health-check poll). `{ status, message, lastRequest, rateLimit }`, where
-`status` is `NOT_CONFIGURED` (provider isn't `api-football`), `UNKNOWN`
-(configured, but no request has been made yet), `CONNECTED`, or `ERROR`.
-`lastRequest`/`rateLimit` are `null` until at least one real request has
-happened (via a sync job or an admin trigger).
+Primary provider connectivity status derived from real request history —
+does **not** make a live call on every hit (that would burn API quota on
+every health-check poll). `{ status, message, lastRequest, rateLimit }`,
+where `status` is `NOT_CONFIGURED` (provider isn't a real HTTP-backed
+provider), `UNKNOWN` (configured, but no request has been made yet),
+`CONNECTED`, or `ERROR`. `lastRequest`/`rateLimit` are `null` until at
+least one real request has happened (via a sync job or an admin trigger).
+
+### `GET /health/odds-provider`
+Same shape as `/health/api-football` above, but for the odds/injuries/
+lineups provider specifically (`secondaryProvider` — see Data_Sources.md's
+"The one exception"). Reports independently since it can be a genuinely
+different provider instance than the primary, with its own connectivity
+state.
 
 ### `GET /health/scheduler`
 Whether the in-process cron scheduler (`backend/src/scheduler/scheduler.ts`)
@@ -153,15 +164,30 @@ markets; run alongside `/admin/team-statistics/sync`, before
 processed, skipped, failed, playersProcessed }`. Same
 `409 no_provider_configured` behavior as `/admin/sync`. See `Data_Sources.md`.
 
+### `POST /admin/fixtures/match-secondary-provider`
+Links each upcoming fixture to its counterpart in the odds/injuries/
+lineups provider (see `Data_Sources.md`'s "The one exception") by team-name
++ kickoff-time matching, so `/admin/injuries/sync`, `/admin/lineups/sync`,
+and `/admin/odds/sync` below (all of which read the odds/injuries/lineups
+provider, not necessarily the same as the primary fixtures provider) have
+something to look up. Runs automatically once a day via the scheduler;
+this route exists to trigger it immediately instead of waiting. Returns
+`{ runId, fixturesConsidered, alreadyLinked, matched, ambiguous,
+noCandidate }`. Same `409 no_provider_configured` behavior as the other
+sync endpoints (checked against the odds/injuries/lineups provider, not
+the primary one).
+
 ### `POST /admin/injuries/sync`
-Calls the configured provider's injuries endpoint for every distinct
-(team, season) pair implied by real fixtures (deduplicated on the external
-id pair — the endpoint isn't competition-scoped), keeps only the most
-recently dated report per player, and upserts a `players` row plus one
-`injuries` row per player. Returns `{ runId, combinationsConsidered,
-combinationsSkipped, combinationsFailed, playersProcessed,
-playersRejected }`. Same `409 no_provider_configured` behavior as the other
-sync endpoints. See `Data_Sources.md` for the status-classification caveat.
+Calls the odds/injuries/lineups provider's injuries endpoint (see
+`Data_Sources.md`'s "The one exception" — not necessarily the same vendor
+as the primary fixtures provider) for every distinct (team, season) pair
+implied by real fixtures (deduplicated on the external id pair — the
+endpoint isn't competition-scoped), keeps only the most recently dated
+report per player, and upserts a `players` row plus one `injuries` row per
+player. Returns `{ runId, combinationsConsidered, combinationsSkipped,
+combinationsFailed, playersProcessed, playersRejected }`. Same `409
+no_provider_configured` behavior as the other sync endpoints. See
+`Data_Sources.md` for the status-classification caveat.
 
 ### `POST /admin/standings/sync`
 Calls the configured provider's standings endpoint for every distinct
@@ -173,7 +199,7 @@ as the other sync endpoints. See `Data_Sources.md` for the group-flattening
 caveat.
 
 ### `POST /admin/lineups/sync?hours=N`
-Calls the configured provider's lineups endpoint for every real
+Calls the odds/injuries/lineups provider's lineups endpoint for every real
 (non-synthetic), non-postponed/cancelled/abandoned fixture whose kickoff
 falls within `±N` hours of now (default 24, capped at 168). One call per
 fixture returns both teams; upserts a `players` row per named starter/
@@ -185,7 +211,7 @@ fixturesNotYetAvailable, lineupsProcessed, lineupsRejected }`. Same `409
 no_provider_configured` behavior as the other sync endpoints.
 
 ### `POST /admin/odds/sync?hours=N`
-Calls the configured provider's odds endpoint for every real (non-synthetic)
+Calls the odds/injuries/lineups provider's odds endpoint for every real (non-synthetic)
 fixture with status `scheduled`/`live` whose kickoff falls within `±N` hours
 of now (default 24, capped at 168) — like lineups, odds aren't meaningful
 further from kickoff, and there's no "closing odds" use case for finished

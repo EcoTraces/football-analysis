@@ -46,6 +46,18 @@ either wait for the next scheduled run, or use the admin dashboard's
 manual "Run predictions"/"Run ensemble predictions" buttons to confirm
 sooner.
 
+**Also new, same day**: `odds`/`injuries`/`lineups` no longer have to stay
+permanently `UNAVAILABLE` just because `football-data-org` (this
+deployment's primary provider) has no endpoints for them — a second,
+always-on API-Football connection can now supply those three domains
+independently of the primary (see `Changelog.md`'s "API-Football as an
+always-on secondary provider" entry and `Data_Sources.md`'s "The one
+exception"). Requires `FOOTBALL_DATA_API_KEY` to be set on the backend
+service (same key `FOOTBALL_DATA_PROVIDER=api-football` already uses) —
+unverified whether that's currently set in this production deployment;
+check `GET /health/odds-provider` to confirm before expecting
+`injuries`/`lineups`/`odds` to populate.
+
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Audit existing project | ✅ Done | New repo; no prior football code existed |

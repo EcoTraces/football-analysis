@@ -66,6 +66,23 @@ export async function loadExternalRefs(supabase: SupabaseClient, table: string, 
   return result;
 }
 
+// Batches a plain-name lookup by internal team id — used by
+// matchFixturesToSecondaryProvider.ts, which needs the human-readable team
+// names for cross-provider matching but only has fixtures.home_team_id/
+// away_team_id (fixtures itself stores no denormalized team name). Same
+// chunking rationale as loadExternalRefs.
+export async function loadTeamNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+
+  const result = new Map<string, string>();
+  for (const idBatch of chunk(ids, EXTERNAL_REF_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase.from("teams").select("id, name").in("id", idBatch);
+    if (error) throw new Error(`Failed to load team names: ${error.message}`);
+    for (const row of data ?? []) result.set(row.id as string, row.name as string);
+  }
+  return result;
+}
+
 // Find-then-insert rather than a Postgres upsert-on-conflict: the uniqueness
 // constraints here are partial unique indexes over a jsonb expression
 // (external_ref->>'<provider_key>'), and PostgREST's on_conflict parameter is

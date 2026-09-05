@@ -7,7 +7,7 @@ import { pinoHttp } from "pino-http";
 
 import { loadEnv } from "./config/env.js";
 import { createSupabaseClient } from "./lib/supabaseClient.js";
-import { createProvider } from "./providers/registry.js";
+import { createProvider, createSecondaryOddsProvider } from "./providers/registry.js";
 import { createHealthRouter } from "./routes/health.js";
 import { createFixturesRouter } from "./routes/fixtures.js";
 import { createMatchesRouter } from "./routes/matches.js";
@@ -23,9 +23,15 @@ const env = loadEnv();
 const logger = pino({ level: env.NODE_ENV === "production" ? "info" : "debug" });
 const supabase = createSupabaseClient(env);
 const provider = createProvider(env, logger);
+// Independent of `provider` above — see createSecondaryOddsProvider's own
+// comment. Reuses `provider` directly when it's already api-football,
+// otherwise a dedicated instance (or NullProvider when FOOTBALL_DATA_API_KEY
+// isn't set), so odds/injuries/lineups always come from API-Football
+// regardless of which vendor is the primary fixtures/results source.
+const secondaryProvider = createSecondaryOddsProvider(env, logger, provider);
 
 const scheduler = env.SCHEDULER_ENABLED
-  ? startScheduler({ supabase, provider, mlServiceUrl: env.ML_SERVICE_URL, logger })
+  ? startScheduler({ supabase, provider, secondaryProvider, mlServiceUrl: env.ML_SERVICE_URL, logger })
   : null;
 if (!scheduler) {
   logger.info("Scheduler disabled (SCHEDULER_ENABLED=false) — sync/prediction jobs run only via POST /api/admin/*.");
@@ -50,20 +56,20 @@ app.use(
   })
 );
 
-app.use("/api", createHealthRouter(supabase, provider, scheduler));
+app.use("/api", createHealthRouter(supabase, provider, scheduler, secondaryProvider));
 app.use("/api", createFixturesRouter(supabase));
 app.use("/api", createMatchesRouter(supabase));
 app.use("/api", createTeamsRouter(supabase));
 app.use("/api", createCompetitionsRouter(supabase));
 app.use("/api", createMeRouter(supabase));
-app.use("/api", createAdminRouter(supabase, provider, env.ML_SERVICE_URL, logger));
+app.use("/api", createAdminRouter(supabase, provider, env.ML_SERVICE_URL, logger, secondaryProvider));
 app.use("/api", createScreeningRouter(supabase));
 
 app.use(notFoundHandler);
 app.use(createErrorHandler(logger));
 
 const server = app.listen(env.PORT, () => {
-  logger.info(`Backend listening on port ${env.PORT} (provider=${provider.name})`);
+  logger.info(`Backend listening on port ${env.PORT} (provider=${provider.name}, secondaryProvider=${secondaryProvider.name})`);
 });
 
 function shutdown(signal: string): void {

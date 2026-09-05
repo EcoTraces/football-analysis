@@ -88,7 +88,18 @@ export function schedulerHealthStatus(scheduler: Scheduler | null) {
   return { status: "RUNNING" as const, message: null, jobs: scheduler.status() };
 }
 
-export function createHealthRouter(supabase: SupabaseClient, provider: FootballDataProvider, scheduler: Scheduler | null): Router {
+export function createHealthRouter(
+  supabase: SupabaseClient,
+  provider: FootballDataProvider,
+  scheduler: Scheduler | null,
+  // Reused for /health/data and a dedicated /health/odds-provider — without
+  // this, there'd be no way to tell whether the odds/injuries/lineups
+  // provider (which can be a genuinely different, independently-connecting
+  // instance from `provider` — see registry.ts's createSecondaryOddsProvider)
+  // is actually working. Defaults to `provider` so a caller that hasn't
+  // wired a distinct secondary sees identical output to before this existed.
+  secondaryProvider: FootballDataProvider = provider
+): Router {
   const router = Router();
 
   router.get("/health", (_req, res) => {
@@ -112,6 +123,8 @@ export function createHealthRouter(supabase: SupabaseClient, provider: FootballD
       productionFixtureCount: count ?? 0,
       provider: provider.name,
       providerConfigured: provider.name !== "null",
+      secondaryProvider: secondaryProvider.name,
+      secondaryProviderConfigured: secondaryProvider.name !== "null",
       freshness
     });
   });
@@ -123,6 +136,18 @@ export function createHealthRouter(supabase: SupabaseClient, provider: FootballD
   // trigger), which is null/UNKNOWN until at least one has happened.
   router.get("/health/api-football", (_req, res) => {
     res.json(apiFootballHealthStatus(provider));
+  });
+
+  // Same shape as /health/api-football, for the ODDS/injuries/lineups
+  // provider specifically — a distinct instance from `provider` whenever a
+  // secondary odds provider is configured (see registry.ts). Without this,
+  // there'd be no way to tell whether that pipeline is actually connecting;
+  // it's a separate route rather than folding into /health/api-football
+  // since the two can legitimately report different states (e.g. the
+  // primary football-data.org connected, the secondary api-football not
+  // configured at all).
+  router.get("/health/odds-provider", (_req, res) => {
+    res.json(apiFootballHealthStatus(secondaryProvider));
   });
 
   // Whether the in-process cron scheduler (scheduler.ts) is running, and

@@ -9,6 +9,7 @@ import {
   getAdminJobs,
   getAdminJobsSummary,
   getApiFootballHealth,
+  getOddsProviderHealth,
   getBacktestResults,
   getCompetitionAllowlist,
   getCompetitionRhoResults,
@@ -90,6 +91,8 @@ interface DashboardData {
   dataHealthError: string | null;
   apiFootballHealth: ApiFootballHealth | null;
   apiFootballError: string | null;
+  oddsProviderHealth: ApiFootballHealth | null;
+  oddsProviderError: string | null;
   schedulerHealth: SchedulerHealth | null;
   schedulerError: string | null;
   jobsSummary: JobsSummary | null;
@@ -196,6 +199,7 @@ export function AdminDashboard() {
     const [
       [dataHealth, dataHealthError],
       [apiFootballHealth, apiFootballError],
+      [oddsProviderHealth, oddsProviderError],
       [schedulerHealth, schedulerError],
       [jobsSummaryRes, jobsSummaryError],
       [recentJobsRes, recentJobsError],
@@ -213,6 +217,7 @@ export function AdminDashboard() {
     ] = await Promise.all([
       loadPiece(() => getDataHealth()),
       loadPiece(() => getApiFootballHealth()),
+      loadPiece(() => getOddsProviderHealth()),
       loadPiece(() => getSchedulerHealth()),
       loadPiece(() => getAdminJobsSummary(token)),
       loadPiece(() => getAdminJobs(token, 20)),
@@ -234,6 +239,8 @@ export function AdminDashboard() {
       dataHealthError,
       apiFootballHealth,
       apiFootballError,
+      oddsProviderHealth,
+      oddsProviderError,
       schedulerHealth,
       schedulerError,
       jobsSummary: jobsSummaryRes?.data ?? null,
@@ -417,7 +424,7 @@ export function AdminDashboard() {
     <div className="space-y-8">
       <section>
         <h1 className="mb-4 text-xl font-semibold">Dashboard</h1>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
             <h2 className="mb-2 text-sm font-medium text-slate-500 dark:text-slate-400">Data provider</h2>
             {data.apiFootballError ? (
@@ -434,6 +441,31 @@ export function AdminDashboard() {
                   {data.apiFootballHealth.rateLimit && (
                     <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                       Rate limit: {data.apiFootballHealth.rateLimit.remaining ?? "?"} / {data.apiFootballHealth.rateLimit.limit ?? "?"}{" "}
+                      remaining
+                    </p>
+                  )}
+                </>
+              )
+            )}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+            {/* Can be a different vendor than the panel above — see Data_Sources.md's "The one exception". */}
+            <h2 className="mb-2 text-sm font-medium text-slate-500 dark:text-slate-400">Odds/injuries/lineups provider</h2>
+            {data.oddsProviderError ? (
+              <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+                {data.oddsProviderError}
+              </p>
+            ) : (
+              data.oddsProviderHealth && (
+                <>
+                  <StatusBadge status={data.oddsProviderHealth.status} />
+                  {data.oddsProviderHealth.message && (
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{data.oddsProviderHealth.message}</p>
+                  )}
+                  {data.oddsProviderHealth.rateLimit && (
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      Rate limit: {data.oddsProviderHealth.rateLimit.remaining ?? "?"} / {data.oddsProviderHealth.rateLimit.limit ?? "?"}{" "}
                       remaining
                     </p>
                   )}
@@ -481,6 +513,10 @@ export function AdminDashboard() {
                   <StatusBadge status={data.dataHealth.database} />
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                     Provider: {data.dataHealth.provider} ({data.dataHealth.providerConfigured ? "configured" : "not configured"})
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Odds/injuries/lineups: {data.dataHealth.secondaryProvider} (
+                    {data.dataHealth.secondaryProviderConfigured ? "configured" : "not configured"})
                   </p>
                   {data.fixtureCounts && (
                     <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">

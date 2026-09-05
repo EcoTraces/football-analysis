@@ -7,8 +7,10 @@ import { FakeSupabase } from "./testSupabaseFake.js";
 import {
   startScheduler,
   runFixturesSync,
+  runInjuriesSync,
   runLineupsSync,
   runOddsSync,
+  runMatchFixturesToSecondaryProvider,
   runFixtureStatisticsSync,
   runLeagueCalibrationSync,
   runPredictions,
@@ -20,6 +22,7 @@ import {
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
   PLAYER_STATISTICS_SYNC_CRON,
+  MATCH_FIXTURES_SECONDARY_PROVIDER_CRON,
   INJURIES_SYNC_CRON,
   STANDINGS_SYNC_CRON,
   LINEUPS_SYNC_CRON,
@@ -72,7 +75,8 @@ describe("scheduler", () => {
       PREDICTIONS_CRON,
       ELO_RATINGS_CRON,
   ENSEMBLE_PREDICTIONS_CRON,
-  BUILD_ACCUMULATORS_CRON
+  BUILD_ACCUMULATORS_CRON,
+  MATCH_FIXTURES_SECONDARY_PROVIDER_CRON
     ]) {
       expect(cron.validate(expr)).toBe(true);
     }
@@ -92,6 +96,7 @@ describe("scheduler", () => {
         "sync_fixtures",
         "sync_team_statistics",
         "sync_player_statistics",
+        "match_fixtures_secondary_provider",
         "sync_injuries",
         "sync_standings",
         "sync_lineups",
@@ -360,6 +365,132 @@ describe("scheduler", () => {
     );
     expect(logger.error).not.toHaveBeenCalled();
     expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "compute_elo_ratings" });
+  });
+
+  it("runInjuriesSync/runLineupsSync/runOddsSync use secondaryProvider, not provider, when a distinct one is configured", async () => {
+    const fake = new FakeSupabase();
+    const now = Date.now();
+    fake.seed("teams", [
+      { id: "team-home", external_ref: { api_football: "33" } },
+      { id: "team-away", external_ref: { api_football: "34" } }
+    ]);
+    fake.seed("seasons", [{ id: "season-1", external_ref: { api_football: "2026" } }]);
+    fake.seed("fixtures", [
+      {
+        id: "fx-1",
+        home_team_id: "team-home",
+        away_team_id: "team-away",
+        competition_id: "comp-1",
+        season_id: "season-1",
+        external_ref: { api_football: "1" },
+        is_synthetic: false,
+        status: "scheduled",
+        kickoff_utc: new Date(now + 2 * 3600_000).toISOString()
+      }
+    ]);
+    const primary = new StubProvider("football-data-org");
+    const secondary = new StubProvider("api-football");
+    const primaryCalls: string[] = [];
+    const secondaryCalls: string[] = [];
+    primary.getInjuries = () => {
+      primaryCalls.push("injuries");
+      return notConfigured(primary.name);
+    };
+    secondary.getInjuries = () => {
+      secondaryCalls.push("injuries");
+      return notConfigured(secondary.name);
+    };
+    secondary.getLineup = (fixtureExternalId: string) => {
+      secondaryCalls.push(`lineup:${fixtureExternalId}`);
+      return Promise.resolve({ ok: true as const, data: [], sourceTimestamp: new Date().toISOString(), provider: secondary.name });
+    };
+    secondary.getOdds = (fixtureExternalId: string) => {
+      secondaryCalls.push(`odds:${fixtureExternalId}`);
+      return Promise.resolve({ ok: true as const, data: [], sourceTimestamp: new Date().toISOString(), provider: secondary.name });
+    };
+
+    const deps = { supabase: fakeClient(fake), provider: primary, secondaryProvider: secondary, mlServiceUrl: "http://localhost:8000", logger: fakeLogger() };
+    await runInjuriesSync(deps);
+    await runLineupsSync(deps);
+    await runOddsSync(deps);
+
+    expect(primaryCalls).toEqual([]);
+    expect(secondaryCalls).toEqual(["injuries", "injuries", "lineup:1", "odds:1"]);
+  });
+
+  it("runInjuriesSync/runLineupsSync/runOddsSync fall back to provider when no secondaryProvider is configured", async () => {
+    const fake = new FakeSupabase();
+    fake.seed("teams", [
+      { id: "team-home", external_ref: { api_football: "33" } },
+      { id: "team-away", external_ref: { api_football: "34" } }
+    ]);
+    fake.seed("seasons", [{ id: "season-1", external_ref: { api_football: "2026" } }]);
+    fake.seed("fixtures", [
+      { id: "fx-1", home_team_id: "team-home", away_team_id: "team-away", competition_id: "comp-1", season_id: "season-1", is_synthetic: false }
+    ]);
+    const provider = new StubProvider("api-football");
+    const calls: string[] = [];
+    provider.getInjuries = () => {
+      calls.push("injuries");
+      return notConfigured(provider.name);
+    };
+
+    await runInjuriesSync({ supabase: fakeClient(fake), provider, mlServiceUrl: "http://localhost:8000", logger: fakeLogger() });
+
+    expect(calls).toEqual(["injuries", "injuries"]);
+  });
+
+  it("runMatchFixturesToSecondaryProvider runs the real job and logs its result", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+
+    await runMatchFixturesToSecondaryProvider({
+      supabase: fakeClient(fake),
+      provider: new StubProvider("football-data-org"),
+      secondaryProvider: new StubProvider("api-football"),
+      mlServiceUrl: "http://localhost:8000",
+      logger
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "match_fixtures_secondary_provider" }),
+      "Scheduled sync finished"
+    );
+    expect(fake.rows("ingestion_runs")[0]).toMatchObject({ job_name: "match_fixtures_secondary_provider" });
+  });
+
+  it("schedules match_fixtures_secondary_provider/sync_injuries/sync_lineups/sync_odds when only secondaryProvider is configured (provider itself unconfigured)", () => {
+    const logger = fakeLogger();
+    const scheduler = startScheduler({
+      supabase: fakeClient(new FakeSupabase()),
+      provider: new StubProvider("null"),
+      secondaryProvider: new StubProvider("api-football"),
+      mlServiceUrl: "http://localhost:8000",
+      logger
+    });
+
+    expect(scheduler.jobs.sort()).toEqual(
+      ["calibrate_leagues", "predictions", "compute_elo_ratings", "predictions_ensemble", "build_accumulators", "match_fixtures_secondary_provider", "sync_injuries", "sync_lineups", "sync_odds"].sort()
+    );
+
+    scheduler.stop();
+  });
+
+  it("does not schedule match_fixtures_secondary_provider/sync_injuries/sync_lineups/sync_odds when provider is configured but secondaryProvider explicitly is not", () => {
+    const logger = fakeLogger();
+    const scheduler = startScheduler({
+      supabase: fakeClient(new FakeSupabase()),
+      provider: new StubProvider("football-data-org"),
+      secondaryProvider: new StubProvider("null"),
+      mlServiceUrl: "http://localhost:8000",
+      logger
+    });
+
+    expect(scheduler.jobs.sort()).toEqual(
+      ["sync_fixtures", "sync_team_statistics", "sync_player_statistics", "sync_standings", "sync_fixture_statistics", "calibrate_leagues", "predictions", "compute_elo_ratings", "predictions_ensemble", "build_accumulators"].sort()
+    );
+
+    scheduler.stop();
   });
 
   it("guarded() catches a thrown error and logs it instead of propagating", async () => {

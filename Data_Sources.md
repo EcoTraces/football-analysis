@@ -7,9 +7,13 @@
 `{ ok: false, reason: "not_configured" }` from every method — see
 `Coding_Rules.md` → "No Fake Data Rule."
 
-Two real providers exist. **Pick exactly one** — see "Two providers, never
-blended" below for why this platform never runs both against the same data
-at once:
+Two real providers exist. **Pick exactly one as `FOOTBALL_DATA_PROVIDER`**
+for fixtures/results/team-stats/standings — see "Two providers, never
+blended for core entity data" below for why this platform never merges
+both into the same entity. Odds/injuries/lineups are the one exception:
+API-Football can additionally run as an always-on *secondary* provider for
+just those three domains regardless of which one is primary — see "The one
+exception" below.
 
 - **`FOOTBALL_DATA_PROVIDER=api-football`** + a real `FOOTBALL_DATA_API_KEY`
   switches to `ApiFootballProvider` (`backend/src/providers/ApiFootballProvider.ts`),
@@ -72,7 +76,7 @@ see the capability table below), so "verified" for them just means the
 short-circuit itself was confirmed to fire correctly, not that a live
 endpoint was checked.
 
-## Two providers, never blended
+## Two providers, never blended for core entity data — with one deliberate, narrow exception for odds/injuries/lineups
 
 `referenceDataService.ts` keys every entity (`countries` excepted — see
 below) by `external_ref->>'<provider_key>'`, where `<provider_key>` is
@@ -80,16 +84,17 @@ derived from the active provider's own `FootballDataProvider.name`
 (`providerRefKey()` — e.g. `"api-football"` → `"api_football"`,
 `"football-data-org"` → `"football_data_org"`). **Nothing in this platform
 resolves "api-football's team 33" and "football-data-org's team 66" as the
-same real Manchester United** — the two vendors use entirely unrelated
-numeric id schemes for the same real-world teams/competitions, and there is
-no fuzzy name-matching entity-resolution layer (deliberately not built —
-see the plan discussion that scoped this feature: a wrong fuzzy match would
-silently corrupt team_statistics/predictions, a worse failure than simply
-not merging).
+same real Manchester United by ENTITY id** — the two vendors use entirely
+unrelated numeric id schemes for the same real-world teams/competitions,
+and there is still no fuzzy entity-resolution layer that would let, say,
+`syncTeamStatistics.ts` merge one provider's stats onto a team created by
+the other. A wrong fuzzy match there would silently corrupt
+team_statistics/predictions — a worse failure than simply not merging.
 
 This is why `FOOTBALL_DATA_PROVIDER` is a single-value switch, not a list:
-**exactly one provider is active in a given deployment/environment.**
-Practical consequences:
+**exactly one provider is the source of truth for fixtures, results,
+team/player statistics, and standings in a given deployment.** Practical
+consequences:
 
 - **Switching providers starts fresh entity rows.** If you sync with
   `api-football` for a while, then switch to `football-data-org`, the next
@@ -114,6 +119,72 @@ Practical consequences:
   `0014` deliberately does *not* add a football-data-org equivalent) is
   unused dead schema for this reason, same as it always was.
 
+## The one exception: a second, always-on provider for odds/injuries/lineups
+
+football-data.org's free tier has no odds/injuries/lineups endpoints at
+all (see the capability table below) — so a deployment running it as the
+primary provider had no way to get real odds/injuries/lineups from
+anywhere. `createSecondaryOddsProvider()` (`backend/src/providers/registry.ts`)
+adds a second, independently-configured provider used *only* for those
+three domains: currently hardcoded to API-Football, since it's the only
+vendor this app maps them from with any real fidelity. It's driven by the
+same `FOOTBALL_DATA_API_KEY`/`FOOTBALL_DATA_RAPIDAPI_KEY` env vars
+`FOOTBALL_DATA_PROVIDER=api-football` already uses — no new config exists
+for this. If the primary provider is already api-football, the secondary
+reuses that *same* instance rather than standing up a redundant second
+one (so `GET /health/api-football`'s rate-limit tracking still reflects
+all of that vendor's traffic in one place); otherwise it's a real, second
+HTTP-backed provider instance, or `NullProvider` if `FOOTBALL_DATA_API_KEY`
+isn't set — a deployment that doesn't want this simply doesn't set that
+key, and odds/injuries/lineups stay honestly `UNAVAILABLE`.
+
+**This does NOT create a second fixture source, and does not contradict
+"never blended" above.** Fixtures/results/team-stats/standings still come
+from exactly one primary provider. What changes is that
+`matchFixturesToSecondaryProvider.ts` — a genuinely new fixture-matching
+layer, run daily by the scheduler ahead of `sync_injuries`/`sync_lineups`/
+`sync_odds` (also exposed as `POST /admin/fixtures/match-secondary-provider`
+for a manual/immediate run) — links each upcoming primary-sourced fixture
+to its secondary-provider counterpart by adding a *second* key to that
+fixture's existing `external_ref` jsonb column, alongside its primary
+key, never replacing it. `sync_injuries`/`sync_lineups`/`sync_odds` then
+read that second key exactly the way they'd read any provider's own key.
+
+This IS the fuzzy-name-matching entity-resolution layer the section above
+says was deliberately never built for core entities — built here, but
+narrowly scoped to just this one case, for two reasons the general case
+doesn't share: (1) there's no other way to get real odds/injuries/lineups
+at all when the primary provider doesn't offer them, so "don't merge" isn't
+a safe fallback here the way it is for team stats; (2) a wrong match here
+only risks attaching one fixture's odds/injuries/lineups to a different
+fixture — bad, and guarded against hard (see below), but categorically
+less corrupting than misattributing a team's *statistics*, which would
+poison every prediction reading that team's history.
+
+**How the matching stays conservative** (`backend/src/lib/teamNameMatch.ts`):
+no similarity score, ever. A link is only written when exactly one
+candidate has both team names identical after normalization (lowercased,
+diacritics stripped, common club-suffix words like "FC"/"CF" removed) AND
+a kickoff time within 15 minutes. Zero or multiple qualifying candidates
+both resolve to "leave unmatched," tracked separately
+(`noCandidate`/`ambiguous`) for observability — never a best guess. A
+fixture whose primary provider is *already* api-football needs no
+matching at all (its own sync already wrote that same key), so the job is
+a fast no-op for that fixture without a special case.
+
+**Unverified against live data, same caveat as everything else in this
+file** — the matching logic is unit-tested against `FakeSupabase` and a
+fake secondary provider (`matchFixturesToSecondaryProvider.test.ts`,
+`teamNameMatch.test.ts`), not against two real vendors' actual team-name
+spelling/formatting conventions side by side. Get a real API-Football key,
+run `POST /admin/fixtures/match-secondary-provider`, and check its
+`ambiguous`/`noCandidate` counts before trusting this at scale — a
+consistently high ambiguous/noCandidate rate for a specific competition
+would mean the two vendors format that competition's team names
+differently enough that the exact-match rule needs revisiting (e.g. one
+vendor including a sponsor name), not that fuzzier matching should be
+turned on by default.
+
 ## football-data.org: a swappable alternative provider
 
 `FootballDataOrgProvider` implements the full `FootballDataProvider`
@@ -125,6 +196,13 @@ capabilities that interface declares:
 | `getFixturesForDateRange` / `getResultsSince` | **Real.** `GET /v4/matches?dateFrom=&dateTo=` — and unlike `ApiFootballProvider`, this vendor's endpoint genuinely accepts a multi-day range in one call, no single-UTC-day workaround needed. |
 | `getStandings` | **Real.** `GET /v4/competitions/{id}/standings`. |
 | `getTeamStatistics`, `getPlayerStatistics`, `getInjuries`, `getLineup`, `getOdds`, `getFixtureStatistics` | **`reason: "not_configured"`, always** — this vendor's free tier has no endpoint for any of these. Same "never fabricate, no data no market" contract `NullProvider` already establishes for an unconfigured provider entirely — a sync job calling one of these against `football-data-org` simply logs a per-item skip/failure and moves on, exactly as it already does for any other real provider failure. |
+
+This table describes `FootballDataOrgProvider` itself, unchanged — it
+still never has real injuries/lineups/odds data of its own. What changed
+is that the *application* no longer has to accept that as final for those
+three domains: see "The one exception" above for how a deployment running
+football-data.org as primary can still get real injuries/lineups/odds,
+from API-Football specifically, as a second provider.
 
 Two mapping decisions worth calling out:
 

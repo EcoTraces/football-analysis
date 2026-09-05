@@ -96,6 +96,13 @@ export function getApiFootballHealth(): Promise<ApiFootballHealth> {
   return request<ApiFootballHealth>("/health/api-football");
 }
 
+// The odds/injuries/lineups provider — same shape as getApiFootballHealth
+// above, but can report a different vendor/status (see DataHealth's
+// secondaryProvider field and Data_Sources.md's "The one exception").
+export function getOddsProviderHealth(): Promise<ApiFootballHealth> {
+  return request<ApiFootballHealth>("/health/odds-provider");
+}
+
 export function getSchedulerHealth(): Promise<SchedulerHealth> {
   return request<SchedulerHealth>("/health/scheduler");
 }
@@ -131,6 +138,7 @@ export const SYNC_ACTIONS: SyncAction[] = [
   { key: "sync_fixtures", label: "Fixtures", path: "/admin/sync" },
   { key: "sync_team_statistics", label: "Team statistics", path: "/admin/team-statistics/sync" },
   { key: "sync_player_statistics", label: "Player statistics", path: "/admin/player-statistics/sync" },
+  { key: "match_fixtures_secondary_provider", label: "Match fixtures (odds provider)", path: "/admin/fixtures/match-secondary-provider" },
   { key: "sync_injuries", label: "Injuries", path: "/admin/injuries/sync" },
   { key: "sync_standings", label: "Standings", path: "/admin/standings/sync" },
   { key: "sync_lineups", label: "Lineups", path: "/admin/lineups/sync" },
