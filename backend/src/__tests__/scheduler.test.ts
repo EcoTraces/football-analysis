@@ -16,6 +16,7 @@ import {
   runEnsemblePredictions,
   runBuildAccumulators,
   guarded,
+  withJobLock,
   FIXTURES_SYNC_CRON,
   TEAM_STATISTICS_SYNC_CRON,
   PLAYER_STATISTICS_SYNC_CRON,
@@ -370,5 +371,33 @@ describe("scheduler", () => {
       expect.objectContaining({ job: "sync_fixtures", err: expect.any(Error) }),
       "Scheduled job threw unexpectedly"
     );
+  });
+
+  it("withJobLock runs the job when the lock is free", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+    const fn = vi.fn().mockResolvedValue(undefined);
+
+    await withJobLock("sync_fixtures", { supabase: fakeClient(fake), provider: new StubProvider("null"), mlServiceUrl: "", logger }, fn)();
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("withJobLock skips the job (and logs, not warns/errors) when another instance already holds the lock", async () => {
+    const fake = new FakeSupabase();
+    const logger = fakeLogger();
+    const deps = { supabase: fakeClient(fake), provider: new StubProvider("null"), mlServiceUrl: "", logger };
+    // Claim the lock first, as if a second instance already had it.
+    await withJobLock("sync_fixtures", deps, vi.fn().mockResolvedValue(undefined))();
+
+    const fn = vi.fn().mockResolvedValue(undefined);
+    await withJobLock("sync_fixtures", deps, fn)();
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "sync_fixtures" }),
+      "Skipped: another instance already holds this job's lock"
+    );
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

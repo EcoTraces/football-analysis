@@ -50,6 +50,45 @@ export class FakeSupabase {
     return this.tables.get(table) ?? [];
   }
 
+  // Models exactly one real RPC function this codebase has —
+  // try_acquire_job_lock (0016_job_locks.sql) — rather than a generic RPC
+  // mechanism: this is the first stored procedure this app has ever
+  // needed (everything else goes through PostgREST's table/filter
+  // builder), specifically because the "steal the lock only if it expired"
+  // check has to be atomic in a way a separate select-then-upsert from JS
+  // can't guarantee. The real function's semantics (insert, or update only
+  // when the existing row's expires_at has passed) are reproduced here
+  // synchronously — safe for a single-threaded test double, unlike the real
+  // concurrent-processes case this exists to handle.
+  async rpc(name: string, params: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
+    if (name !== "try_acquire_job_lock") {
+      return { data: null, error: { message: `FakeSupabase.rpc: unimplemented rpc "${name}"` } };
+    }
+    const jobName = params.p_job_name as string;
+    const holder = params.p_holder as string;
+    const ttlSeconds = params.p_ttl_seconds as number;
+    const now = new Date();
+
+    if (!this.tables.has("job_locks")) this.tables.set("job_locks", []);
+    const table = this.tables.get("job_locks")!;
+    const existing = table.find((r) => r.job_name === jobName);
+    const acquired = !existing || new Date(existing.expires_at as string).getTime() < now.getTime();
+
+    if (acquired) {
+      const row: FakeRow = {
+        id: jobName,
+        job_name: jobName,
+        locked_by: holder,
+        locked_at: now.toISOString(),
+        expires_at: new Date(now.getTime() + ttlSeconds * 1000).toISOString()
+      };
+      if (existing) Object.assign(existing, row);
+      else table.push(row);
+    }
+
+    return { data: acquired, error: null };
+  }
+
   /** Make the next `times` insert(s) into `table` fail, to test error handling. */
   failNextInsert(table: string, times = 1): void {
     this.insertFailures.set(table, (this.insertFailures.get(table) ?? 0) + times);

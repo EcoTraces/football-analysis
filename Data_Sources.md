@@ -712,14 +712,25 @@ using [`node-cron`](https://www.npmjs.com/package/node-cron), when
   is set on every task, so a slow run of a 15-minute job can't overlap with
   the next tick of itself.
 
-**Known limitation — single instance only.** `node-cron` has no
-cross-process coordination. Running the backend as more than one replica
-with `SCHEDULER_ENABLED=true` would have every replica independently
-scheduling and running the same jobs, syncing (and, for `syncOdds.ts`,
-appending odds snapshots) redundantly N times over rather than once. Fine
-for today's single-instance deployment (`Deployment.md`); a distributed
-lock or moving scheduling to an external trigger (Cloud Scheduler hitting
-the existing admin endpoints) would be needed before scaling out.
+**Cross-process lock (0016_job_locks.sql).** `node-cron` itself still has
+no coordination between processes, but every scheduled job now goes
+through `withJobLock()` before it runs, which calls the
+`try_acquire_job_lock` Postgres function to atomically claim that job's row
+in `job_locks` (an `INSERT ... ON CONFLICT DO UPDATE ... WHERE
+expires_at < now()`, so two replicas racing to claim the same job's lock
+at the same instant can't both win it — see that migration's own comment).
+A replica that doesn't get the lock skips that run and logs why, rather
+than syncing (or, for `syncOdds.ts`, appending odds snapshots)
+redundantly. The lock has a generous TTL (30 minutes,
+`DEFAULT_JOB_LOCK_TTL_SECONDS`) rather than an explicit release, so a
+crashed replica's lock still frees itself up on its own. This hasn't been
+exercised against actually-concurrent replicas (this Blueprint still
+deploys a single `plan: free` instance — `Deployment.md`), only unit-tested
+against `FakeSupabase`'s single-threaded model of the same INSERT/ON
+CONFLICT semantics (`jobLock.test.ts`) — real Postgres's row-level
+consistency is what actually makes two simultaneous callers resolve to
+exactly one winner, and that guarantee itself is trusted, not re-tested,
+here.
 
 **Also not done:** cron cadences are fixed constants in `scheduler.ts`, not
 env-configurable — no real operational need for per-environment tuning has

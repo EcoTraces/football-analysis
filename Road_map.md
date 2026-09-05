@@ -85,11 +85,14 @@ verification itself is outstanding for the pieces above.
    close to kickoff. Do not mark this complete before the observation
    period has actually elapsed — see `Task.md`.
 6. Start the backtesting pipeline once enough real historical results exist.
-7. Before running more than one backend replica in production, address the
-   scheduler's single-instance assumption (`scheduler.ts` has no
-   cross-process locking) — either a distributed lock, or moving scheduling
-   to an external trigger (e.g. Cloud Scheduler) hitting the existing admin
-   endpoints instead of an in-process cron.
+7. ~~Before running more than one backend replica in production, address
+   the scheduler's single-instance assumption~~ — done: every scheduled job
+   now claims a real Postgres-backed lock (`0016_job_locks.sql`,
+   `withJobLock()`) before running, so a second replica skips a job another
+   replica already claimed instead of syncing it redundantly. Still worth
+   observing against actually-concurrent replicas before fully trusting it
+   at scale (see `Data_Sources.md`'s scheduler section) — this Blueprint
+   still deploys a single instance either way.
 
 ## AI Football Analyst & Accumulator Engine — Phase 2+ (deferred from Phase 1)
 

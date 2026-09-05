@@ -3,6 +3,7 @@ import type { ScheduledTask } from "node-cron";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
 import type { FootballDataProvider } from "../providers/types.js";
+import { acquireJobLock } from "../lib/jobLock.js";
 import { syncFixturesForDateRange } from "../jobs/syncFixtures.js";
 import { syncTeamStatistics } from "../jobs/syncTeamStatistics.js";
 import { syncInjuries } from "../jobs/syncInjuries.js";
@@ -170,6 +171,24 @@ export function guarded(name: string, logger: Logger, fn: () => Promise<void>): 
   };
 }
 
+// Cross-process guard, composed around guarded() (see add() below) rather
+// than into it: guarded() is a general "don't let a thrown error escape
+// node-cron's callback" wrapper with no opinion on locking, while this is
+// specifically "don't run at all if another instance already claimed this
+// job's lock" (job_locks, 0016_job_locks.sql — see jobLock.ts). Exported
+// for direct unit testing, same reasoning as guarded() itself: real cron
+// timing isn't something a fast test should depend on.
+export function withJobLock(jobName: string, deps: SchedulerDeps, fn: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    const acquired = await acquireJobLock(deps.supabase, jobName, deps.logger);
+    if (!acquired) {
+      deps.logger.info({ job: jobName }, "Skipped: another instance already holds this job's lock");
+      return;
+    }
+    await fn();
+  };
+}
+
 export interface ScheduledJobStatus {
   name: string;
   cronExpression: string;
@@ -194,7 +213,7 @@ export function startScheduler(deps: SchedulerDeps): Scheduler {
   const options = { timezone: "UTC", noOverlap: true };
 
   function add(name: string, expression: string, fn: () => Promise<void>): void {
-    const task = cron.schedule(expression, guarded(name, deps.logger, fn), options);
+    const task = cron.schedule(expression, guarded(name, deps.logger, withJobLock(name, deps, fn)), options);
     entries.push({ name, expression, task });
   }
 
