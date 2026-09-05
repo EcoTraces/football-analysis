@@ -83,11 +83,11 @@
   substitute for a real automated/third-party security audit** — this was
   one person(+AI) reading the diff, not a tool-driven scan or a
   professional pen test.
-- [ ] Add request logging/audit trail for admin actions (who ran
-  `/admin/sync`, when, with what result; who promoted/demoted whom via the
-  new `/admin/users/:id/role`) — `requireAdmin`/`requireAuth` know the
-  authenticated user id at that point (`req.authUser`) but nothing persists
-  it yet.
+- [x] Add request logging/audit trail for admin actions — `admin_audit_log`
+  (migration 0015), `middleware/auditAdminActions.ts` (applied via
+  `router.use()` right after `requireAdmin`, same "can't ship a route
+  without it by omission" pattern), `GET /admin/audit-log`, and an
+  `AdminDashboard.tsx` panel to read it.
 - [ ] Consider token revocation/expiry edge cases explicitly: `auth.getUser()`
   should reject an expired or revoked token, but this hasn't been verified
   against Supabase's actual token lifecycle (only against the test fake,
@@ -210,13 +210,18 @@
   a current price), so every successful run appends new rows rather than
   overwriting. **Not yet verified against a live API key** — same caveat
   as the other sync jobs.
-- [ ] `syncOdds.ts` has no de-duplication: running it on a tight schedule
-  with unchanged prices still inserts a full new set of snapshot rows every
-  time, growing the table with duplicate-valued history. A future version
-  could skip inserting when a selection's price is identical to its
-  immediately preceding snapshot — not implemented now, to keep this job's
-  first version simple and unambiguously correct rather than guessing at
-  the right dedup window.
+- [x] `syncOdds.ts` de-duplication — `loadLatestOddsByKey` now loads each
+  (bookmaker, market, selection)'s single most recent snapshot per fixture
+  before inserting; a selection whose price is byte-for-byte identical to
+  that snapshot is skipped (`snapshotsSkippedUnchanged`) instead of
+  inserted, so a run of unchanged prices no longer grows the table with
+  duplicate-valued history. A genuine price change still always appends a
+  new row — the table remains append-only, never upserted. Deliberately
+  the simplest unambiguous rule (exact match against the single latest
+  snapshot, not a window/threshold), matching how this was originally
+  scoped as a deferred follow-up rather than guessed at. Verified with new
+  tests in `syncOdds.test.ts` covering the skip, the per-key independence
+  across selections, and that a real change still appends.
 - [x] Wire the sync/prediction jobs to a scheduler — `backend/src/scheduler/scheduler.ts`,
   an in-process cron scheduler (`node-cron`) started from `index.ts` when
   `SCHEDULER_ENABLED=true` (off by default). Fixtures/team-statistics/
@@ -232,13 +237,14 @@
   thrown/rejected error is logged, not left to crash the process or block
   later ticks. Uses node-cron's `noOverlap` option so a slow run of a
   15-minute job can't start a second overlapping run of itself.
-- [ ] The scheduler assumes a single backend instance — `node-cron` has no
-  cross-process coordination (no lock/leader-election), so running more
-  than one replica with `SCHEDULER_ENABLED=true` would sync everything N
-  times over redundantly. Fine for today's single-instance deployment
-  (`Deployment.md`); revisit (e.g. a distributed lock, or moving this to an
-  external scheduler like Cloud Scheduler hitting the existing admin
-  endpoints) before running more than one replica.
+- [x] The scheduler's single-instance assumption now has a real lock —
+  `job_locks` (migration 0016), `try_acquire_job_lock()` (an atomic
+  `INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at < now()` so two
+  replicas racing for the same job can't both win it), `lib/jobLock.ts`,
+  `scheduler.ts`'s `withJobLock()`. Unit-tested against `FakeSupabase`'s
+  model of the same semantics, not yet exercised against actually-
+  concurrent replicas (still a single `plan: free` Render instance either
+  way) — see `Data_Sources.md`'s scheduler section.
 - [ ] The scheduler's cron cadences are fixed constants in
   `scheduler.ts`, not configurable via env vars — fine for now since
   nothing has asked for per-job tuning yet; revisit if a real operational
@@ -860,8 +866,11 @@
   is live and healthy. Frontend still has no concrete hosting target
   (Dockerfile exists, no Blueprint/IaC connected as far as this session
   knows).
-- [ ] Caching layer for fixtures/standings once there's a real provider
-  worth caching.
+- [x] Caching layer — `lib/ttlCache.ts`, an in-process TTL cache (no Redis;
+  this app is still a single Render instance), applied to `GET /leagues`
+  (10 min), `GET /fixtures/today` and `GET /fixtures` (60s), `GET
+  /teams/:id` and the three screening views (5 min each). Time-based
+  expiry only, no active invalidation — see that file's own comment.
 
 ## Housekeeping
 

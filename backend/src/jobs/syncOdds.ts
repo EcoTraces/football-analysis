@@ -11,6 +11,44 @@ export interface SyncOddsResult {
   fixturesNotYetAvailable: number;
   snapshotsProcessed: number;
   snapshotsRejected: number;
+  // Not a failure — a selection whose price is byte-for-byte identical to
+  // its own immediately preceding snapshot, so a new row would carry no
+  // new information (see loadLatestOddsByKey's comment). Tracked
+  // separately from snapshotsRejected (a real error) for observability.
+  snapshotsSkippedUnchanged: number;
+}
+
+interface OddsSnapshotRow {
+  bookmaker: string;
+  market: string;
+  selection: string;
+  decimal_odds: number;
+  captured_at: string;
+}
+
+function oddsKey(bookmaker: string, market: string, selection: string): string {
+  return `${bookmaker}|${market}|${selection}`;
+}
+
+// One query per fixture (not per selection) for every (bookmaker, market,
+// selection) combination's most recent snapshot — reduced client-side to
+// "latest per key" the same way this codebase's other jobs aggregate raw
+// rows in JS rather than relying on a "distinct on" FakeSupabase can't
+// simulate (see calibrateLeagues.ts/runBacktest.ts for the same pattern).
+async function loadLatestOddsByKey(supabase: SupabaseClient, fixtureId: string): Promise<Map<string, number>> {
+  const { data, error } = await supabase
+    .from("odds_snapshots")
+    .select("bookmaker, market, selection, decimal_odds, captured_at")
+    .eq("fixture_id", fixtureId)
+    .order("captured_at", { ascending: false });
+  if (error) throw new Error(`Failed to load existing odds snapshots for fixture ${fixtureId}: ${error.message}`);
+
+  const latest = new Map<string, number>();
+  for (const row of (data ?? []) as OddsSnapshotRow[]) {
+    const key = oddsKey(row.bookmaker, row.market, row.selection);
+    if (!latest.has(key)) latest.set(key, row.decimal_odds); // First hit per key wins — rows are newest-first.
+  }
+  return latest;
 }
 
 interface FixtureRow {
@@ -44,12 +82,17 @@ async function loadFixturesInWindow(supabase: SupabaseClient, windowHours: numbe
 // market's price at a point in time, and tracking how that price moves.
 // Overwriting a "current odds" row the way syncStandings.ts overwrites a
 // table position would destroy the history this table exists to keep.
-// Every successful run therefore inserts new rows rather than upserting;
-// running this job on a tight schedule with unchanged prices does grow the
-// table with duplicate-valued snapshots — a real cost, and a candidate for
-// a future "skip if identical to the immediately preceding snapshot"
-// optimization (see Task.md), not solved here to keep this job's first
-// version simple and unambiguously correct.
+// Every successful run therefore inserts a new row rather than upserting —
+// EXCEPT when a (bookmaker, market, selection)'s price is identical to its
+// own immediately preceding snapshot (loadLatestOddsByKey), in which case
+// nothing is inserted: a run of unchanged-price snapshots carries no new
+// information about how the price has moved, only that it was checked
+// again, which ingestion_runs already records regardless. This was
+// deliberately deferred past this job's first version (see Task.md's
+// history) rather than guessed at — the rule implemented is the simplest
+// unambiguous one (exact match against the single most recent snapshot,
+// not a window/threshold of any kind), so it never discards a genuine
+// price movement.
 export async function syncOdds(
   supabase: SupabaseClient,
   provider: FootballDataProvider,
@@ -72,6 +115,7 @@ export async function syncOdds(
   let fixturesNotYetAvailable = 0;
   let snapshotsProcessed = 0;
   let snapshotsRejected = 0;
+  let snapshotsSkippedUnchanged = 0;
   const errors: string[] = [];
 
   for (const fixture of fixtures) {
@@ -96,9 +140,16 @@ export async function syncOdds(
       continue;
     }
 
+    const latestByKey = await loadLatestOddsByKey(supabase, fixture.id);
     const capturedAt = new Date().toISOString();
     for (const bookmakerOdds of result.data) {
       for (const selection of bookmakerOdds.selections) {
+        const key = oddsKey(bookmakerOdds.bookmaker, selection.market, selection.selection);
+        if (latestByKey.get(key) === selection.decimalOdds) {
+          snapshotsSkippedUnchanged += 1;
+          continue;
+        }
+
         try {
           const { error } = await supabase.from("odds_snapshots").insert({
             fixture_id: fixture.id,
@@ -148,6 +199,7 @@ export async function syncOdds(
     fixturesFailed,
     fixturesNotYetAvailable,
     snapshotsProcessed,
-    snapshotsRejected
+    snapshotsRejected,
+    snapshotsSkippedUnchanged
   };
 }

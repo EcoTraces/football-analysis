@@ -125,16 +125,80 @@ describe("syncOdds", () => {
     expect(fake.rows("ingestion_runs")[0]?.status).toBe("succeeded");
   });
 
-  it("is NOT idempotent by design: running twice appends new snapshots rather than overwriting", async () => {
+  it("is NOT idempotent-by-upsert like the other jobs — a genuine price CHANGE still appends, never overwrites", async () => {
+    const fake = new FakeSupabase();
+    seedFixture(fake);
+
+    const provider1 = new FakeProvider({
+      "12345": {
+        ok: true,
+        data: [odds({ selections: [{ market: "1x2", selection: "home", decimalOdds: 1.85 }] })],
+        sourceTimestamp: new Date().toISOString(),
+        provider: "fake-provider"
+      }
+    });
+    await syncOdds(fakeClient(fake), provider1, silentLogger);
+
+    const provider2 = new FakeProvider({
+      "12345": {
+        ok: true,
+        data: [odds({ selections: [{ market: "1x2", selection: "home", decimalOdds: 1.9 }] })],
+        sourceTimestamp: new Date().toISOString(),
+        provider: "fake-provider"
+      }
+    });
+    await syncOdds(fakeClient(fake), provider2, silentLogger);
+
+    // Both prices preserved as separate rows — a real history, not a
+    // "current odds" row a second run overwrote.
+    expect(fake.rows("odds_snapshots")).toHaveLength(2);
+  });
+
+  it("skips inserting a snapshot whose price is identical to its own immediately preceding one", async () => {
     const fake = new FakeSupabase();
     seedFixture(fake);
     const provider = new FakeProvider();
 
-    await syncOdds(fakeClient(fake), provider, silentLogger);
-    await syncOdds(fakeClient(fake), provider, silentLogger);
+    const first = await syncOdds(fakeClient(fake), provider, silentLogger);
+    const second = await syncOdds(fakeClient(fake), provider, silentLogger);
 
-    // 3 selections x 2 runs — a real price history, not a "current odds" row.
-    expect(fake.rows("odds_snapshots")).toHaveLength(6);
+    expect(first.snapshotsProcessed).toBe(3);
+    expect(first.snapshotsSkippedUnchanged).toBe(0);
+    expect(second.snapshotsProcessed).toBe(0);
+    expect(second.snapshotsSkippedUnchanged).toBe(3);
+    // Still only the first run's 3 rows — nothing new to say, so nothing new was said.
+    expect(fake.rows("odds_snapshots")).toHaveLength(3);
+    expect(fake.rows("ingestion_runs")[1]?.status).toBe("succeeded"); // skipping unchanged prices is not a failure
+  });
+
+  it("dedupes independently per (bookmaker, market, selection) — one selection changing doesn't insert the unchanged ones alongside it", async () => {
+    const fake = new FakeSupabase();
+    seedFixture(fake);
+    const provider1 = new FakeProvider();
+    await syncOdds(fakeClient(fake), provider1, silentLogger);
+
+    // Same draw/away prices as provider1's default, only home moves.
+    const provider2 = new FakeProvider({
+      "12345": {
+        ok: true,
+        data: [
+          odds({
+            selections: [
+              { market: "1x2", selection: "home", decimalOdds: 1.95 }, // changed
+              { market: "1x2", selection: "draw", decimalOdds: 3.6 }, // unchanged
+              { market: "1x2", selection: "away", decimalOdds: 4.2 } // unchanged
+            ]
+          })
+        ],
+        sourceTimestamp: new Date().toISOString(),
+        provider: "fake-provider"
+      }
+    });
+    const result = await syncOdds(fakeClient(fake), provider2, silentLogger);
+
+    expect(result.snapshotsProcessed).toBe(1);
+    expect(result.snapshotsSkippedUnchanged).toBe(2);
+    expect(fake.rows("odds_snapshots")).toHaveLength(4); // 3 from run 1 + the 1 real change from run 2
   });
 
   it("records a later price change as an additional snapshot, preserving the earlier one", async () => {
