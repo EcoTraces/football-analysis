@@ -36,7 +36,14 @@ async function upsertFixture(supabase: SupabaseClient, fixture: ProviderFixture,
   // team.country_id is intentionally left unset here pending a dedicated
   // team-info sync (see Task.md).
   const countryId = fixture.countryName ? await upsertCountryByName(supabase, fixture.countryName) : null;
-  const competitionId = await upsertCompetition(supabase, providerKey, fixture.competitionExternalId, fixture.competitionName, countryId);
+  const competitionId = await upsertCompetition(
+    supabase,
+    providerKey,
+    fixture.competitionExternalId,
+    fixture.competitionName,
+    countryId,
+    fixture.competitionType
+  );
   const seasonId = await upsertSeason(supabase, providerKey, competitionId, fixture.seasonExternalId, fixture.seasonLabel);
   const homeTeamId = await upsertTeam(supabase, providerKey, fixture.homeTeamExternalId, fixture.homeTeamName, null);
   const awayTeamId = await upsertTeam(supabase, providerKey, fixture.awayTeamExternalId, fixture.awayTeamName, null);

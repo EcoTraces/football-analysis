@@ -275,10 +275,15 @@
 - [ ] Revisit the find-then-insert reference-data upserts
   (`referenceDataService.ts`) for a race condition if ingestion is ever
   parallelized — see its code comments.
-- [ ] Set `competition_type` correctly (`syncFixtures.ts` hardcodes
-  `"league"` for every synced competition — API-Football's league payload
-  doesn't distinguish league/cup in the fixtures endpoint response used
-  here; needs its own `/leagues` sync to get this right).
+- [x] Set `competition_type` correctly for football-data.org — its
+  `/matches` response's `competition` object includes a `type` field
+  (`"LEAGUE"`/`"CUP"` per its documented v4 schema), now mapped through
+  (`ProviderFixture.competitionType` → `normalizeCompetitionType()` in
+  `referenceDataService.ts`). api-football's `/fixtures` endpoint still
+  doesn't send this at all — would need its own `/leagues` call, not done.
+  Only classifies newly-created competitions; an existing row's type isn't
+  retroactively updated (`findOrCreateByExternalRef`'s "find" path never
+  updates fields on a hit).
 - [x] Cards (bookings) and corners data, for the `total_cards`/`total_corners`
   markets (see "Model" below). Two very different-sized pieces of work:
   - Cards: `ProviderTeamStatistics` gained `yellowCards`/`redCards`,

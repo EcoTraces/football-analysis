@@ -65,6 +65,30 @@ describe("FootballDataOrgProvider", () => {
     });
   });
 
+  it("passes the competition's raw type through for referenceDataService.normalizeCompetitionType() to classify", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ matches: [{ ...RAW_MATCH, competition: { id: 2021, name: "FA Cup", type: "CUP" } }] }));
+    const provider = new FootballDataOrgProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data[0]?.competitionType).toBe("CUP");
+  });
+
+  it("leaves competitionType undefined when the vendor doesn't send one, rather than guessing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ matches: [RAW_MATCH] }));
+    const provider = new FootballDataOrgProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);
+
+    const result = await provider.getFixturesForDateRange("2026-08-27T00:00:00Z", "2026-08-27T00:00:00Z");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data[0]?.competitionType).toBeUndefined();
+  });
+
   it("supports a genuine multi-day dateFrom/dateTo range in one call, unlike ApiFootballProvider", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ matches: [] }));
     const provider = new FootballDataOrgProvider("test-key", "https://example.test", fetchMock as unknown as typeof fetch);

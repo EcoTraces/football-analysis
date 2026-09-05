@@ -122,17 +122,40 @@ export async function upsertCountryByName(supabase: SupabaseClient, name: string
   return created.id as string;
 }
 
+// competitions.competition_type's check constraint (0001) allows 'league',
+// 'cup', 'continental', 'playoff' — only the first two are ever produced
+// here. 'continental'/'playoff' would need real provider signal this
+// codebase doesn't have (api-football's /fixtures never sends a type at
+// all — see ProviderFixture.competitionType's own comment; football-data.org
+// only distinguishes LEAGUE/CUP), so this never guesses either of those
+// from a competition's name or any other heuristic. Anything other than an
+// exact case-insensitive "cup" match — including api-football's fixtures
+// (always undefined) and any value this MVP doesn't yet recognize — falls
+// back to 'league', preserving this function's original always-'league'
+// behavior as the safe default.
+export function normalizeCompetitionType(raw: string | undefined): "league" | "cup" | "continental" | "playoff" {
+  return raw?.toLowerCase() === "cup" ? "cup" : "league";
+}
+
 export async function upsertCompetition(
   supabase: SupabaseClient,
   providerKey: string,
   externalId: string,
   name: string,
-  countryId: string | null
+  countryId: string | null,
+  competitionType?: string
 ): Promise<string> {
+  // findOrCreateByExternalRef only sets these fields at creation — an
+  // already-existing competition row keeps whatever competition_type it
+  // was first created with, even if a later sync's provider reports a
+  // different value for it. Same known limitation as this function's
+  // sibling upserts (see that function's own comment on why "find" never
+  // updates), not something this change fixes retroactively for rows
+  // created before it existed.
   return findOrCreateByExternalRef(supabase, "competitions", providerKey, externalId, {
     name,
     country_id: countryId,
-    competition_type: "league" // API-Football distinguishes league/cup via a separate field this MVP doesn't map yet — see Task.md
+    competition_type: normalizeCompetitionType(competitionType)
   });
 }
 

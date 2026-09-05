@@ -1,7 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FakeSupabase } from "./testSupabaseFake.js";
-import { PROVIDER_KEY, loadExternalRefs, providerRefKey, upsertCompetition, upsertCountryByName, upsertSeason, upsertTeam } from "../services/referenceDataService.js";
+import {
+  PROVIDER_KEY,
+  loadExternalRefs,
+  normalizeCompetitionType,
+  providerRefKey,
+  upsertCompetition,
+  upsertCountryByName,
+  upsertSeason,
+  upsertTeam
+} from "../services/referenceDataService.js";
 
 function fakeClient(fake: FakeSupabase): SupabaseClient {
   return fake as unknown as SupabaseClient;
@@ -71,6 +80,34 @@ describe("upsertCompetition", () => {
 
     expect(apiFootballId).not.toBe(footballDataOrgId);
     expect(fake.rows("competitions")).toHaveLength(2);
+  });
+
+  it("stores 'cup' when the provider reports it, 'league' when it's absent or unrecognized", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+
+    await upsertCompetition(client, PROVIDER_KEY, "1", "FA Cup", null, "CUP");
+    await upsertCompetition(client, PROVIDER_KEY, "2", "Premier League", null, "LEAGUE");
+    await upsertCompetition(client, PROVIDER_KEY, "3", "Some Other Competition", null, undefined);
+
+    const rows = fake.rows("competitions");
+    expect(rows.find((r) => r.name === "FA Cup")?.competition_type).toBe("cup");
+    expect(rows.find((r) => r.name === "Premier League")?.competition_type).toBe("league");
+    expect(rows.find((r) => r.name === "Some Other Competition")?.competition_type).toBe("league");
+  });
+});
+
+describe("normalizeCompetitionType", () => {
+  it("recognizes 'cup' case-insensitively", () => {
+    expect(normalizeCompetitionType("cup")).toBe("cup");
+    expect(normalizeCompetitionType("CUP")).toBe("cup");
+    expect(normalizeCompetitionType("Cup")).toBe("cup");
+  });
+
+  it("falls back to 'league' for anything else, including undefined (api-football's fixtures never send this field)", () => {
+    expect(normalizeCompetitionType("LEAGUE")).toBe("league");
+    expect(normalizeCompetitionType("continental")).toBe("league");
+    expect(normalizeCompetitionType(undefined)).toBe("league");
   });
 });
 

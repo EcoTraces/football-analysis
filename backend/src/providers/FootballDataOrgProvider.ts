@@ -273,7 +273,16 @@ export class FootballDataOrgProvider implements FootballDataProvider, Observable
       homeScore: raw.score?.fullTime?.home ?? null,
       awayScore: raw.score?.fullTime?.away ?? null,
       homeScoreHt: raw.score?.halfTime?.home ?? null,
-      awayScoreHt: raw.score?.halfTime?.away ?? null
+      awayScoreHt: raw.score?.halfTime?.away ?? null,
+      // Per football-data.org's documented v4 Competition schema
+      // ("LEAGUE"/"CUP") — not independently verified against a live
+      // response in this session (the earlier live check confirmed
+      // fixture/standings mapping, not this specific field), so
+      // normalizeCompetitionType() still only trusts an exact "CUP" match
+      // and falls back to the existing 'league' default for anything else,
+      // including if this field turns out to be absent or differently
+      // cased than expected.
+      competitionType: raw.competition.type
     };
   }
 
@@ -405,7 +414,7 @@ interface RawMatch {
   matchday?: number | null;
   stage?: string | null;
   area?: { name?: string | null } | null;
-  competition: { id: number; name: string };
+  competition: { id: number; name: string; type?: string };
   season?: { startDate?: string | null; endDate?: string | null } | null;
   homeTeam: { id: number; name: string };
   awayTeam: { id: number; name: string };

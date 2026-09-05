@@ -28,6 +28,15 @@ export interface ProviderFixture {
   // sat unpopulated the whole time.
   homeScoreHt: number | null;
   awayScoreHt: number | null;
+  // Raw vendor string (e.g. football-data.org's "LEAGUE"/"CUP") for
+  // referenceDataService.ts's normalizeCompetitionType() to classify —
+  // optional because api-football's /fixtures endpoint (unlike football-
+  // data.org's /matches) doesn't include it at all; that would need a
+  // separate /leagues call this MVP doesn't make (see Data_Sources.md and
+  // Road_map.md's Phase 7 "team nationality and competition type not yet
+  // correctly populated"). Undefined here always normalizes to the
+  // existing 'league' default, never a guess.
+  competitionType?: string;
 }
 
 export interface ProviderTeamStatistics {

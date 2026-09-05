@@ -290,9 +290,16 @@ behavioral one). Those still need a real Supabase project.
   Dixon-Coles `rho` fit refines that existing model rather than creating a
   new one — see `ML_Model.md`'s "Rho fitting" section) — same "real writer
   exists, never actually run against real data" caveat applies.
-- `teams.country_id` and `competitions.competition_type` are not correctly
-  populated by fixture ingestion — see `Data_Sources.md`'s "Known
-  limitation" notes.
+- `teams.country_id` is not populated by fixture ingestion — see
+  `Data_Sources.md`'s "Known limitation" note (neither provider's fixtures
+  payload includes a team's own country, only the competition's, and
+  inferring one from the other would be actively wrong for continental
+  competitions). `competitions.competition_type` now IS correctly
+  classified for football-data.org (`normalizeCompetitionType()` in
+  `referenceDataService.ts`) — still always `'league'` for api-football,
+  whose `/fixtures` endpoint doesn't send a type at all, and only for
+  newly-created competition rows (an existing row's type isn't
+  retroactively updated).
 - `injuries` never transitions a row to `returned` — a recovered player's
   row simply goes stale (see freshness classification) rather than being
   actively updated, since nothing in the current sync detects recovery.
