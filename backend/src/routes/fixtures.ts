@@ -10,7 +10,9 @@ import { TtlCache, cached } from "../lib/ttlCache.js";
 // (FIXTURES_SYNC_CRON is once daily; lineups/odds, the closest-to-kickoff
 // jobs, run every 15 minutes) — a short TTL keeps the "today's fixtures"
 // page, this app's default landing view, off the database on every single
-// page load without meaningfully delaying anyone seeing new data.
+// page load without meaningfully delaying anyone seeing new data. Shared
+// by GET /fixtures too — same data, same freshness cadence, just a wider
+// (and therefore lower cache-hit-rate) set of possible filter combinations.
 const TODAY_FIXTURES_CACHE_TTL_MS = 60 * 1000;
 
 const filtersSchema = z.object({
@@ -31,6 +33,7 @@ export function createFixturesRouter(supabase: SupabaseClient): Router {
   const todayFixturesCache = new TtlCache<{ data: FixtureSummary[]; meta: { from: string; to: string; count: number } }>(
     TODAY_FIXTURES_CACHE_TTL_MS
   );
+  const fixturesListCache = new TtlCache<{ data: FixtureSummary[]; meta: { count: number } }>(TODAY_FIXTURES_CACHE_TTL_MS);
 
   router.get("/fixtures/today", async (req, res, next) => {
     try {
@@ -58,8 +61,17 @@ export function createFixturesRouter(supabase: SupabaseClient): Router {
         throw new ApiError(400, parsed.error.issues.map((i) => i.message).join("; "), "invalid_query");
       }
       const { includeSynthetic, ...filters } = parsed.data;
-      const fixtures = await listFixtures(supabase, filters, includeSynthetic === "true");
-      res.json({ data: fixtures, meta: { count: fixtures.length } });
+      // Keyed on the exact filter set — a lower cache-hit rate than
+      // /fixtures/today's single key (many possible from/to/competitionId/
+      // teamId/status combinations), but every distinct combination that
+      // does repeat (e.g. several users browsing the same competition)
+      // still skips the database for the next TODAY_FIXTURES_CACHE_TTL_MS.
+      const cacheKey = JSON.stringify({ filters, includeSynthetic });
+      const body = await cached(fixturesListCache, cacheKey, async () => {
+        const fixtures = await listFixtures(supabase, filters, includeSynthetic === "true");
+        return { data: fixtures, meta: { count: fixtures.length } };
+      });
+      res.json(body);
     } catch (err) {
       next(err);
     }
