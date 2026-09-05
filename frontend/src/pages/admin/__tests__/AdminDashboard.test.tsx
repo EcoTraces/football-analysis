@@ -30,6 +30,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getSchedulerHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminJobsSummary").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminJobs").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "getAdminAuditLog").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getAdminDataHealth").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getBacktestResults").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "getRhoStatus").mockReturnValue(new Promise(() => {}));
@@ -68,6 +69,7 @@ describe("AdminDashboard", () => {
     });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 5, syntheticFixtures: 0, currentPredictions: 2 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
@@ -109,6 +111,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: "off", jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
@@ -148,6 +151,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: null, jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     const getAdminJobs = vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getBacktestResults").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
@@ -195,6 +199,7 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getSchedulerHealth").mockResolvedValue({ status: "DISABLED", message: null, jobs: [] });
     vi.spyOn(api, "getAdminJobsSummary").mockResolvedValue({ data: {} });
     vi.spyOn(api, "getAdminJobs").mockResolvedValue({ data: [] });
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getAdminDataHealth").mockResolvedValue({ data: { productionFixtures: 0, syntheticFixtures: 0, currentPredictions: 0 } });
     vi.spyOn(api, "getRhoStatus").mockResolvedValue({ data: { fittedRho: null, defaultRho: -0.1 } });
     vi.spyOn(api, "getLeagueCalibrationResults").mockResolvedValue({ data: [] });
@@ -213,6 +218,40 @@ describe("AdminDashboard", () => {
     vi.spyOn(api, "getCompetitionAllowlist").mockResolvedValue({ data: [] });
     vi.spyOn(api, "getLeagues").mockResolvedValue({ data: [] });
   }
+
+  it("renders admin audit log entries, and never renders one for a read that wasn't logged", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({
+      data: [
+        {
+          id: "audit-1",
+          actor_id: "admin-1",
+          actor_email: "admin@example.com",
+          method: "PUT",
+          path: "/api/admin/config/ensemble-weights",
+          status_code: 200,
+          request_body: { elo: 0.3 },
+          created_at: "2026-08-27T00:00:00Z"
+        }
+      ]
+    });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText("admin@example.com")).toBeTruthy());
+    expect(screen.getByText("PUT")).toBeTruthy();
+    expect(screen.getByText("/api/admin/config/ensemble-weights")).toBeTruthy();
+    expect(screen.getByText("200")).toBeTruthy();
+  });
+
+  it("shows a plain-language message, not an empty audit-log table, when no admin action has happened yet", async () => {
+    mockBaselineDashboard();
+    vi.spyOn(api, "getAdminAuditLog").mockResolvedValue({ data: [] });
+
+    renderDashboard();
+
+    await waitFor(() => expect(screen.getByText(/no admin actions recorded yet/i)).toBeTruthy());
+  });
 
   it("renders past backtest runs with their metrics", async () => {
     mockBaselineDashboard();

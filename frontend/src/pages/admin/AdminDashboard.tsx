@@ -4,6 +4,7 @@ import {
   ApiRequestError,
   fitDixonColesRho,
   getAccumulatorTargets,
+  getAdminAuditLog,
   getAdminDataHealth,
   getAdminJobs,
   getAdminJobsSummary,
@@ -30,6 +31,7 @@ import {
 } from "../../lib/api";
 import type {
   AccumulatorTarget,
+  AdminAuditLogEntry,
   AdminDataHealthCounts,
   ApiFootballHealth,
   BacktestableModel,
@@ -94,6 +96,8 @@ interface DashboardData {
   jobsSummaryError: string | null;
   recentJobs: IngestionRun[] | null;
   recentJobsError: string | null;
+  auditLog: AdminAuditLogEntry[] | null;
+  auditLogError: string | null;
   fixtureCounts: AdminDataHealthCounts | null;
   fixtureCountsError: string | null;
   backtestResults: BacktestEvaluation[] | null;
@@ -195,6 +199,7 @@ export function AdminDashboard() {
       [schedulerHealth, schedulerError],
       [jobsSummaryRes, jobsSummaryError],
       [recentJobsRes, recentJobsError],
+      [auditLogRes, auditLogError],
       [fixtureCountsRes, fixtureCountsError],
       [backtestResultsRes, backtestResultsError],
       [rhoStatusRes, rhoStatusError],
@@ -211,6 +216,7 @@ export function AdminDashboard() {
       loadPiece(() => getSchedulerHealth()),
       loadPiece(() => getAdminJobsSummary(token)),
       loadPiece(() => getAdminJobs(token, 20)),
+      loadPiece(() => getAdminAuditLog(token, 20)),
       loadPiece(() => getAdminDataHealth(token)),
       loadPiece(() => getBacktestResults(token, 20)),
       loadPiece(() => getRhoStatus(token)),
@@ -234,6 +240,8 @@ export function AdminDashboard() {
       jobsSummaryError,
       recentJobs: recentJobsRes?.data ?? null,
       recentJobsError,
+      auditLog: auditLogRes?.data ?? null,
+      auditLogError,
       fixtureCounts: fixtureCountsRes?.data ?? null,
       fixtureCountsError,
       backtestResults: backtestResultsRes?.data ?? null,
@@ -887,6 +895,57 @@ export function AdminDashboard() {
                     <td className="py-2 pr-4">{run.records_rejected}</td>
                     <td className="py-2 max-w-xs truncate text-xs text-slate-500 dark:text-slate-400" title={run.error_summary ?? undefined}>
                       {run.error_summary ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">Admin audit log</h2>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">
+          Every action (not read) any admin has taken through this API — who, what changed, and the result. Reads
+          like the tables above never appear here; only POST/PUT/PATCH/DELETE requests do.
+        </p>
+        {data.auditLogError && (
+          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            {data.auditLogError}
+          </p>
+        )}
+        {data.auditLog && data.auditLog.length === 0 && (
+          <p className="text-sm text-slate-500 dark:text-slate-400">No admin actions recorded yet.</p>
+        )}
+        {data.auditLog && data.auditLog.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800">
+                  <th className="py-2 pr-4 font-medium">When</th>
+                  <th className="py-2 pr-4 font-medium">Admin</th>
+                  <th className="py-2 pr-4 font-medium">Method</th>
+                  <th className="py-2 pr-4 font-medium">Path</th>
+                  <th className="py-2 pr-4 font-medium">Result</th>
+                  <th className="py-2 font-medium">Body</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.auditLog.map((entry) => (
+                  <tr key={entry.id} className="border-b border-slate-100 dark:border-slate-900">
+                    <td className="py-2 pr-4 text-xs text-slate-500 dark:text-slate-400">{formatDateTime(entry.created_at)}</td>
+                    <td className="py-2 pr-4">{entry.actor_email ?? entry.actor_id ?? "—"}</td>
+                    <td className="py-2 pr-4 font-mono text-xs">{entry.method}</td>
+                    <td className="py-2 pr-4 font-mono text-xs">{entry.path}</td>
+                    <td className="py-2 pr-4">
+                      <Badge variant={entry.status_code < 400 ? "success" : "danger"}>{entry.status_code}</Badge>
+                    </td>
+                    <td
+                      className="py-2 max-w-xs truncate text-xs text-slate-500 dark:text-slate-400"
+                      title={entry.request_body ? JSON.stringify(entry.request_body) : undefined}
+                    >
+                      {entry.request_body ? JSON.stringify(entry.request_body) : "—"}
                     </td>
                   </tr>
                 ))}

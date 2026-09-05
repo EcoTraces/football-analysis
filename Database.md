@@ -339,8 +339,6 @@ behavioral one). Those still need a real Supabase project.
   live at kickoff" without a breaking migration, but that job, a P&L
   computation, and the Performance/ROI dashboard it would feed are all
   deferred to Phase 2 (see `Road_map.md`).
-- `admin_audit_log` (0015) has no dedicated admin-dashboard panel yet —
-  today it's read via `GET /admin/audit-log` directly (curl/Postman/an
-  admin's own token), the same intermediate state `/admin/jobs` and every
-  other admin capability in this codebase has passed through before
-  `AdminDashboard.tsx` grew a section for it.
+- `admin_audit_log` (0015) now has an `AdminDashboard.tsx` panel
+  ("Admin audit log" section) rendering `GET /admin/audit-log` directly,
+  the same pattern every other admin capability here uses.

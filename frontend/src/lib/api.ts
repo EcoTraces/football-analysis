@@ -1,6 +1,7 @@
 import type {
   AccumulatorRecommendation,
   AccumulatorTarget,
+  AdminAuditLogEntry,
   AdminDataHealthCounts,
   AdminUserSummary,
   ApiEnvelope,
@@ -111,6 +112,10 @@ export function getAdminJobsSummary(accessToken: string): Promise<ApiEnvelope<Jo
 
 export function getAdminDataHealth(accessToken: string): Promise<ApiEnvelope<AdminDataHealthCounts>> {
   return authedRequest<ApiEnvelope<AdminDataHealthCounts>>("/admin/data-health", accessToken);
+}
+
+export function getAdminAuditLog(accessToken: string, limit = 20): Promise<ApiEnvelope<AdminAuditLogEntry[]>> {
+  return authedRequest<ApiEnvelope<AdminAuditLogEntry[]>>(`/admin/audit-log?limit=${limit}`, accessToken);
 }
 
 export interface SyncAction {

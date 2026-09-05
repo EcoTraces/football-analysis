@@ -140,6 +140,20 @@ export interface IngestionRun {
 
 export type JobsSummary = Record<string, { lastRun: IngestionRun; lastSuccess: IngestionRun | null }>;
 
+// One row per mutating (POST/PUT/PATCH/DELETE) request that reached
+// /api/admin/* — see backend/src/middleware/auditAdminActions.ts. Reads
+// (GET) are never recorded, so this is "what changed," not "what was viewed."
+export interface AdminAuditLogEntry {
+  id: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  method: string;
+  path: string;
+  status_code: number;
+  request_body: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface AdminDataHealthCounts {
   productionFixtures: number;
   syntheticFixtures: number;
