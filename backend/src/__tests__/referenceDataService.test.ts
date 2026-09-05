@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FakeSupabase } from "./testSupabaseFake.js";
-import { PROVIDER_KEY, providerRefKey, upsertCompetition, upsertCountryByName, upsertSeason, upsertTeam } from "../services/referenceDataService.js";
+import { PROVIDER_KEY, loadExternalRefs, providerRefKey, upsertCompetition, upsertCountryByName, upsertSeason, upsertTeam } from "../services/referenceDataService.js";
 
 function fakeClient(fake: FakeSupabase): SupabaseClient {
   return fake as unknown as SupabaseClient;
@@ -123,5 +123,52 @@ describe("upsertTeam", () => {
 
     expect(apiFootballId).not.toBe(footballDataOrgId);
     expect(fake.rows("teams")).toHaveLength(2);
+  });
+});
+
+describe("loadExternalRefs", () => {
+  it("returns every row's external_ref keyed by id, even across many ids", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    const ids = Array.from({ length: 250 }, (_, i) => `team-${i}`);
+    fake.seed(
+      "teams",
+      ids.map((id) => ({ id, external_ref: { api_football: id } }))
+    );
+
+    const refs = await loadExternalRefs(client, "teams", ids);
+
+    expect(refs.size).toBe(250);
+    expect(refs.get("team-0")?.external_ref?.api_football).toBe("team-0");
+    expect(refs.get("team-249")?.external_ref?.api_football).toBe("team-249");
+  });
+
+  it("splits a large id list into multiple requests rather than one unbounded .in() call", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    const ids = Array.from({ length: 250 }, (_, i) => `team-${i}`);
+    fake.seed(
+      "teams",
+      ids.map((id) => ({ id, external_ref: null }))
+    );
+    const fromSpy = vi.spyOn(fake, "from");
+
+    await loadExternalRefs(client, "teams", ids);
+
+    // 250 ids at 100 per request is 3 requests, never one request carrying
+    // all 250 — the behavior that protects against a PostgREST/proxy
+    // request-length limit on the .in() filter's id list.
+    expect(fromSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns an empty map without querying at all for an empty id list", async () => {
+    const fake = new FakeSupabase();
+    const client = fakeClient(fake);
+    const fromSpy = vi.spyOn(fake, "from");
+
+    const refs = await loadExternalRefs(client, "teams", []);
+
+    expect(refs.size).toBe(0);
+    expect(fromSpy).not.toHaveBeenCalled();
   });
 });

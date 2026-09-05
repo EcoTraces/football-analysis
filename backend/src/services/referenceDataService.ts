@@ -32,6 +32,23 @@ export function externalId(row: RefRow | undefined, providerKey: string): string
   return typeof value === "string" ? value : null;
 }
 
+// PostgREST sends .in() filters as a literal comma-separated list in the
+// request's query string — fine for a handful of ids, but syncTeamStatistics/
+// syncPlayerStatistics call this with every distinct team id implied by ALL
+// non-synthetic fixtures, which against a real season's worth of data (many
+// competitions x ~20 teams each) can run into the hundreds. A few hundred
+// UUIDs comfortably exceeds request-line/query-length limits some proxies in
+// front of Postgres enforce, turning into a request failure that looks like
+// any other DB error to the caller. Chunking keeps each request small
+// regardless of how many ids are requested overall.
+const EXTERNAL_REF_LOOKUP_CHUNK_SIZE = 100;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 // Batches an external-id lookup for a set of internal ids in one query
 // instead of one row at a time — used by every sync job that needs to turn
 // internal UUIDs back into the provider's own ids before calling it. Not
@@ -39,9 +56,14 @@ export function externalId(row: RefRow | undefined, providerKey: string): string
 // extract their own provider's id via externalId(row, providerKey).
 export async function loadExternalRefs(supabase: SupabaseClient, table: string, ids: string[]): Promise<Map<string, RefRow>> {
   if (ids.length === 0) return new Map();
-  const { data, error } = await supabase.from(table).select("id, external_ref").in("id", ids);
-  if (error) throw new Error(`Failed to load ${table} external refs: ${error.message}`);
-  return new Map((data ?? []).map((row) => [row.id as string, row as RefRow]));
+
+  const result = new Map<string, RefRow>();
+  for (const idBatch of chunk(ids, EXTERNAL_REF_LOOKUP_CHUNK_SIZE)) {
+    const { data, error } = await supabase.from(table).select("id, external_ref").in("id", idBatch);
+    if (error) throw new Error(`Failed to load ${table} external refs: ${error.message}`);
+    for (const row of data ?? []) result.set(row.id as string, row as RefRow);
+  }
+  return result;
 }
 
 // Find-then-insert rather than a Postgres upsert-on-conflict: the uniqueness
