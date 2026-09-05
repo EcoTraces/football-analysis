@@ -1,5 +1,75 @@
 # Changelog
 
+## 2026-09-05 — Platform hardening audit: security, reliability, observability, testing, performance
+
+A broad audit pass across the whole platform, executed as a sequence of
+independently-verified batches (each with its own commit, full lint/
+typecheck/test/build gate, and a green CI run before moving to the next).
+Grouped here by category rather than by batch number:
+
+**Root-caused and fixed the live production 500s** reported on
+`team-statistics/sync`/`player-statistics/sync`: `referenceDataService.
+loadExternalRefs` issued one unbounded `.in()` query for every distinct
+team/player id implied by real fixtures, which at real data volumes risks
+exceeding a PostgREST/proxy request-length limit. Now chunks ids into
+batches of 100 (`EXTERNAL_REF_LOOKUP_CHUNK_SIZE`).
+
+**Security**: added an internal API key check (`ML_SERVICE_API_KEY`,
+`ml-service/app/security.py`) in front of every ml-service route except
+`/health`, with the backend's `PredictionClient` sending it via
+`X-API-Key` — closes the gap where the ml-service was reachable by
+anyone who could reach its URL. Added `admin_audit_log` (migration 0015)
+plus `middleware/auditAdminActions.ts`, applied to every admin route
+right after `requireAdmin` so no mutating admin action can ship without
+being recorded by omission; `GET /admin/audit-log` and a new
+AdminDashboard panel read it back.
+
+**Reliability**: added real cross-process job locking (migration 0016's
+`try_acquire_job_lock`, an atomic `INSERT ... ON CONFLICT DO UPDATE ...
+WHERE expires_at < now()`, plus `lib/jobLock.ts` and `scheduler.ts`'s
+`withJobLock()`) so two scheduler replicas can never run the same job
+concurrently. Fixed `supabase/migrations/0001_init.sql` to be safely
+re-runnable (`if not exists` on all 22 tables/indexes, `drop policy if
+exists` + `create policy` for RLS) — caught by a new CI job, not a live
+incident, but the same class of bug the 2026-09-04 entry above fixed for
+later migrations. Added de-duplication to `syncOdds.ts`: a
+(bookmaker, market, selection) whose price is byte-for-byte identical to
+its own immediately preceding snapshot is now skipped rather than
+inserted, so a tight sync schedule no longer grows `odds_snapshots` with
+duplicate-valued history — a genuine price change still always appends.
+Fixed `GET /admin/users` silently truncating at the auth API's default
+200-account page (now walks every page). Fixed `upsertPlayer` never
+updating an existing player's `team_id` on a real transfer.
+
+**Testing/CI**: added a `db-migrations` CI job (real Postgres 16 service
+container, applies every migration twice to catch non-idempotency before
+a real deploy does) and a `frontend-e2e` job (real Chromium via
+Playwright, scoped honestly to what's testable without a live Supabase
+project — the unconfigured-auth fallback, dark/light mode, responsive
+layout, SPA routing). The e2e job needed two follow-up fixes after its
+first real CI run exposed problems invisible in local testing: a vite
+dev-server cold-start timeout, and — the actual root cause — vite
+defaulting to binding whatever `localhost` resolves to via Node's DNS
+order (often `::1`-only on a CI runner), while Playwright's webServer
+check polls the literal `127.0.0.1`; passing `--host 127.0.0.1` explicitly
+fixed it. `frontend/e2e/README.md` documents the deliberate scope limits.
+
+**Performance**: added an in-process TTL cache (`lib/ttlCache.ts`) to
+`GET /leagues` (10 min), `/fixtures/today` and `/fixtures` (60s),
+`/teams/:id` (5 min), and the three screening views (5 min each) —
+chosen over Redis since this runs as a single Render instance.
+
+**Data quality**: correctly classifies `competition_type` (league/cup)
+for football-data.org's response instead of hardcoding `'league'` for
+every synced competition.
+
+Full verification on every batch: backend lint/typecheck/test/build,
+frontend lint/typecheck/test/build, and (once introduced) the
+db-migrations/frontend-e2e CI jobs — all green as of this entry. See
+`Task.md`, `Database.md`, `Data_Sources.md`, and `Road_map.md`'s
+"Live status" note for the itemized before/after and what remains
+blocked on live credentials this environment doesn't have.
+
 ## 2026-09-04 — Make migrations 0005-0013 safely re-runnable
 
 The user's real Supabase project deployment surfaced a genuine bug: this
