@@ -3,6 +3,35 @@
 Phases follow the master spec's development workflow. Status reflects this
 repository as of the initial scaffold — see `Changelog.md` for dates.
 
+**Live status as of 2026-09-05** (this session's own direct checks against
+the deployed services — a factual update, not a rewrite of the phases
+below, which mostly still describe true limitations): `football-analysis-
+backend`, `football-analysis-ml-service`, and a real Supabase project are
+all deployed and reachable. `GET /health/data` reports `database:
+reachable`, `provider: football-data-org`, `providerConfigured: true`, 443
+real (non-synthetic) fixtures; `GET /health/api-football` reports
+`CONNECTED` with real rate-limit data; `GET /health/scheduler` reports
+`RUNNING` with all 13 jobs listed. This supersedes Phase 20's "not yet
+actually deployed anywhere" and "Immediate next steps"'s "no reachable
+Supabase project in this environment" below — both were true when written,
+describing this repo's own dev/CI sandbox, never production.
+
+**"Deployed" is not "operationally verified" — most of it still isn't
+working.** Same session, same live checks: `standings`/`teamStatistics`/
+`playerStatistics`/`injuries`/`lineups`/`odds`/`fixtureStatistics`/
+`predictions` were all `UNAVAILABLE` in `GET /health/data`'s freshness
+report — none of those datasets has ever successfully populated in
+production. Manually triggering the underlying jobs surfaced real bugs,
+some now fixed this session (see `Changelog.md`): an unbounded `.in()`
+query that could exceed a request-length limit at real data volumes
+(fixed); no `model_versions` row for `poisson-baseline`/`ensemble` in
+production, causing `409` on every prediction run (still needs a one-time
+SQL insert — see `ML_Model.md`); `ML_SERVICE_URL` likely still at its
+`localhost` default rather than the real ml-service URL, causing `500`s on
+anything that calls it (still needs a Render dashboard fix — see
+`Deployment.md`). Read phases 5/6/9/14/17/18/19/21 below with this in
+mind rather than their original (pre-deployment) wording alone.
+
 | Phase | Status | Notes |
 |---|---|---|
 | 1. Audit existing project | ✅ Done | New repo; no prior football code existed |
@@ -24,28 +53,28 @@ repository as of the initial scaffold — see `Changelog.md` for dates.
 | 17. Testing | 🟡 Ongoing | Unit tests for all business logic shipped so far, including auth middleware against a fake Supabase client; no integration/E2E or real-Supabase-project test yet |
 | 18. Security | 🟡 Partial | helmet/CORS/rate-limit/zod validation done; the entire app (not just `/api/admin/*`) now requires a signed-in user, admin routes additionally require the admin role (unverified against a real project — see Task.md); a real signup + admin-promotion UI now exists, closing the "no signup/role-assignment UI" gap; a role self-escalation RLS gap was found and fixed (`0004_user_profiles_role_guard.sql`, also unverified against a live project); still no admin-action audit log |
 | 19. Performance optimization | ⬜ Not started | No caching layer yet |
-| 20. Production deployment | 🟡 Backend deploy config only | `render.yaml` Blueprint for the backend exists (`Deployment.md`), now defaulting to `FOOTBALL_DATA_PROVIDER=football-data-org` and `SCHEDULER_ENABLED=true` (only `FOOTBALL_DATA_ORG_API_KEY` and the Supabase secrets need entering at deploy time); not yet actually deployed anywhere (no hosting account connected in this environment) — ML service and frontend still have no concrete hosting target |
+| 20. Production deployment | 🟡 Live, not fully operational | `render.yaml` Blueprint deployed for real: `football-analysis-backend` and `football-analysis-ml-service` are both live on Render, a real Supabase project is connected, `FOOTBALL_DATA_PROVIDER=football-data-org` is `CONNECTED`, and `SCHEDULER_ENABLED=true` is `RUNNING` (see the live-status note above). Not fully operational yet, though: `ML_SERVICE_URL` on the backend service likely still needs pointing at the real ml-service URL, and production's `model_versions` table needs its one-time manual seed — see the live-status note above and `Deployment.md`/`ML_Model.md`. |
 | 21. Observability | 🟡 Infrastructure done, OBSERVATION PENDING | `GET /admin/jobs`/`GET /admin/jobs/summary` (real `ingestion_runs` history), `GET /health/scheduler`, `GET /health/api-football`, `GET /health/data` with per-dataset freshness — all built and tested against fakes; the scheduler has NOT yet run for real against live data over any meaningful period (see "Immediate next steps" below and `Task.md`) |
 
 ## Immediate next steps (see Task.md for details)
 
-**Steps 1 and 3–5 below are now BLOCKED ONLY on a real Supabase project**,
-not on a data-provider key — `FOOTBALL_DATA_ORG_API_KEY` is real and has
-already verified `FootballDataOrgProvider`'s own HTTP mapping directly (see
-`Changelog.md`'s "First live verification" entry), but no Supabase project
-is reachable from this environment to also verify the
-database-writing/reference-data side, `requireAdmin` against real JWTs, or
-the scheduler running unattended. `render.yaml` now defaults to
-`FOOTBALL_DATA_PROVIDER=football-data-org` and `SCHEDULER_ENABLED=true`,
-ready to deploy the moment a Supabase project and a Render account are
-connected — see `Deployment.md`. Step 2 (api-football specifically) is
-still additionally blocked on a real `FOOTBALL_DATA_API_KEY`, which remains
-unavailable in this environment. Creating either requires a human with a
-real account — see README.md → "Configuring a live football data provider"
-for the exact steps. Everything these steps need (the client, retry/
-rate-limit handling, the sync jobs, the scheduler, the observability
-endpoints) is already built and tested against fakes; only the live
-verification itself is outstanding for the pieces above.
+**Update (2026-09-05): a real Supabase project and Render deployment now
+exist** (see the live-status note at the top of this file) — the
+"BLOCKED ONLY on a real Supabase project" framing this paragraph
+originally had is no longer accurate; that project exists and
+`football-data-org` is `CONNECTED` against it in production. What's
+actually still blocking steps 1 and 3–5 below is that **this coding
+session/environment has no credentials for that live project or Render
+account** — no service-role key, no admin JWT, no Render dashboard access
+— so verification against them has to be done by a human with real access
+(you), not by a future coding session assuming a Supabase project still
+needs to be stood up. Step 2 (api-football specifically) is still
+additionally blocked on a real `FOOTBALL_DATA_API_KEY`, which has never
+existed in any environment this project has run in. Everything these steps
+need (the client, retry/rate-limit handling, the sync jobs, the scheduler,
+the observability endpoints, the cross-process lock) is already built and
+tested against fakes; only the live verification itself is outstanding for
+the pieces below.
 
 1. Test `requireAdmin` against a real Supabase project (create an admin
    user per README.md, get a real JWT, confirm `/api/admin/*` accepts it

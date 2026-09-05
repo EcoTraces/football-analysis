@@ -844,11 +844,17 @@
   Docker runtime, secrets marked `sync: false`) plus a `backend/.dockerignore`
   so a local `.env` can never end up baked into an image. See
   `Deployment.md` → "Deploying the backend to Render" for the exact
-  click-through steps. **Not yet actually deployed** — no Render account is
-  connected to this repo/environment; this is config only, waiting on the
-  user to connect their own account and click deploy.
-- [ ] ML service and frontend still have no concrete hosting target
-  (Dockerfiles exist, no Blueprint/IaC) — only the backend does now.
+  click-through steps. **Actually deployed as of 2026-09-05** — see
+  `Road_map.md`'s live-status note at the top of that file; `render.yaml`'s
+  `football-analysis-ml-service` is live too. Still no coding session has
+  credentials to that Render account or the connected Supabase project, so
+  routine verification against them (Task items elsewhere marked
+  "unverified against a live project") is still on the user, not automatable
+  from here.
+- [x] ML service hosting — `football-analysis-ml-service` (`render.yaml`)
+  is live and healthy. Frontend still has no concrete hosting target
+  (Dockerfile exists, no Blueprint/IaC connected as far as this session
+  knows).
 - [ ] Caching layer for fixtures/standings once there's a real provider
   worth caching.
 
