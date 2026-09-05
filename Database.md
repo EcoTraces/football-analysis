@@ -198,6 +198,24 @@ raises a unique-constraint violation.
 
 ## Known gaps
 
+**What CI's `db-migrations` job does and doesn't cover.** Every bullet
+below saying a migration "has not been run against a real Postgres/
+Supabase project" predates `.github/workflows/ci.yml`'s `db-migrations`
+job, which now applies `0001`–`0016` against a real, throwaway Postgres 16
+container twice in a row on every push (`supabase/ci/apply_migrations.sh`)
+— exactly the check that would have caught `0005`-`0013`'s missing "if not
+exists" clauses before they broke a real deployment, and did in fact catch
+`0001_init.sql` itself failing the same way while that job was being
+built (fixed in the same change). So the specific "is this valid,
+idempotent DDL against real Postgres" question these bullets raise is now
+answered, continuously, for the whole migration set. What it still does
+NOT cover — so the substance of each bullet below stands — is anything
+that needs the actual Supabase layers on top of Postgres: RLS policy
+enforcement, PostgREST's real `upsert(..., { onConflict })` behavior
+against these specific constraints/expression indexes, or genuine
+`auth.users`/service-role semantics (`supabase/ci/auth_stub.sql` is a
+deliberately minimal stand-in for schema validation only, not a
+behavioral one). Those still need a real Supabase project.
 - No migration tooling wired up yet (no `supabase/config.toml`/CLI
   integration in CI) — migrations are applied manually today.
 - `0004_user_profiles_role_guard.sql`'s trigger and tightened INSERT policy

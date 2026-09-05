@@ -6,6 +6,44 @@ on:
   pull_request:
 
 jobs:
+  # Applies every supabase/migrations/*.sql file against a real, throwaway
+  # Postgres — twice, back to back, from a clean database each run's own
+  # step. This is real-Postgres integration testing this repo's own
+  # Road_map.md/Task.md have named as a gap ("no integration/E2E or
+  # real-Supabase-project test yet") — scoped honestly: it verifies the
+  # migration set is valid, idempotent DDL against real Postgres, not RLS
+  # enforcement, PostgREST-specific on_conflict behavior, or real
+  # auth.users/service-role semantics, which still need an actual Supabase
+  # project (see supabase/ci/auth_stub.sql's own comment). The second pass
+  # is exactly the check that would have caught 0005-0013's missing "if not
+  # exists" clauses before they broke a real deployment (see Changelog.md's
+  # "Make migrations 0005-0013 safely re-runnable") — and did in fact catch
+  # 0001_init.sql itself failing the same way while this job was being
+  # built, fixed in the same change that added this job.
+  db-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f supabase/ci/auth_stub.sql
+      - name: Apply every migration (pass 1)
+        run: ./supabase/ci/apply_migrations.sh
+      - name: Re-apply every migration (pass 2 — idempotency check)
+        run: ./supabase/ci/apply_migrations.sh
+
   backend:
     runs-on: ubuntu-latest
     defaults:

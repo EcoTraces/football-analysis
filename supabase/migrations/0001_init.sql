@@ -12,7 +12,7 @@ create extension if not exists "pgcrypto";
 -- Reference data
 -- ---------------------------------------------------------------------------
 
-create table countries (
+create table if not exists countries (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   code text unique, -- ISO 3166-1 alpha-2/3 where known
@@ -21,7 +21,7 @@ create table countries (
   updated_at timestamptz not null default now()
 );
 
-create table competitions (
+create table if not exists competitions (
   id uuid primary key default gen_random_uuid(),
   country_id uuid references countries(id),
   name text not null,
@@ -35,7 +35,7 @@ create table competitions (
   unique (country_id, name)
 );
 
-create table seasons (
+create table if not exists seasons (
   id uuid primary key default gen_random_uuid(),
   competition_id uuid not null references competitions(id) on delete cascade,
   label text not null, -- e.g. "2025/2026"
@@ -47,7 +47,7 @@ create table seasons (
   unique (competition_id, label)
 );
 
-create table venues (
+create table if not exists venues (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   city text,
@@ -60,7 +60,7 @@ create table venues (
   updated_at timestamptz not null default now()
 );
 
-create table teams (
+create table if not exists teams (
   id uuid primary key default gen_random_uuid(),
   country_id uuid references countries(id),
   name text not null,
@@ -72,7 +72,7 @@ create table teams (
   updated_at timestamptz not null default now()
 );
 
-create table managers (
+create table if not exists managers (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   nationality_country_id uuid references countries(id),
@@ -80,7 +80,7 @@ create table managers (
   updated_at timestamptz not null default now()
 );
 
-create table team_managers (
+create table if not exists team_managers (
   team_id uuid not null references teams(id) on delete cascade,
   manager_id uuid not null references managers(id) on delete cascade,
   start_date date not null,
@@ -88,7 +88,7 @@ create table team_managers (
   primary key (team_id, manager_id, start_date)
 );
 
-create table players (
+create table if not exists players (
   id uuid primary key default gen_random_uuid(),
   team_id uuid references teams(id),
   name text not null,
@@ -100,7 +100,7 @@ create table players (
   updated_at timestamptz not null default now()
 );
 
-create table referees (
+create table if not exists referees (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   country_id uuid references countries(id),
@@ -112,7 +112,7 @@ create table referees (
 -- Fixtures / matches
 -- ---------------------------------------------------------------------------
 
-create table fixtures (
+create table if not exists fixtures (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references seasons(id) on delete cascade,
   competition_id uuid not null references competitions(id),
@@ -140,14 +140,14 @@ create table fixtures (
   )
 );
 
-create index idx_fixtures_kickoff on fixtures (kickoff_utc);
-create index idx_fixtures_competition on fixtures (competition_id, season_id);
-create index idx_fixtures_teams on fixtures (home_team_id, away_team_id);
-create index idx_fixtures_status on fixtures (status);
+create index if not exists idx_fixtures_kickoff on fixtures (kickoff_utc);
+create index if not exists idx_fixtures_competition on fixtures (competition_id, season_id);
+create index if not exists idx_fixtures_teams on fixtures (home_team_id, away_team_id);
+create index if not exists idx_fixtures_status on fixtures (status);
 -- Prevent duplicate ingestion of the same fixture from re-run sync jobs.
-create unique index uq_fixtures_natural_key on fixtures (competition_id, season_id, home_team_id, away_team_id, kickoff_utc);
+create unique index if not exists uq_fixtures_natural_key on fixtures (competition_id, season_id, home_team_id, away_team_id, kickoff_utc);
 
-create table standings (
+create table if not exists standings (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references seasons(id) on delete cascade,
   team_id uuid not null references teams(id),
@@ -167,7 +167,7 @@ create table standings (
   unique (season_id, team_id)
 );
 
-create table team_statistics (
+create table if not exists team_statistics (
   id uuid primary key default gen_random_uuid(),
   team_id uuid not null references teams(id),
   season_id uuid not null references seasons(id) on delete cascade,
@@ -190,7 +190,7 @@ create table team_statistics (
   unique (team_id, season_id, scope)
 );
 
-create table injuries (
+create table if not exists injuries (
   id uuid primary key default gen_random_uuid(),
   player_id uuid not null references players(id) on delete cascade,
   team_id uuid not null references teams(id),
@@ -204,7 +204,7 @@ create table injuries (
   updated_at timestamptz not null default now()
 );
 
-create table lineups (
+create table if not exists lineups (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   team_id uuid not null references teams(id),
@@ -219,7 +219,7 @@ create table lineups (
   unique (fixture_id, team_id)
 );
 
-create table odds_snapshots (
+create table if not exists odds_snapshots (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   bookmaker text not null,
@@ -232,9 +232,9 @@ create table odds_snapshots (
   created_at timestamptz not null default now()
 );
 
-create index idx_odds_fixture on odds_snapshots (fixture_id, market);
+create index if not exists idx_odds_fixture on odds_snapshots (fixture_id, market);
 
-create table weather_observations (
+create table if not exists weather_observations (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   temperature_c numeric,
@@ -251,7 +251,7 @@ create table weather_observations (
 -- Model / predictions
 -- ---------------------------------------------------------------------------
 
-create table model_versions (
+create table if not exists model_versions (
   id uuid primary key default gen_random_uuid(),
   name text not null, -- e.g. 'poisson-baseline'
   version text not null,
@@ -263,7 +263,7 @@ create table model_versions (
   unique (name, version)
 );
 
-create table model_evaluations (
+create table if not exists model_evaluations (
   id uuid primary key default gen_random_uuid(),
   model_version_id uuid not null references model_versions(id) on delete cascade,
   competition_id uuid references competitions(id), -- null = all competitions
@@ -276,7 +276,7 @@ create table model_evaluations (
   created_at timestamptz not null default now()
 );
 
-create table predictions (
+create table if not exists predictions (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references fixtures(id) on delete cascade,
   model_version_id uuid not null references model_versions(id),
@@ -292,14 +292,14 @@ create table predictions (
   created_at timestamptz not null default now()
 );
 
-create index idx_predictions_fixture on predictions (fixture_id, market);
-create index idx_predictions_current on predictions (fixture_id) where superseded_at is null;
+create index if not exists idx_predictions_fixture on predictions (fixture_id, market);
+create index if not exists idx_predictions_current on predictions (fixture_id) where superseded_at is null;
 
 -- ---------------------------------------------------------------------------
 -- Users / notifications (Supabase auth.users is the identity source of truth)
 -- ---------------------------------------------------------------------------
 
-create table user_profiles (
+create table if not exists user_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
   role text not null default 'user' check (role in ('user', 'admin')),
@@ -310,7 +310,7 @@ create table user_profiles (
   updated_at timestamptz not null default now()
 );
 
-create table notifications (
+create table if not exists notifications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references user_profiles(id) on delete cascade,
   type text not null check (type in (
@@ -322,13 +322,13 @@ create table notifications (
   created_at timestamptz not null default now()
 );
 
-create index idx_notifications_user on notifications (user_id, created_at desc);
+create index if not exists idx_notifications_user on notifications (user_id, created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Data quality / ingestion observability
 -- ---------------------------------------------------------------------------
 
-create table ingestion_runs (
+create table if not exists ingestion_runs (
   id uuid primary key default gen_random_uuid(),
   job_name text not null,
   provider text not null,
@@ -340,7 +340,7 @@ create table ingestion_runs (
   finished_at timestamptz
 );
 
-create table data_quality_flags (
+create table if not exists data_quality_flags (
   id uuid primary key default gen_random_uuid(),
   entity_type text not null, -- 'fixture', 'player', etc.
   entity_id uuid not null,
@@ -357,15 +357,23 @@ create table data_quality_flags (
 alter table user_profiles enable row level security;
 alter table notifications enable row level security;
 
+-- Postgres has no "create policy if not exists" — drop-then-create is the
+-- standard idempotent pattern (already used by 0004's own policy/trigger
+-- redefinitions below it in this migration set).
+drop policy if exists "Users read own profile" on user_profiles;
 create policy "Users read own profile" on user_profiles
   for select using (auth.uid() = id);
+drop policy if exists "Users update own profile" on user_profiles;
 create policy "Users update own profile" on user_profiles
   for update using (auth.uid() = id);
+drop policy if exists "Users insert own profile" on user_profiles;
 create policy "Users insert own profile" on user_profiles
   for insert with check (auth.uid() = id);
 
+drop policy if exists "Users read own notifications" on notifications;
 create policy "Users read own notifications" on notifications
   for select using (auth.uid() = user_id);
+drop policy if exists "Users update own notifications" on notifications;
 create policy "Users update own notifications" on notifications
   for update using (auth.uid() = user_id);
 
