@@ -33,10 +33,12 @@ import { syncPlayerStatistics } from "../jobs/syncPlayerStatistics.js";
 import type { FootballDataProvider } from "../providers/types.js";
 import { ApiError } from "../middleware/errorHandler.js";
 import { createRequireAdmin } from "../middleware/requireAdmin.js";
+import { createAuditAdminActions } from "../middleware/auditAdminActions.js";
 
 const MAX_SYNC_DAYS = 14; // Guardrail against an accidental huge/expensive sync.
 const MAX_KICKOFF_WINDOW_HOURS = 168; // 7 days — same stopgap reasoning as MAX_SYNC_DAYS; shared by lineups and odds sync.
 const MAX_JOB_HISTORY_LIMIT = 200;
+const MAX_AUDIT_LOG_LIMIT = 200;
 const JOB_HISTORY_SUMMARY_SAMPLE = 500; // Rows scanned client-side to compute "last run per job" — see /admin/jobs/summary.
 const MAX_DATE_RANGE_DAYS = 366; // Each fixture in range costs two point-in-time queries plus one prediction call — bound the blast radius of one request. Shared by backtest and gradient-boosting training, which walk the same kind of range.
 const MAX_BACKTEST_RESULTS_LIMIT = 200;
@@ -243,6 +245,7 @@ export function createAdminRouter(
 ): Router {
   const router = Router();
   router.use(createRequireAdmin(supabase));
+  router.use(createAuditAdminActions(supabase, logger));
 
   router.post("/admin/sync", syncTriggerLimit, async (req, res, next) => {
     try {
@@ -623,6 +626,31 @@ export function createAdminRouter(
       if (error) throw new Error(error.message);
 
       res.json({ data: summarizeIngestionRuns((data ?? []) as IngestionRunRow[]) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Read side of createAuditAdminActions (middleware/auditAdminActions.ts)
+  // — every mutating admin request, most recent first. Optional
+  // actor_id filter for "what did this specific admin do".
+  router.get("/admin/audit-log", async (req, res, next) => {
+    try {
+      const limitParam = Number(req.query.limit ?? 50);
+      const limit = Number.isFinite(limitParam) ? Math.min(Math.max(Math.trunc(limitParam), 1), MAX_AUDIT_LOG_LIMIT) : 50;
+      const actorId = typeof req.query.actor_id === "string" ? req.query.actor_id : null;
+
+      let query = supabase
+        .from("admin_audit_log")
+        .select("id, actor_id, actor_email, method, path, status_code, request_body, created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (actorId) query = query.eq("actor_id", actorId);
+
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+
+      res.json({ data: data ?? [] });
     } catch (err) {
       next(err);
     }

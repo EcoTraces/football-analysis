@@ -360,6 +360,14 @@ Per-`job_name` summary reduced from the most recent 500 `ingestion_runs`
 rows: `{ [job_name]: { lastRun, lastSuccess } }`, where `lastSuccess` is
 `null` if that job has never succeeded in the sampled window.
 
+### `GET /admin/audit-log?limit=N&actor_id=X`
+Recent `admin_audit_log` rows, newest first (`limit` default 50, capped at
+200; `actor_id` optionally filters to one admin). Returns `{ id, actor_id,
+actor_email, method, path, status_code, request_body, created_at }[]` — one
+row per mutating (`POST`/`PUT`/`PATCH`/`DELETE`) request that reached
+`/api/admin/*`, written by `middleware/auditAdminActions.ts`. GET requests
+(reads like `/admin/jobs`, `/admin/data-health`) are never recorded here.
+
 ### `POST /admin/elo/recompute`
 Recomputes every team's global Elo rating from scratch by replaying its
 finished, non-synthetic fixture history (`computeEloRatings.ts` — see

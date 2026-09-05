@@ -95,6 +95,18 @@ work because they always run as the service role or with direct database
 access respectively; a signed-in end user's session, via the anon key,
 never does.
 
+`admin_audit_log` (`0015_admin_audit_log.sql`) is the "who changed what"
+half of access control that `user_profiles.role` alone doesn't cover: one
+row per mutating (`POST`/`PUT`/`PATCH`/`DELETE`) request that reached
+`/api/admin/*`, written by `middleware/auditAdminActions.ts` (applied via
+`router.use()` right after `requireAdmin`, so a future admin route can't
+ship unaudited by omission any more than it can ship unauthenticated).
+Deliberately no foreign key from `actor_id`/`actor_email` to
+`user_profiles` — an audit log has to survive the actor being demoted or
+deleted later, so it stores a denormalized snapshot rather than something
+an `on delete cascade` could take down with it. Read via
+`GET /admin/audit-log` (`?limit=`, `?actor_id=`).
+
 ## Core entities
 
 | Table | Purpose |
@@ -302,3 +314,8 @@ raises a unique-constraint violation.
   live at kickoff" without a breaking migration, but that job, a P&L
   computation, and the Performance/ROI dashboard it would feed are all
   deferred to Phase 2 (see `Road_map.md`).
+- `admin_audit_log` (0015) has no dedicated admin-dashboard panel yet —
+  today it's read via `GET /admin/audit-log` directly (curl/Postman/an
+  admin's own token), the same intermediate state `/admin/jobs` and every
+  other admin capability in this codebase has passed through before
+  `AdminDashboard.tsx` grew a section for it.
